@@ -453,7 +453,7 @@ async fn register_one(
             }
             sglang_event_config = info.event_config;
         }
-        WorkerBackend::Vllm => {
+        WorkerBackend::SglangProxy | WorkerBackend::Vllm => {
             let info = introspector
                 .fetch_openai_models_with_bearer(&worker_url, spec.bearer_token.as_deref())
                 .await;
@@ -484,7 +484,7 @@ async fn register_one(
         );
         return;
     }
-    if let (Some(idx), WorkerBackend::Sglang) = (kv_index, backend) {
+    if let Some(idx) = kv_index.filter(|_| backend.supports_sglang_kv_events()) {
         // Pass the pre-resolved EventConfig so the KvEventIndex does
         // not issue a second `/server_info` round-trip.
         idx.add_worker(&worker_url, sglang_event_config).await;
@@ -779,6 +779,64 @@ mod tests {
 
         drop(tx);
         let _ = manager_handle.await;
+    }
+
+    #[tokio::test]
+    async fn manager_discovers_sglang_proxy_as_plain_without_kv_events() {
+        let (worker_url, _shutdown) = spawn_fake_openai_models_worker(json!({
+            "object": "list",
+            "data": [{"id": "zai-org/GLM-5.2-FP8"}]
+        }))
+        .await;
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let kv_index = KvEventIndex::new();
+        let (tx, rx) = mpsc::channel::<DiscoveryEvent>(8);
+        let manager_handle = tokio::spawn(run_with_introspector(
+            rx,
+            registry.clone(),
+            None,
+            Some(kv_index.clone()),
+            None,
+            fast_introspector(),
+        ));
+
+        let spec = WorkerSpec {
+            id: WorkerId("mi300x-1p3d".into()),
+            url: worker_url,
+            mode: WorkerMode::Plain,
+            model_ids: Vec::new(),
+            bootstrap_port: None,
+            min_priority: None,
+            bearer_token: None,
+            backend: WorkerBackend::SglangProxy,
+            tier: Default::default(),
+        };
+        tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
+
+        let worker = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(worker) = registry.get(&spec.id) {
+                    if !worker.model_ids.is_empty() {
+                        return worker;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("manager did not register SGLang proxy via /v1/models");
+        assert_eq!(worker.mode(), WorkerMode::Plain);
+        assert_eq!(worker.backend(), WorkerBackend::SglangProxy);
+        assert_eq!(
+            kv_index.known_worker_count(),
+            0,
+            "logical SGLang proxy must not attach an inner worker KV stream"
+        );
+
+        drop(tx);
+        let _ = manager_handle.await;
+        kv_index.shutdown().await;
     }
 
     #[tokio::test]

@@ -28,7 +28,6 @@ use std::time::Duration;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::discovery::WorkerBackend;
 use crate::policies::active_load::JanitorHandle;
 use crate::workers::worker::{REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET};
 use crate::workers::WorkerRegistry;
@@ -69,11 +68,12 @@ fn parse_total_request_pressure(body: &str) -> Option<i64> {
 /// Poll one worker's `/get_load` once and store the result (or the
 /// failure sentinel) on the worker. Never panics; never returns an error.
 async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker::Worker>) {
-    if worker.backend() == WorkerBackend::Vllm {
+    if !worker.backend().supports_sglang_load() {
         worker.set_reported_load(REPORTED_LOAD_UNSET);
         tracing::debug!(
             worker_url = %worker.url,
-            "load-poller: skipping vLLM worker without SGLang /get_load"
+            backend = ?worker.backend(),
+            "load-poller: skipping worker backend without SGLang /get_load"
         );
         return;
     }
@@ -156,8 +156,11 @@ pub fn spawn_load_poller(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
+    use crate::discovery::{ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerSpec};
     use crate::workers::worker::REPORTED_LOAD_FAILED;
+    use axum::{routing::get, Json, Router};
+    use serde_json::json;
+    use tokio::net::TcpListener;
 
     #[test]
     fn parse_sums_active_and_waiting_across_dp_ranks() {
@@ -239,5 +242,44 @@ mod tests {
         poll_round(&client, &registry).await;
 
         assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
+    }
+
+    #[tokio::test]
+    async fn poll_round_reads_sglang_proxy_running_and_queue_load() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/get_load",
+            get(|| async {
+                Json(json!([
+                    {"dp_rank": 0, "num_reqs": 3, "num_waiting_reqs": 2},
+                    {"dp_rank": 1, "num_reqs": 1, "num_waiting_reqs": 5}
+                ]))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let id = WorkerId("sglang-proxy".into());
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: worker_url,
+                mode: WorkerMode::Plain,
+                model_ids: vec![ModelId("m".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                bearer_token: None,
+                backend: WorkerBackend::SglangProxy,
+                tier: Default::default(),
+            })
+            .unwrap();
+        let worker = registry.get(&id).unwrap();
+        let client = reqwest::Client::new();
+
+        poll_round(&client, &registry).await;
+
+        assert_eq!(worker.reported_load(), 11);
+        server.abort();
     }
 }

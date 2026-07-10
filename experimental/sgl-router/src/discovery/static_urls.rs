@@ -94,11 +94,12 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
         } else if token == BACKEND_TOKEN {
             caps.backend = match value.trim() {
                 "sglang" => WorkerBackend::Sglang,
+                "sglang_proxy" => WorkerBackend::SglangProxy,
                 "vllm" => WorkerBackend::Vllm,
                 other => {
                     return Err(anyhow::anyhow!(
                         "invalid backend in worker URL entry {entry:?}: \
-                         {other:?} is not one of: sglang, vllm"
+                         {other:?} is not one of: sglang, sglang_proxy, vllm"
                     ));
                 }
             };
@@ -229,6 +230,16 @@ mod tests {
         let (url, caps) = parse_worker_entry("http://h20-r0:8006@backend=vllm").unwrap();
         assert_eq!(url, "http://h20-r0:8006");
         assert_eq!(caps.backend, WorkerBackend::Vllm);
+        assert_eq!(caps.min_priority, None);
+        assert_eq!(caps.tier, WorkerTier::Default);
+    }
+
+    #[test]
+    fn parse_entry_extracts_sglang_proxy_backend_suffix() {
+        let (url, caps) =
+            parse_worker_entry("http://mi300x-1p3d:30000@backend=sglang_proxy").unwrap();
+        assert_eq!(url, "http://mi300x-1p3d:30000");
+        assert_eq!(caps.backend, WorkerBackend::SglangProxy);
         assert_eq!(caps.min_priority, None);
         assert_eq!(caps.tier, WorkerTier::Default);
     }

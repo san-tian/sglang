@@ -45,7 +45,27 @@ pub enum WorkerMode {
 pub enum WorkerBackend {
     #[default]
     Sglang,
+    /// A logical plain worker implemented by an SGLang compatibility proxy.
+    ///
+    /// Model discovery uses `/v1/models` so an inner PD engine's
+    /// `/server_info` cannot reclassify this logical endpoint as prefill or
+    /// decode. Unlike vLLM, the proxy implements SGLang `/get_load`, so it
+    /// still participates in worker-reported running/queue load balancing.
+    /// It does not expose a logical KV-event stream for the outer router.
+    SglangProxy,
     Vllm,
+}
+
+impl WorkerBackend {
+    /// Whether the logical endpoint implements SGLang `/get_load`.
+    pub fn supports_sglang_load(self) -> bool {
+        matches!(self, Self::Sglang | Self::SglangProxy)
+    }
+
+    /// Whether the outer router should attach to this worker's KV events.
+    pub fn supports_sglang_kv_events(self) -> bool {
+        matches!(self, Self::Sglang)
+    }
 }
 
 /// Operator-defined capacity tier for cross-pool routing.
