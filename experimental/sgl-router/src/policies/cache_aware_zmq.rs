@@ -193,7 +193,9 @@ impl CacheAwareZmqPolicy {
     /// cached worker while a cold worker has materially less first-token
     /// pressure. Reuse the cache-hit ABS/REL thresholds, but compare
     /// `effective_ttft_load` so token-weighted local and cross-replica pending
-    /// reservations participate in the decision.
+    /// reservations participate in the decision. The coolest candidate may
+    /// also have a cache match: shared prefixes can otherwise exclude every
+    /// idle worker and preserve starvation indefinitely.
     fn apply_ttft_hit_load_guard(
         &self,
         hot: Arc<Worker>,
@@ -207,14 +209,7 @@ impl CacheAwareZmqPolicy {
             return hot;
         }
 
-        let Some(cool) = workers
-            .iter()
-            .filter(|w| matched_blocks_for_worker(w, matched_blocks, matched_urls) == 0)
-            .min_by_key(|w| {
-                w.effective_ttft_load(self.config.use_reported_load, self.config.ttft_token_scale)
-            })
-            .map(Arc::clone)
-        else {
+        let Some(cool) = self.pick_min_ttft_load(workers) else {
             return hot;
         };
 
@@ -2047,6 +2042,25 @@ mod tests {
         assert_eq!(
             chosen.url, "http://w1:30000",
             "a TTFT-load gap of two must divert a cache hit when the allowed slack is one",
+        );
+    }
+
+    #[test]
+    fn ttft_hit_guard_considers_idle_worker_with_shared_cache_match() {
+        let text = "hello world hello world hello world";
+        let (policy, _) = ttft_first_policy_with_guard(text, "http://w0:30000", usize::MAX, 1, 1.0);
+        let w0 = worker("http://w0:30000", "tiny");
+        let w1 = worker("http://w1:30000", "tiny");
+        w0.set_reported_load(2);
+        w1.set_reported_load(0);
+        let workers = vec![Arc::clone(&w0), Arc::clone(&w1)];
+        let matched_urls = HashSet::from([w0.url.as_str(), w1.url.as_str()]);
+
+        let chosen = policy.apply_ttft_hit_load_guard(Arc::clone(&w0), &workers, 1, &matched_urls);
+
+        assert_eq!(
+            chosen.url, "http://w1:30000",
+            "an idle worker remains eligible when it shares a cached prefix",
         );
     }
 
