@@ -146,6 +146,7 @@ async fn static_urls_pd_role_resolved_end_to_end() {
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
         trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
         worker_introspect_key: None,
         load_poll_interval_secs: None,
         cache_tree_page_size: None,
