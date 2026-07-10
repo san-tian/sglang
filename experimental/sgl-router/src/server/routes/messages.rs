@@ -25,6 +25,7 @@ use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
+use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::tool_schema::normalize_tool_schema;
 use crate::server::trace::TraceContext;
@@ -54,6 +55,8 @@ struct MessagesProbe {
     /// capacity-restricted workers (see [`filter_eligible`]).
     #[serde(default)]
     priority: Option<Value>,
+    #[serde(default)]
+    max_tokens: Option<Value>,
 }
 
 fn parse_probe(body: &Bytes) -> Result<MessagesProbe, ApiError> {
@@ -604,7 +607,6 @@ async fn messages_inner(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
-    enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     // Produce routing-only tokens for /v1/messages generation requests.
     //
@@ -619,14 +621,27 @@ async fn messages_inner(
     // encoder. The original Anthropic body is still forwarded unchanged, and we
     // never inject `input_ids` on this route, so request semantics remain
     // entirely worker-owned.
-    let request_tokens: Option<RequestTokens> = if forward_path == "/v1/messages" {
-        let routing_value = anthropic_routing_value(&body);
-        routing_value
-            .as_ref()
-            .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v))
+    let routing_value = if forward_path == "/v1/messages" {
+        anthropic_routing_value(&body)
     } else {
         None
     };
+    let request_tokens: Option<RequestTokens> = routing_value
+        .as_ref()
+        .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
+    let reliable_prompt_tokens = request_tokens
+        .as_ref()
+        .filter(|tokens| tokens.engine_equivalent)
+        .map(|tokens| tokens.ids.len());
+    let required_context_tokens = (forward_path == "/v1/messages")
+        .then(|| required_context_tokens(reliable_prompt_tokens, &[probe.max_tokens.as_ref()]))
+        .flatten();
+    let workers = if forward_path == "/v1/messages" {
+        enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?
+    } else {
+        workers
+    };
+    enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     let routing_key = ctx
         .config

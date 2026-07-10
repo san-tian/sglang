@@ -37,6 +37,7 @@
 //! | `sgl_router_sticky_total` | Counter | `outcome` |
 //! | `sgl_router_ingress_tokenize_errors_total` | Counter | `model_id` |
 //! | `sgl_router_priority_filtered_total` | Counter | `reason` |
+//! | `sgl_router_context_filtered_total` | Counter | `reason` |
 //! | `sgl_router_external_queue_admission_total` | Counter | `outcome` |
 //! | `sgl_router_alias_route_total` | Counter | `alias_model_id`, `route`, `reason` |
 //! | `sgl_router_remote_cache_state_query_total` | Counter | `outcome` |
@@ -177,6 +178,26 @@ impl PriorityFilterOutcome {
         match self {
             Self::WorkerExcluded => "worker_excluded",
             Self::EmptySetRejected => "empty_set_rejected",
+        }
+    }
+}
+
+/// Outcome of per-worker context-window eligibility filtering.
+#[derive(Debug, Clone, Copy)]
+pub enum ContextFilterOutcome {
+    WorkerExcludedOverLimit,
+    WorkerExcludedUnknownLength,
+    EmptySetRejectedOverLimit,
+    EmptySetRejectedUnknownLength,
+}
+
+impl ContextFilterOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkerExcludedOverLimit => "worker_excluded_over_limit",
+            Self::WorkerExcludedUnknownLength => "worker_excluded_unknown_length",
+            Self::EmptySetRejectedOverLimit => "empty_set_rejected_over_limit",
+            Self::EmptySetRejectedUnknownLength => "empty_set_rejected_unknown_length",
         }
     }
 }
@@ -331,6 +352,7 @@ pub struct MetricsRegistry {
     sticky_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     ingress_tokenize_errors_total: Mutex<HashMap<String, Arc<AtomicU64>>>,
     priority_filtered_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    context_filtered_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     external_queue_admission_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     alias_route_total: Mutex<HashMap<AliasRouteKey, Arc<AtomicU64>>>,
     remote_cache_state_query_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
@@ -657,6 +679,17 @@ impl MetricsRegistry {
     /// eligible (e.g. B200) capacity is under-provisioned or unhealthy.
     pub fn record_priority_filtered(&self, outcome: PriorityFilterOutcome) {
         let mut guard = self.priority_filtered_total.lock();
+        let counter = guard
+            .entry(outcome.as_str())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_context_filtered_total{reason}`.
+    pub fn record_context_filtered(&self, outcome: ContextFilterOutcome) {
+        let mut guard = self.context_filtered_total.lock();
         let counter = guard
             .entry(outcome.as_str())
             .or_insert_with(|| Arc::new(AtomicU64::new(0)))
@@ -1109,6 +1142,25 @@ impl MetricsRegistry {
         }
         drop(guard);
 
+        // context_filtered_total
+        out.push_str(
+            "# HELP sgl_router_context_filtered_total Requests affected by per-worker context-window eligibility filtering. Limited workers are excluded when the prompt-plus-output budget exceeds their ceiling or cannot be computed reliably; empty_set variants indicate a 503 rejection.\n",
+        );
+        out.push_str("# TYPE sgl_router_context_filtered_total counter\n");
+        let guard = self.context_filtered_total.lock();
+        let mut entries: Vec<(&&str, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|e| *e.0);
+        for (reason, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_context_filtered_total{{reason=\"{}\"}} {}\n",
+                reason, value,
+            ));
+        }
+        drop(guard);
+
         // external_queue_admission_total
         out.push_str(
             "# HELP sgl_router_external_queue_admission_total External queue admission decisions (admitted = at least one eligible worker within threshold; rejected = every eligible worker above threshold and request returned 429).\n",
@@ -1279,6 +1331,7 @@ mod tests {
         assert!(out.contains("# TYPE sgl_router_sticky_total counter"));
         assert!(out.contains("# TYPE sgl_router_ingress_tokenize_errors_total counter"));
         assert!(out.contains("# TYPE sgl_router_priority_filtered_total counter"));
+        assert!(out.contains("# TYPE sgl_router_context_filtered_total counter"));
         assert!(out.contains("# TYPE sgl_router_external_queue_admission_total counter"));
         assert!(out.contains("# TYPE sgl_router_remote_cache_state_query_total counter"));
         assert!(out.contains("# TYPE sgl_router_remote_cache_state_feed_total counter"));
@@ -1334,6 +1387,29 @@ mod tests {
             out.contains(r#"sgl_router_priority_filtered_total{reason="empty_set_rejected"} 1"#),
             "got:\n{out}",
         );
+    }
+
+    #[test]
+    fn context_filtered_counts_distinct_reasons() {
+        let reg = MetricsRegistry::new();
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedUnknownLength);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedUnknownLength);
+        let out = reg.render();
+        for reason in [
+            "worker_excluded_over_limit",
+            "worker_excluded_unknown_length",
+            "empty_set_rejected_over_limit",
+            "empty_set_rejected_unknown_length",
+        ] {
+            assert!(
+                out.contains(&format!(
+                    "sgl_router_context_filtered_total{{reason=\"{reason}\"}} 1"
+                )),
+                "got:\n{out}",
+            );
+        }
     }
 
     #[test]

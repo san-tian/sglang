@@ -19,6 +19,10 @@ use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
+use crate::server::routes::context_window::{
+    enforce_context_eligibility, required_context_tokens,
+    required_context_tokens_with_explicit_output,
+};
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::workers::LoadGuard;
 use axum::body::Body;
@@ -39,6 +43,12 @@ struct PassthroughProbe {
     model: Option<String>,
     #[serde(default)]
     priority: Option<serde_json::Value>,
+    #[serde(default)]
+    max_tokens: Option<serde_json::Value>,
+    #[serde(default)]
+    max_completion_tokens: Option<serde_json::Value>,
+    #[serde(default)]
+    max_output_tokens: Option<serde_json::Value>,
 }
 
 fn parse_probe(body: &Bytes) -> Result<PassthroughProbe, ApiError> {
@@ -194,19 +204,38 @@ async fn passthrough_primary(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
-    enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     // /v1/completions has an explicit raw `prompt`; feed those tokens to
     // cache-aware routing without changing the worker-facing passthrough body.
     // Other generic passthrough shapes stay min-load until their engine prompt
     // construction is replicated exactly enough for routing hashes.
-    let request_tokens: Option<RequestTokens> = if path == "/v1/completions" {
-        serde_json::from_slice::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, &v))
+    let request_value = if path == "/v1/completions" {
+        serde_json::from_slice::<serde_json::Value>(&body).ok()
     } else {
         None
     };
+    let request_tokens: Option<RequestTokens> = request_value
+        .as_ref()
+        .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
+    let reliable_prompt_tokens = (path == "/v1/completions")
+        .then(|| request_tokens.as_ref().map(|tokens| tokens.ids.len()))
+        .flatten();
+    let output_fields = if path == "/v1/completions" {
+        [
+            probe.max_tokens.as_ref(),
+            probe.max_completion_tokens.as_ref(),
+            None,
+        ]
+    } else {
+        [None, None, probe.max_output_tokens.as_ref()]
+    };
+    let required_context_tokens = if path == "/v1/responses" {
+        required_context_tokens_with_explicit_output(reliable_prompt_tokens, &output_fields)
+    } else {
+        required_context_tokens(reliable_prompt_tokens, &output_fields)
+    };
+    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
+    enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     let routing_key = ctx
         .config

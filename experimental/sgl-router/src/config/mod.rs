@@ -43,8 +43,8 @@ impl Config {
                             "discovery.static_urls.urls contains an empty or whitespace-only entry"
                         ));
                     }
-                    // Strip the optional `@min_priority=N` capability suffix
-                    // BEFORE URL-parsing: the suffix is not part of the URL,
+                    // Strip static worker capability suffixes BEFORE
+                    // URL-parsing: the suffixes are not part of the URL,
                     // and leaving it on would make `url::Url` misparse
                     // `host:port@min_priority=N` as userinfo (hiding a bad
                     // base URL) and would let `http://x` and
@@ -52,7 +52,7 @@ impl Config {
                     // also surfaces a malformed suffix (`@min_priority=abc`)
                     // at validate time, matching the discovery task's own
                     // parse. Same parser → single source of truth.
-                    let (base, _min_priority) =
+                    let (base, _capabilities) =
                         crate::discovery::static_urls::parse_worker_entry(trimmed).map_err(
                             |e| anyhow!("discovery.static_urls.urls entry {raw:?} is invalid: {e}"),
                         )?;
@@ -235,6 +235,13 @@ mod tests {
         cfg("qwen3", &["http://rtx-01:30000@min_priority=100"])
             .validate()
             .expect("valid base URL + integer min_priority suffix should pass");
+    }
+
+    #[test]
+    fn accepts_static_url_with_max_context_tokens_suffix() {
+        cfg("qwen3", &["http://amd-01:30000@max_context_tokens=500000"])
+            .validate()
+            .expect("valid base URL + positive max_context_tokens should pass");
     }
 
     #[test]

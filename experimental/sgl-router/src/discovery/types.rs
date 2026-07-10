@@ -122,6 +122,12 @@ pub struct WorkerSpec {
     /// mode/bootstrap) nor dropped on reconcile re-introspection.
     #[serde(default)]
     pub min_priority: Option<i64>,
+    /// Maximum total context (prompt plus requested output tokens) this
+    /// worker can safely serve. `None` leaves context validation to the
+    /// engine. Static URL discovery seeds this from
+    /// `url@max_context_tokens=N`.
+    #[serde(default)]
+    pub max_context_tokens: Option<usize>,
     /// Optional worker-local bearer token. When set, the router uses it
     /// for its own `/server_info` and `/get_load` calls and overrides the
     /// proxied request's `Authorization` header for this worker. This keeps
@@ -177,6 +183,7 @@ mod tests {
             model_ids: vec![ModelId("qwen".into())],
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
@@ -195,6 +202,7 @@ mod tests {
             model_ids: vec![ModelId("qwen".into())],
             bootstrap_port: Some(8997),
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
@@ -214,6 +222,7 @@ mod tests {
             model_ids: vec![ModelId("glm".into())],
             bootstrap_port: None,
             min_priority: Some(100),
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
@@ -231,6 +240,26 @@ mod tests {
         let json = r#"{"id":"w","url":"http://x","mode":"plain","model_ids":["m"]}"#;
         let w: WorkerSpec = serde_json::from_str(json).unwrap();
         assert_eq!(w.min_priority, None);
+    }
+
+    #[test]
+    fn worker_spec_deserializes_with_missing_max_context_tokens() {
+        let json = r#"{"id":"w","url":"http://x","mode":"plain","model_ids":["m"]}"#;
+        let w: WorkerSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(w.max_context_tokens, None);
+    }
+
+    #[test]
+    fn worker_spec_with_max_context_tokens_round_trip() {
+        let mut w: WorkerSpec = serde_json::from_str(
+            r#"{"id":"amd","url":"http://10.0.0.8:30000","mode":"plain","model_ids":["glm"]}"#,
+        )
+        .unwrap();
+        w.max_context_tokens = Some(500_000);
+        let s = serde_json::to_string(&w).unwrap();
+        assert!(s.contains("\"max_context_tokens\":500000"));
+        let d: WorkerSpec = serde_json::from_str(&s).unwrap();
+        assert_eq!(w, d);
     }
 
     #[test]
@@ -256,6 +285,7 @@ mod tests {
             model_ids: vec![ModelId("glm".into())],
             bootstrap_port: None,
             min_priority: Some(100),
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Vllm,
             tier: WorkerTier::Bulk,
@@ -302,6 +332,7 @@ mod tests {
             model_ids: vec![ModelId("m1".into())],
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: Default::default(),

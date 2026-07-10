@@ -5,6 +5,7 @@ pub mod admission;
 pub mod alias_fallback;
 pub mod cache;
 pub mod chat;
+pub mod context_window;
 pub mod health;
 pub mod messages;
 pub mod metrics;

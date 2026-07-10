@@ -77,6 +77,7 @@ fn build_ctx_with_worker(worker_url: &str) -> Arc<AppContext> {
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),

@@ -353,9 +353,10 @@ fn reconcile_unresolved_workers(
         // Rebuild a discovery-shaped spec: empty `model_ids` so
         // `register_one` re-resolves them from `/server_info`; current
         // mode + bootstrap_port as the seed (`register_one` re-applies
-        // any `/server_info` override). `min_priority`, backend, and tier are
-        // config-time facts that `/server_info` never carries, so they MUST be
-        // carried over from the live worker. Dropping min_priority here would
+        // any `/server_info` override). `min_priority`, `max_context_tokens`,
+        // backend, and tier are config-time facts that `/server_info` never
+        // carries, so they MUST be carried over from the live worker. Dropping
+        // min_priority here would
         // let a priority-gated worker silently start accepting priority-0
         // traffic; dropping backend would make a vLLM worker retry through
         // SGLang-only endpoints; dropping tier would break tiered spillover.
@@ -366,6 +367,7 @@ fn reconcile_unresolved_workers(
             model_ids: Vec::new(),
             bootstrap_port: worker.bootstrap_port(),
             min_priority: worker.min_priority(),
+            max_context_tokens: worker.max_context_tokens(),
             bearer_token: worker.bearer_token().map(ToOwned::to_owned),
             backend: worker.backend(),
             tier: worker.tier(),
@@ -554,6 +556,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -647,6 +650,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -694,6 +698,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -749,6 +754,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: Some(100),
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Vllm,
             tier: Default::default(),
@@ -808,6 +814,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::SglangProxy,
             tier: Default::default(),
@@ -865,6 +872,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Vllm,
             tier: Default::default(),
@@ -917,6 +925,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -970,6 +979,7 @@ mod tests {
                 model_ids: Vec::new(),
                 bootstrap_port: None,
                 min_priority: None,
+                max_context_tokens: None,
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
@@ -1044,6 +1054,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -1149,6 +1160,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -1233,6 +1245,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -1340,6 +1353,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -1392,14 +1406,11 @@ mod tests {
         let _ = manager_handle.await;
     }
 
-    /// Regression: a priority-gated worker (`min_priority = Some(100)`) that
-    /// first registers while `/server_info` is unavailable must KEEP its gate
-    /// after the reconcile loop re-introspects it. The reconcile path rebuilds
-    /// a discovery-shaped spec; if it dropped `min_priority` (→ `None`) the
-    /// worker would silently start accepting priority-0 traffic once it
-    /// resolved its model ids — defeating the isolation guarantee.
+    /// Regression: config-only worker capabilities must survive a failed
+    /// `/server_info` lookup and the later reconcile re-introspection. Dropping
+    /// either field would silently weaken the worker's routing constraints.
     #[tokio::test]
-    async fn reconcile_preserves_min_priority_across_reintrospection() {
+    async fn reconcile_preserves_config_capabilities_across_reintrospection() {
         use std::sync::atomic::{AtomicBool, Ordering};
         use tokio::time::timeout;
 
@@ -1429,6 +1440,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: Some(100),
+            max_context_tokens: Some(500_000),
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -1453,6 +1465,11 @@ mod tests {
             Some(100),
             "gate must be present on initial (pre-resolve) registration",
         );
+        assert_eq!(
+            registry.get(&id).unwrap().max_context_tokens(),
+            Some(500_000),
+            "context limit must be present on initial registration",
+        );
 
         // /server_info recovers; reconcile re-introspects and resolves models.
         ready.store(true, Ordering::SeqCst);
@@ -1472,6 +1489,11 @@ mod tests {
             registry.get(&id).unwrap().min_priority(),
             Some(100),
             "min_priority must survive reconcile re-introspection, not reset to None",
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().max_context_tokens(),
+            Some(500_000),
+            "max_context_tokens must survive reconcile re-introspection",
         );
 
         drop(tx);
@@ -1547,6 +1569,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -1678,6 +1701,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -1753,6 +1777,7 @@ mod tests {
             model_ids: Vec::new(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),

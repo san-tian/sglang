@@ -54,6 +54,11 @@ pub enum ApiError {
     #[error("no healthy workers for model {model}")]
     NoHealthyWorkers { model: String },
 
+    /// Healthy workers exist, but none can safely serve the request's known
+    /// or unknown context length under their declared per-worker ceilings.
+    #[error("no context-eligible workers for model {model}")]
+    NoContextEligibleWorkers { model: String },
+
     /// PD-mode deployment whose prefill pool has zero healthy workers.
     /// Distinct from `NoHealthyWorkers` because the decode pool may
     /// still be healthy — the failure is pool-specific, and surfacing
@@ -129,6 +134,10 @@ impl ApiError {
             ApiError::NoHealthyWorkers { .. } => {
                 (StatusCode::SERVICE_UNAVAILABLE, "no_healthy_workers")
             }
+            ApiError::NoContextEligibleWorkers { .. } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no_context_eligible_workers",
+            ),
             ApiError::NoPrefillWorkersAvailable { .. } => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "no_prefill_workers_available",
@@ -187,6 +196,10 @@ impl ApiError {
             ApiError::NoHealthyWorkers { model } => {
                 tracing::warn!(model = %model, reason = "no_healthy_workers", "service unavailable");
                 "no healthy workers for the requested model".to_string()
+            }
+            ApiError::NoContextEligibleWorkers { model } => {
+                tracing::warn!(model = %model, reason = "no_context_eligible_workers", "service unavailable");
+                "no workers can serve the requested context length".to_string()
             }
             ApiError::NoPrefillWorkersAvailable { model } => {
                 tracing::warn!(model = %model, reason = "no_prefill_workers_available", "service unavailable");

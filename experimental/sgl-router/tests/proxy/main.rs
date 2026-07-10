@@ -15,6 +15,7 @@ mod cache_aware_input_ids;
 mod cache_aware_pending_pressure;
 mod chat_routing;
 mod completions_routing;
+mod context_window_routing;
 mod failover;
 mod graceful_shutdown;
 mod header_forwarding;

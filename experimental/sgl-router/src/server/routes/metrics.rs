@@ -158,6 +158,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                max_context_tokens: None,
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),

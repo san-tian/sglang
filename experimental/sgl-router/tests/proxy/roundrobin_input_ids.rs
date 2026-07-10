@@ -81,6 +81,7 @@ fn build_ctx(url: String) -> Arc<AppContext> {
         model_ids: vec![ModelId(MODEL.into())],
         bootstrap_port: None,
         min_priority: None,
+        max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),

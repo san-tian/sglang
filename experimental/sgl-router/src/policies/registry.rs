@@ -184,16 +184,13 @@ impl PdPoolResolver {
 
     /// Pick a decode worker for a PD-mode handoff with **host affinity**
     /// to the prefill worker. Resolves the decode pool for `model`, applies
-    /// priority-eligibility filtering (so a capacity-gated decode worker is
-    /// excluded for sub-threshold requests, mirroring the prefill path),
-    /// then the affinity rules in [`select_decode_with_affinity`].
+    /// priority and context-window eligibility filtering, then the affinity
+    /// rules in [`select_decode_with_affinity`].
     ///
     /// `request_priority` is the effective request priority; decode workers
-    /// whose `min_priority` exceeds it are removed, with the same empty-set
-    /// fallback as [`filter_eligible`] (a fully-gated pool still serves
-    /// rather than 503s). In today's topology decode pools are homogeneous
-    /// B200 (untagged), so the filter is a defensive no-op — but it keeps
-    /// the guarantee intact if heterogeneous decode capacity is ever added.
+    /// whose `min_priority` exceeds it are removed. `required_context_tokens`
+    /// is the prompt plus output budget computed at ingress; a limited decode
+    /// worker is removed when the request is unknown or exceeds its ceiling.
     ///
     /// Returns `Err(NoDecodeWorkersAvailable)` if the decode pool is
     /// empty (PD-mode partial failure) — the chat handler then maps to
@@ -205,11 +202,68 @@ impl PdPoolResolver {
         model: &ModelId,
         prefill_url: &str,
         request_priority: i64,
+        required_context_tokens: Option<usize>,
     ) -> Result<Arc<Worker>, PdResolveError> {
         let candidates = self.decode_candidates(model)?;
         let eligible = filter_eligible(&candidates, request_priority);
-        select_decode_with_affinity(prefill_url, &eligible.workers)
+        let context_eligible = filter_context_eligible(&eligible.workers, required_context_tokens);
+        select_decode_with_affinity(prefill_url, &context_eligible.workers)
             .ok_or(PdResolveError::NoDecodeWorkersAvailable)
+    }
+}
+
+/// Why context-window filtering removed one or more workers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextFilterReason {
+    /// The request's known prompt-plus-output budget exceeds a worker limit.
+    OverLimit,
+    /// The request shape could not be tokenized exactly enough to prove that
+    /// it fits. Limited workers are excluded conservatively.
+    UnknownLength,
+}
+
+/// Outcome of [`filter_context_eligible`].
+#[derive(Debug)]
+pub struct ContextEligibleCandidates {
+    pub workers: Vec<Arc<Worker>>,
+    pub excluded_any: bool,
+    pub excluded_all: bool,
+    pub reason: Option<ContextFilterReason>,
+}
+
+/// Whether at least one candidate declares a router-enforced context limit.
+pub fn has_context_limited_worker(workers: &[Arc<Worker>]) -> bool {
+    workers.iter().any(|w| w.max_context_tokens().is_some())
+}
+
+/// Remove workers that cannot safely serve the request's total context.
+///
+/// Workers without `max_context_tokens` remain eligible and defer validation
+/// to their engine. A limited worker is eligible only when the router has a
+/// reliable prompt-plus-output token count and that count is within the
+/// declared limit. Unknown request length never spills onto a limited worker.
+pub fn filter_context_eligible(
+    workers: &[Arc<Worker>],
+    required_context_tokens: Option<usize>,
+) -> ContextEligibleCandidates {
+    let reason = required_context_tokens
+        .map(|_| ContextFilterReason::OverLimit)
+        .unwrap_or(ContextFilterReason::UnknownLength);
+    let eligible: Vec<Arc<Worker>> = workers
+        .iter()
+        .filter(|worker| match worker.max_context_tokens() {
+            None => true,
+            Some(limit) => required_context_tokens.is_some_and(|required| required <= limit),
+        })
+        .cloned()
+        .collect();
+    let excluded = eligible.len() != workers.len();
+
+    ContextEligibleCandidates {
+        excluded_all: excluded && eligible.is_empty(),
+        excluded_any: excluded && !eligible.is_empty(),
+        workers: eligible,
+        reason: excluded.then_some(reason),
     }
 }
 
@@ -414,6 +468,7 @@ mod tests {
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -438,6 +493,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -522,6 +578,67 @@ mod tests {
         assert!(out.workers.is_empty());
         assert!(!out.excluded_all);
         assert!(!out.excluded_any);
+    }
+
+    fn context_worker(id: &str, max_context_tokens: Option<usize>) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode: WorkerMode::Plain,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+        }))
+    }
+
+    #[test]
+    fn context_filter_keeps_request_within_worker_limit() {
+        let limited = context_worker("amd", Some(500_000));
+        let out = filter_context_eligible(&[Arc::clone(&limited)], Some(500_000));
+        assert_eq!(out.workers.len(), 1);
+        assert!(!out.excluded_any);
+        assert!(!out.excluded_all);
+        assert_eq!(out.reason, None);
+    }
+
+    #[test]
+    fn context_filter_routes_over_limit_request_to_unlimited_worker() {
+        let limited = context_worker("amd", Some(500_000));
+        let unlimited = context_worker("b200", None);
+        let out = filter_context_eligible(
+            &[Arc::clone(&limited), Arc::clone(&unlimited)],
+            Some(500_001),
+        );
+        assert_eq!(out.workers.len(), 1);
+        assert_eq!(out.workers[0].url, unlimited.url);
+        assert!(out.excluded_any);
+        assert!(!out.excluded_all);
+        assert_eq!(out.reason, Some(ContextFilterReason::OverLimit));
+    }
+
+    #[test]
+    fn context_filter_excludes_limited_worker_for_unknown_length() {
+        let limited = context_worker("amd", Some(500_000));
+        let unlimited = context_worker("b200", None);
+        let out = filter_context_eligible(&[Arc::clone(&limited), Arc::clone(&unlimited)], None);
+        assert_eq!(out.workers.len(), 1);
+        assert_eq!(out.workers[0].url, unlimited.url);
+        assert_eq!(out.reason, Some(ContextFilterReason::UnknownLength));
+    }
+
+    #[test]
+    fn context_filter_rejects_when_only_limited_worker_cannot_serve() {
+        let limited = context_worker("amd", Some(500_000));
+        for required in [Some(500_001), None] {
+            let out = filter_context_eligible(&[Arc::clone(&limited)], required);
+            assert!(out.workers.is_empty());
+            assert!(out.excluded_all);
+            assert!(!out.excluded_any);
+        }
     }
 
     /// Model with only Plain workers → Plain partition.
@@ -705,6 +822,7 @@ mod tests {
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
@@ -726,7 +844,7 @@ mod tests {
         let prefill_url = "http://host_a:30000";
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0)
+            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_a:30001",
@@ -761,7 +879,7 @@ mod tests {
         assert!(!d1.breaker.allow(), "d1 breaker must be open");
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
@@ -813,7 +931,7 @@ mod tests {
         }
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap();
         assert!(
             chosen.url == "http://host_b:30001" || chosen.url == "http://host_c:30001",
@@ -849,7 +967,7 @@ mod tests {
         let _g = d1.load_guard();
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_c:30001",
@@ -869,7 +987,7 @@ mod tests {
         )]);
         let resolver = PdPoolResolver::new(r);
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
     }
@@ -885,7 +1003,7 @@ mod tests {
         ]);
         let resolver = PdPoolResolver::new(r);
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0)
+            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None)
             .unwrap();
         // Both d1 and d2 are at load 0 → either is acceptable. The
         // assertion is only that the function returns Some, not None
@@ -933,7 +1051,7 @@ mod tests {
         // preserves PD shape and decode_with_affinity surfaces the
         // per-pool code.
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
 

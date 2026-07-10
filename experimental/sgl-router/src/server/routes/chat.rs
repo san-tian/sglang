@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::discovery::{ModelId, WorkerMode};
-use crate::policies::registry::{filter_eligible, PdPoolResolver, PdResolveError};
+use crate::policies::registry::{
+    filter_eligible, has_context_limited_worker, PdPoolResolver, PdResolveError,
+};
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::router_state::RouterStateReservationGuard;
 use crate::server::app_context::AppContext;
@@ -15,6 +17,7 @@ use crate::server::routes::admission::enforce_external_queue_admission;
 use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
+use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::tool_schema::normalize_chat_tool_schemas;
 use crate::server::trace::TraceContext;
@@ -123,6 +126,10 @@ struct RequestProbe {
     /// capacity-restricted workers (see [`filter_eligible`]).
     #[serde(default)]
     priority: Option<serde_json::Value>,
+    #[serde(default)]
+    max_tokens: Option<serde_json::Value>,
+    #[serde(default)]
+    max_completion_tokens: Option<serde_json::Value>,
 }
 
 /// RAII guard that records `sgl_router_request_duration_seconds` when
@@ -310,7 +317,6 @@ async fn chat_completions_inner(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
-    enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     // Tokenize once at ingress whenever it can pay off — decoupled from the
     // routing policy, because forwarding `input_ids` is a property of the
@@ -331,7 +337,9 @@ async fn chat_completions_inner(
     // body. When parsed, this single value is reused for the routing
     // tokenization and the outgoing-body injection below (and PD bootstrap
     // injection). `parse_probe` already validated the object shape.
-    let want_tokens = ctx.tokenizers.has_chat_encoder(&model_str) || policy.needs_request_tokens();
+    let want_tokens = ctx.tokenizers.has_chat_encoder(&model_str)
+        || policy.needs_request_tokens()
+        || has_context_limited_worker(&workers);
     let request_value: Option<serde_json::Value> = if want_tokens {
         Some(serde_json::from_slice(&body).map_err(|_| {
             ApiError::BadRequest("invalid request: body must be a JSON object".into())
@@ -348,6 +356,24 @@ async fn chat_completions_inner(
     let request_tokens = request_value
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
+
+    let reliable_prompt_tokens = match (request_value.as_ref(), request_tokens.as_ref()) {
+        (Some(value), Some(tokens))
+            if tokens.engine_equivalent && context_prompt_tokens_reliable(value) =>
+        {
+            Some(tokens.ids.len())
+        }
+        _ => None,
+    };
+    let required_context_tokens = required_context_tokens(
+        reliable_prompt_tokens,
+        &[
+            probe.max_tokens.as_ref(),
+            probe.max_completion_tokens.as_ref(),
+        ],
+    );
+    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
+    enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     // Sticky-session routing key. When the sticky policy is configured,
     // read the routing key from the operator-chosen header into the
@@ -393,7 +419,12 @@ async fn chat_completions_inner(
     let decode_peer: Option<Arc<Worker>> = if worker.mode() == WorkerMode::Prefill {
         Some(
             resolver
-                .decode_with_affinity(&model_id, &worker.url, request_priority)
+                .decode_with_affinity(
+                    &model_id,
+                    &worker.url,
+                    request_priority,
+                    required_context_tokens,
+                )
                 .map_err(|e| match e {
                     PdResolveError::NoHealthyWorkers => ApiError::NoHealthyWorkers {
                         model: model_str.clone(),
@@ -1161,7 +1192,25 @@ fn normalize_chat_tool_schema_required_nulls(body: Bytes) -> Result<Bytes, ApiEr
 /// tokenizer that does not would diverge by a leading special, again undetectable
 /// from the request.
 fn input_ids_safe_to_forward(value: &serde_json::Value) -> bool {
-    if request_has_tools(value) || request_is_multimodal(value) {
+    if request_has_tools(value) || !context_prompt_tokens_reliable(value) {
+        return false;
+    }
+    true
+}
+
+/// Whether ingress tokenization is reliable enough for a hard context-window
+/// decision. Tool schemas are allowed because `encode_chat_with_tools`
+/// renders them; legacy `functions` and request-specific template controls are
+/// not represented by that path and therefore make the length unknown.
+fn context_prompt_tokens_reliable(value: &serde_json::Value) -> bool {
+    if request_is_multimodal(value)
+        || value.get("input_ids").is_some_and(|v| !v.is_null())
+        || value.get("functions").is_some_and(|v| match v {
+            serde_json::Value::Array(a) => !a.is_empty(),
+            serde_json::Value::Null => false,
+            _ => true,
+        })
+    {
         return false;
     }
     // Fields that steer the engine's template tokenization but which the
@@ -1199,10 +1248,9 @@ fn input_ids_safe_to_forward(value: &serde_json::Value) -> bool {
 ///     tokenization.
 ///
 /// Non-chat-encoder / non-`messages` requests never expected the offload, so
-/// they are not failures. A tools / multimodal / thinking request on a
-/// chat-encoder model still gets engine-equivalent ids (`encode_chat`
-/// succeeded; the safe-predicate withholds forwarding for other reasons), so it
-/// is an expected omission, not a failure.
+/// they are not failures. Tools / multimodal / thinking requests are also
+/// expected omissions because the safe predicate deliberately keeps their
+/// tokenization at the engine, whether or not ingress encoding produced ids.
 fn ingress_tokenize_offload_failed(
     has_chat_encoder: bool,
     request_value: Option<&serde_json::Value>,
@@ -1214,6 +1262,9 @@ fn ingress_tokenize_offload_failed(
     let chat_request =
         request_value.is_some_and(|v| v.get("messages").is_some_and(|m| m.is_array()));
     if !chat_request {
+        return false;
+    }
+    if request_value.is_some_and(|v| !input_ids_safe_to_forward(v)) {
         return false;
     }
     !request_tokens.is_some_and(|t| t.engine_equivalent)
@@ -1413,6 +1464,25 @@ mod tests {
         assert!(!request_is_multimodal(&serde_json::json!({
             "messages":[{"role":"user","content":"hello"}]
         })));
+    }
+
+    #[test]
+    fn context_prompt_reliability_is_conservative_but_allows_tool_schemas() {
+        assert!(context_prompt_tokens_reliable(&serde_json::json!({
+            "messages":[{"role":"user","content":"hello"}],
+            "tools":[{"type":"function","function":{"name":"lookup"}}]
+        })));
+        for body in [
+            serde_json::json!({
+                "messages":[{"role":"user","content":[{"type":"image_url","image_url":"x"}]}]
+            }),
+            serde_json::json!({"messages":[], "functions":[{"name":"legacy"}]}),
+            serde_json::json!({"messages":[], "input_ids":[1,2,3]}),
+            serde_json::json!({"messages":[], "chat_template":"custom"}),
+            serde_json::json!({"messages":[{"role":"assistant","content":"prefix"}]}),
+        ] {
+            assert!(!context_prompt_tokens_reliable(&body), "body: {body}");
+        }
     }
 
     /// Plain text chat with nothing unreplicated → input_ids may be forwarded.
@@ -1674,6 +1744,17 @@ mod tests {
             Some(&value),
             Some(&tokens)
         ));
+    }
+
+    /// Tool requests intentionally keep tokenization at the engine, so a
+    /// missing ingress tokenization result is an expected omission.
+    #[test]
+    fn offload_failed_false_for_tool_request() {
+        let value = serde_json::json!({
+            "messages":[{"role":"user","content":"hi"}],
+            "tools":[{"type":"function","function":{"name":"lookup"}}]
+        });
+        assert!(!ingress_tokenize_offload_failed(true, Some(&value), None));
     }
 
     /// Non-chat-encoder models never expected the offload → not a failure even

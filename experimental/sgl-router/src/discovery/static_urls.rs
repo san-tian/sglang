@@ -34,12 +34,14 @@ use tokio::sync::mpsc;
 /// `http://host:port@min_priority=100`. A distinctive literal (not a bare
 /// `@`) so it cannot collide with URL userinfo (`user:pass@host`).
 const MIN_PRIORITY_TOKEN: &str = "@min_priority=";
+const MAX_CONTEXT_TOKENS_TOKEN: &str = "@max_context_tokens=";
 const BACKEND_TOKEN: &str = "@backend=";
 const TIER_TOKEN: &str = "@tier=";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WorkerCapabilities {
     pub min_priority: Option<i64>,
+    pub max_context_tokens: Option<usize>,
     pub backend: WorkerBackend,
     pub tier: WorkerTier,
 }
@@ -48,6 +50,7 @@ impl Default for WorkerCapabilities {
     fn default() -> Self {
         Self {
             min_priority: None,
+            max_context_tokens: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
         }
@@ -74,11 +77,15 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
     let mut base = entry;
     let mut caps = WorkerCapabilities::default();
     loop {
-        let Some((pos, token)) = [MIN_PRIORITY_TOKEN, BACKEND_TOKEN, TIER_TOKEN]
-            .into_iter()
-            .filter_map(|token| base.rfind(token).map(|pos| (pos, token)))
-            .max_by_key(|(pos, _)| *pos)
-        else {
+        let Some((pos, token)) = [
+            MIN_PRIORITY_TOKEN,
+            MAX_CONTEXT_TOKENS_TOKEN,
+            BACKEND_TOKEN,
+            TIER_TOKEN,
+        ]
+        .into_iter()
+        .filter_map(|token| base.rfind(token).map(|pos| (pos, token)))
+        .max_by_key(|(pos, _)| *pos) else {
             break;
         };
         let value = &base[pos + token.len()..];
@@ -91,6 +98,20 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
                 )
             })?;
             caps.min_priority = Some(prio);
+        } else if token == MAX_CONTEXT_TOKENS_TOKEN {
+            let max_context_tokens = value.trim().parse::<usize>().map_err(|_| {
+                anyhow::anyhow!(
+                    "invalid max_context_tokens in worker URL entry {entry:?}: \
+                     {value:?} is not a positive integer"
+                )
+            })?;
+            if max_context_tokens == 0 {
+                return Err(anyhow::anyhow!(
+                    "invalid max_context_tokens in worker URL entry {entry:?}: \
+                     value must be greater than zero"
+                ));
+            }
+            caps.max_context_tokens = Some(max_context_tokens);
         } else if token == BACKEND_TOKEN {
             caps.backend = match value.trim() {
                 "sglang" => WorkerBackend::Sglang,
@@ -169,6 +190,7 @@ pub async fn spawn(
                 model_ids: Vec::new(),
                 bootstrap_port: None,
                 min_priority: caps.min_priority,
+                max_context_tokens: caps.max_context_tokens,
                 bearer_token,
                 backend: caps.backend,
                 tier: caps.tier,
@@ -212,6 +234,7 @@ mod tests {
         let (url, caps) = parse_worker_entry("http://w0:30000").unwrap();
         assert_eq!(url, "http://w0:30000");
         assert_eq!(caps.min_priority, None);
+        assert_eq!(caps.max_context_tokens, None);
         assert_eq!(caps.backend, WorkerBackend::Sglang);
         assert_eq!(caps.tier, WorkerTier::Default);
     }
@@ -223,6 +246,15 @@ mod tests {
         assert_eq!(caps.min_priority, Some(100));
         assert_eq!(caps.backend, WorkerBackend::Sglang);
         assert_eq!(caps.tier, WorkerTier::Default);
+    }
+
+    #[test]
+    fn parse_entry_extracts_max_context_tokens_suffix() {
+        let (url, caps) =
+            parse_worker_entry("http://amd-01:30000@max_context_tokens=500000").unwrap();
+        assert_eq!(url, "http://amd-01:30000");
+        assert_eq!(caps.max_context_tokens, Some(500_000));
+        assert_eq!(caps.min_priority, None);
     }
 
     #[test]
@@ -255,21 +287,25 @@ mod tests {
 
     #[test]
     fn parse_entry_extracts_combined_suffixes_in_either_order() {
-        let (url, caps) =
-            parse_worker_entry("http://h20-r0:8006@backend=vllm@tier=bulk@min_priority=100")
-                .unwrap();
+        let (url, caps) = parse_worker_entry(
+            "http://h20-r0:8006@backend=vllm@tier=bulk@min_priority=100@max_context_tokens=500000",
+        )
+        .unwrap();
         assert_eq!(url, "http://h20-r0:8006");
         assert_eq!(caps.backend, WorkerBackend::Vllm);
         assert_eq!(caps.tier, WorkerTier::Bulk);
         assert_eq!(caps.min_priority, Some(100));
+        assert_eq!(caps.max_context_tokens, Some(500_000));
 
-        let (url, caps) =
-            parse_worker_entry("http://h20-r0:8006@min_priority=100@tier=bulk@backend=vllm")
-                .unwrap();
+        let (url, caps) = parse_worker_entry(
+            "http://h20-r0:8006@max_context_tokens=500000@min_priority=100@tier=bulk@backend=vllm",
+        )
+        .unwrap();
         assert_eq!(url, "http://h20-r0:8006");
         assert_eq!(caps.backend, WorkerBackend::Vllm);
         assert_eq!(caps.tier, WorkerTier::Bulk);
         assert_eq!(caps.min_priority, Some(100));
+        assert_eq!(caps.max_context_tokens, Some(500_000));
     }
 
     #[test]
@@ -305,6 +341,16 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("min_priority"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_entry_rejects_invalid_max_context_tokens() {
+        for value in ["0", "-1", "many", ""] {
+            let err = parse_worker_entry(&format!("http://w:30000@max_context_tokens={value}"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("max_context_tokens"), "got: {err}");
+        }
     }
 
     #[test]

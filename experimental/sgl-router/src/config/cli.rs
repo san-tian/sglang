@@ -181,15 +181,18 @@ pub struct Cli {
     /// Static worker URLs (space-separated or repeated). Mutually
     /// exclusive with `--service-discovery`.
     ///
-    /// Each entry may carry an optional minimum-priority capability
-    /// suffix `@min_priority=N`, e.g.
+    /// Each entry may carry optional capability suffixes. The
+    /// minimum-priority suffix `@min_priority=N`, e.g.
     /// `http://rtx-01:30000@min_priority=100`. A worker tagged this way is
     /// eligible only for requests whose body `priority` is `>= N`; lower
     /// (or absent, treated as `0`) priority requests never route to it.
     /// Use this to keep heterogeneous/low-context workers (e.g. RTX-6000)
-    /// serving only short high-priority production traffic. A malformed
-    /// suffix fails startup. Omit the suffix for a worker that accepts any
-    /// request.
+    /// serving only short high-priority production traffic.
+    /// `@max_context_tokens=N` declares the worker's safe prompt-plus-output
+    /// context ceiling; requests that cannot be proven to fit are excluded
+    /// from that worker before policy scoring. Suffixes may be combined. A
+    /// malformed suffix fails startup. Omit a capability when it does not
+    /// apply to that worker.
     #[arg(long, num_args = 1..)]
     pub worker_urls: Vec<String>,
 

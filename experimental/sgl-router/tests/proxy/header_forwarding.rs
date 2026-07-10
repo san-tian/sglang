@@ -28,6 +28,7 @@ fn build_test_app(cfg: Config, worker_url: String, bearer_token: Option<String>)
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
         min_priority: None,
+        max_context_tokens: None,
         bearer_token,
         backend: Default::default(),
         tier: Default::default(),

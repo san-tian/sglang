@@ -254,6 +254,7 @@ mod tests {
             model_ids: models.iter().map(|m| ModelId((*m).into())).collect(),
             bootstrap_port: None,
             min_priority: None,
+            max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
