@@ -105,7 +105,7 @@ fn env_to_cli_args() -> Vec<OsString> {
         .next()
         .unwrap_or_else(|| OsString::from("sgl-router"))];
     push_env_arg_or_default(&mut args, "HOST", "--host", "0.0.0.0");
-    push_env_arg_or_default(&mut args, "PORT", "--port", "8080");
+    push_env_arg_or_fallback_default(&mut args, "PORT", "ROUTER_PORT", "--port", "8080");
     push_env_arg(&mut args, "MODEL_ID", "--model-id");
     push_env_arg(&mut args, "POLICY", "--policy");
     push_env_arg(&mut args, "REQUEST_TIMEOUT_SECS", "--request-timeout-secs");
@@ -159,6 +159,25 @@ fn push_env_arg_or_default(args: &mut Vec<OsString>, env_name: &str, flag: &str,
     args.push(OsString::from(
         non_empty_env(env_name).unwrap_or_else(|| default.to_string()),
     ));
+}
+
+fn push_env_arg_or_fallback_default(
+    args: &mut Vec<OsString>,
+    env_name: &str,
+    fallback_env_name: &str,
+    flag: &str,
+    default: &str,
+) {
+    args.push(OsString::from(flag));
+    args.push(OsString::from(select_env_value(
+        non_empty_env(env_name),
+        non_empty_env(fallback_env_name),
+        default,
+    )));
+}
+
+fn select_env_value(primary: Option<String>, fallback: Option<String>, default: &str) -> String {
+    primary.or(fallback).unwrap_or_else(|| default.to_string())
 }
 
 fn push_env_flag(args: &mut Vec<OsString>, env_name: &str, flag: &str) {
@@ -846,5 +865,19 @@ mod tests {
         // Doesn't matter whether we win or lose the race against another
         // subscriber install — the function must return Ok either way.
         assert!(init_tracing("info", LogFormat::Json).is_ok());
+    }
+
+    #[test]
+    fn env_value_prefers_primary_over_legacy_fallback() {
+        assert_eq!(
+            select_env_value(Some("8082".into()), Some("8081".into()), "8080"),
+            "8082"
+        );
+    }
+
+    #[test]
+    fn env_value_uses_legacy_fallback_before_default() {
+        assert_eq!(select_env_value(None, Some("8081".into()), "8080"), "8081");
+        assert_eq!(select_env_value(None, None, "8080"), "8080");
     }
 }
