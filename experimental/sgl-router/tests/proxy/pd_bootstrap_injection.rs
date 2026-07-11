@@ -160,6 +160,7 @@ async fn pd_mode_chat_injects_bootstrap_fields_into_both_bodies() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -172,6 +173,7 @@ async fn pd_mode_chat_injects_bootstrap_fields_into_both_bodies() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         },
     ]);
     let app = build_router(ctx);
@@ -226,6 +228,7 @@ async fn plain_mode_chat_does_not_inject_bootstrap_fields() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     }]);
     let app = build_router(ctx);
 
@@ -268,6 +271,7 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         },
         WorkerSpec {
             id: WorkerId("pB".into()),
@@ -280,6 +284,7 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -292,6 +297,7 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         },
     ]);
     let app = build_router(ctx);
@@ -347,6 +353,7 @@ async fn pd_mode_prefill_5xx_does_not_poison_decode_response() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -359,6 +366,7 @@ async fn pd_mode_prefill_5xx_does_not_poison_decode_response() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         },
     ]);
     let app = build_router(ctx);

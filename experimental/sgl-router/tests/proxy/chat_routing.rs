@@ -74,6 +74,7 @@ fn build_ctx_with_worker(url: &str) -> Arc<AppContext> {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     // Per-request worker URLs flow from the registry through
@@ -800,6 +801,7 @@ async fn unknown_model_with_no_policy_returns_404_model_not_found() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(TEST_TIMEOUT).unwrap());
@@ -1136,6 +1138,7 @@ async fn streaming_load_guard_persists_for_body_lifetime() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
@@ -1275,6 +1278,7 @@ async fn streaming_active_load_persists_for_body_lifetime() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
@@ -1417,6 +1421,7 @@ async fn janitor_expiry_returns_504_stale_request_expired() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());

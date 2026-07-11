@@ -112,6 +112,7 @@ fn spec_with_backend(
         bearer_token: None,
         backend,
         tier: WorkerTier::Default,
+        routes: Default::default(),
     }
 }
 
@@ -426,6 +427,7 @@ async fn unknown_model_with_gated_worker_is_404_not_503() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     };
     let ctx = build_ctx(vec![spec]);
 

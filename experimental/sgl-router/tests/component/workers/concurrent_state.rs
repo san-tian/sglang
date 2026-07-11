@@ -82,6 +82,7 @@ fn registry_concurrent_add_remove_keeps_indexes_consistent() {
                     bearer_token: None,
                     backend: Default::default(),
                     tier: Default::default(),
+                    routes: Default::default(),
                 });
                 let snapshot = r.workers_for(&model);
                 for w in &snapshot {
@@ -140,6 +141,7 @@ fn load_guard_decrements_on_panic_unwind() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     }));
     assert_eq!(w.active_load(), 0);
 

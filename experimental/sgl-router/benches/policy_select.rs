@@ -34,6 +34,7 @@ fn workers(n: usize, model: &str) -> Vec<Arc<Worker>> {
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
+                routes: Default::default(),
             })
             .expect("test workers are unmixed");
     }

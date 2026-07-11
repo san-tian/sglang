@@ -95,6 +95,7 @@ fn build_ctx(url: String) -> Arc<AppContext> {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     // Use the real loaded tokenizers (not the empty-registry test default) so
     // the cache-aware policy can tokenize at ingress.

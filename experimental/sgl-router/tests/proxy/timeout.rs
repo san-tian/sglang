@@ -82,6 +82,7 @@ async fn non_streaming_request_times_out_when_worker_hangs() {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(Duration::from_millis(200)).unwrap());

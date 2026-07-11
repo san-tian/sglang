@@ -20,6 +20,7 @@ fn worker(id: &str) -> Arc<Worker> {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     }))
 }
 

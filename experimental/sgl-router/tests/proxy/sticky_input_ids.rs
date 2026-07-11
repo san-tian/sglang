@@ -110,6 +110,7 @@ fn build_ctx(worker_urls: &[String]) -> Arc<AppContext> {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         });
     }
     // Sticky needs no cache-aware deps, so the defaults registry is fine — the

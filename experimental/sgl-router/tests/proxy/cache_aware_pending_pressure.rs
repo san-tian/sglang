@@ -136,6 +136,7 @@ fn worker_spec(id: &str, url: &str, min_priority: Option<i64>) -> WorkerSpec {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     }
 }
 

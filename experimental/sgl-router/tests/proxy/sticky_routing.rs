@@ -84,6 +84,7 @@ fn build_sticky_ctx(header_name: &str, worker_urls: &[String]) -> Arc<AppContext
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         });
     }
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
@@ -316,6 +317,7 @@ async fn adding_a_worker_does_not_redistribute_existing_key() {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: Default::default(),
         })
         .unwrap();
     // Guard the premise: w2 really is an eligible candidate now, so the

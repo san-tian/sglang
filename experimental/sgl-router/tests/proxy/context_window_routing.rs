@@ -83,6 +83,7 @@ fn worker_spec_for_model(
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     }
 }
 

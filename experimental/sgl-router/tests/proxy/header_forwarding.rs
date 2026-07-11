@@ -32,6 +32,7 @@ fn build_test_app(cfg: Config, worker_url: String, bearer_token: Option<String>)
         bearer_token,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(Duration::from_secs(5)).unwrap());

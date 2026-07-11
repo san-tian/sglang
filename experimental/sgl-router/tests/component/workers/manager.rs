@@ -50,6 +50,7 @@ fn spec_for(id: &str, url: &str, mode: WorkerMode) -> WorkerSpec {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     }
 }
 

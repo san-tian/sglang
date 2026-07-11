@@ -47,6 +47,7 @@ fn build_worker(url: &str, model: &str) -> Arc<Worker> {
         bearer_token: None,
         backend: Default::default(),
         tier: Default::default(),
+        routes: Default::default(),
     }))
 }
 
