@@ -143,7 +143,40 @@ fn env_to_cli_args() -> Vec<OsString> {
         "--ttft-cache-score-margin",
     );
     push_env_flag(&mut args, "TTFT_FIRST_ROUTING", "--ttft-first-routing");
+    push_env_arg(
+        &mut args,
+        "FORCE_REQUEST_PRIORITY",
+        "--force-request-priority",
+    );
+    push_env_arg(
+        &mut args,
+        "TRUSTED_PRIORITY_HEADER",
+        "--trusted-priority-header",
+    );
+    push_env_arg(
+        &mut args,
+        "TRUSTED_PRIORITY_SECRET_HEADER",
+        "--trusted-priority-secret-header",
+    );
+    push_env_arg(
+        &mut args,
+        "TRUSTED_PRIORITY_SECRET",
+        "--trusted-priority-secret",
+    );
+    push_env_arg(&mut args, "TIER_PRIMARY", "--tier-primary");
+    push_env_arg(&mut args, "TIER_SPILLOVER", "--tier-spillover");
+    push_env_arg(
+        &mut args,
+        "TIER_PRIMARY_PRESSURE_THRESHOLD",
+        "--tier-primary-pressure-threshold",
+    );
+    push_env_arg(
+        &mut args,
+        "TIER_PRESSURE_TOKEN_SCALE",
+        "--tier-pressure-token-scale",
+    );
     push_worker_urls_env(&mut args);
+    push_split_env_arg(&mut args, "WORKER_BEARER_KEYS", "--worker-bearer-keys");
     args
 }
 
@@ -187,10 +220,18 @@ fn push_env_flag(args: &mut Vec<OsString>, env_name: &str, flag: &str) {
 }
 
 fn push_worker_urls_env(args: &mut Vec<OsString>) {
-    let Some(value) = non_empty_env("WORKER_URLS") else {
+    push_split_env_arg(args, "WORKER_URLS", "--worker-urls");
+}
+
+fn push_split_env_arg(args: &mut Vec<OsString>, env_name: &str, flag: &str) {
+    let Some(value) = non_empty_env(env_name) else {
         return;
     };
-    args.push(OsString::from("--worker-urls"));
+    push_split_arg(args, flag, &value);
+}
+
+fn push_split_arg(args: &mut Vec<OsString>, flag: &str, value: &str) {
+    args.push(OsString::from(flag));
     args.extend(value.split_whitespace().map(OsString::from));
 }
 
@@ -879,5 +920,84 @@ mod tests {
     fn env_value_uses_legacy_fallback_before_default() {
         assert_eq!(select_env_value(None, Some("8081".into()), "8080"), "8081");
         assert_eq!(select_env_value(None, None, "8080"), "8080");
+    }
+
+    #[test]
+    fn split_arg_adds_one_flag_and_all_entries() {
+        let mut args = vec![OsString::from("sgl-router")];
+
+        push_split_arg(
+            &mut args,
+            "--worker-bearer-keys",
+            "http://worker-a:30000=token-a http://worker-b:30000=token-b",
+        );
+
+        let args = args
+            .into_iter()
+            .map(|arg| arg.into_string().expect("test args are utf-8"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "sgl-router",
+                "--worker-bearer-keys",
+                "http://worker-a:30000=token-a",
+                "http://worker-b:30000=token-b",
+            ]
+        );
+    }
+
+    #[test]
+    fn env_adapter_preserves_internal_low_legacy_env_contract() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let envs = [
+            ("WORKER_URLS", "http://worker-a:30000 http://worker-b:30000"),
+            (
+                "WORKER_BEARER_KEYS",
+                "http://worker-a:30000=token-a http://worker-b:30000=token-b",
+            ),
+            ("FORCE_REQUEST_PRIORITY", "0"),
+            ("TIER_PRIMARY", "bulk"),
+            ("TIER_SPILLOVER", "shared"),
+            ("TIER_PRIMARY_PRESSURE_THRESHOLD", "3"),
+            ("TIER_PRESSURE_TOKEN_SCALE", "4096"),
+            ("TRUSTED_PRIORITY_HEADER", "x-llm-priority"),
+            ("TRUSTED_PRIORITY_SECRET_HEADER", "x-llm-priority-secret"),
+            ("TRUSTED_PRIORITY_SECRET", "secret"),
+        ];
+        for (name, _) in envs {
+            std::env::remove_var(name);
+        }
+        for (name, value) in envs {
+            std::env::set_var(name, value);
+        }
+
+        let args = env_to_cli_args()
+            .into_iter()
+            .map(|arg| arg.into_string().expect("test args are utf-8"))
+            .collect::<Vec<_>>();
+
+        for (name, _) in envs {
+            std::env::remove_var(name);
+        }
+
+        for flag in [
+            "--worker-urls",
+            "--worker-bearer-keys",
+            "--force-request-priority",
+            "--tier-primary",
+            "--tier-spillover",
+            "--tier-primary-pressure-threshold",
+            "--tier-pressure-token-scale",
+            "--trusted-priority-header",
+            "--trusted-priority-secret-header",
+            "--trusted-priority-secret",
+        ] {
+            assert!(
+                args.contains(&flag.to_string()),
+                "{flag} missing from {args:?}"
+            );
+        }
     }
 }
