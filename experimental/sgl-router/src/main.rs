@@ -143,6 +143,11 @@ fn env_to_cli_args() -> Vec<OsString> {
         "--ttft-cache-score-margin",
     );
     push_env_flag(&mut args, "TTFT_FIRST_ROUTING", "--ttft-first-routing");
+    push_env_flag(
+        &mut args,
+        "TTFT_IDLE_FIRST_ROUTING",
+        "--ttft-idle-first-routing",
+    );
     push_env_arg(
         &mut args,
         "FORCE_REQUEST_PRIORITY",

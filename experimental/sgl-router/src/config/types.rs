@@ -378,6 +378,11 @@ pub struct CacheAwareConfig {
     /// by predicted first-token pressure and uses cache affinity only inside
     /// the configured score band.
     pub ttft_first_routing: bool,
+    /// In TTFT-first mode, rank by first-token pressure before cache scoring.
+    /// Cache overlap then breaks ties only among the least-pressured workers.
+    /// This trades cache affinity for faster exploration of healthy idle
+    /// workers.
+    pub ttft_idle_first_routing: bool,
     /// Number of locally reserved prompt tokens that count as one TTFT
     /// pressure unit. The default matches the common SGLang page size so
     /// token-weighted pending load is comparable with uncached block count.
@@ -399,6 +404,7 @@ impl Default for CacheAwareConfig {
             use_reported_load: false,
             tree_source: CacheTreeSource::Zmq,
             ttft_first_routing: false,
+            ttft_idle_first_routing: false,
             ttft_token_scale: default_ttft_token_scale(),
             ttft_cache_score_margin: default_ttft_cache_score_margin(),
         }

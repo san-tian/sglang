@@ -302,8 +302,34 @@ impl CacheAwareZmqPolicy {
             return self.pick_min_ttft_load(workers);
         }
 
+        let idle_candidates;
+        let score_workers: &[Arc<Worker>] = if self.config.ttft_idle_first_routing {
+            let min_load = workers
+                .iter()
+                .map(|w| {
+                    w.effective_ttft_load(
+                        self.config.use_reported_load,
+                        self.config.ttft_token_scale,
+                    )
+                })
+                .min()?;
+            idle_candidates = workers
+                .iter()
+                .filter(|w| {
+                    w.effective_ttft_load(
+                        self.config.use_reported_load,
+                        self.config.ttft_token_scale,
+                    ) == min_load
+                })
+                .map(Arc::clone)
+                .collect::<Vec<_>>();
+            &idle_candidates
+        } else {
+            workers
+        };
+
         let total_blocks = block_hashes.len();
-        let best_score = workers
+        let best_score = score_workers
             .iter()
             .map(|w| {
                 self.ttft_score(
@@ -316,7 +342,7 @@ impl CacheAwareZmqPolicy {
             .unwrap_or(usize::MAX);
         let score_limit = best_score.saturating_add(self.config.ttft_cache_score_margin);
 
-        let eligible: Vec<(Arc<Worker>, usize, usize)> = workers
+        let eligible: Vec<(Arc<Worker>, usize, usize)> = score_workers
             .iter()
             .filter_map(|w| {
                 let worker_matched = matched_blocks_for_worker(w, matched_blocks, matched_urls);
@@ -762,6 +788,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: 0,
             },
@@ -794,6 +821,7 @@ mod tests {
             use_reported_load: false,
             tree_source: CacheTreeSource::Zmq,
             ttft_first_routing: false,
+            ttft_idle_first_routing: false,
             ttft_token_scale: 64,
             ttft_cache_score_margin: 0,
         }
@@ -2120,6 +2148,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: cache_score_margin,
             },
@@ -2145,6 +2174,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: 0,
             },
@@ -2201,6 +2231,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: usize::MAX,
             },
@@ -2235,6 +2266,63 @@ mod tests {
                 "http://w1:30000",
             ],
             "cache-equal workers should rotate, while the cold worker stays excluded",
+        );
+    }
+
+    #[test]
+    fn ttft_idle_first_prefers_idle_cold_worker_over_busy_cache_hit() {
+        let tree = Arc::new(HashTree::new());
+        let registry = tokenizer_registry_with_tiny();
+        let text = "hello world hello world hello world";
+        let (ids, hashes) = tiny_ids_and_hashes(&registry, text);
+        tree.insert(&KvWorkerId::new("http://w0:30000".into(), 0), None, &hashes);
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                hit_load_abs_threshold: 0,
+                hit_load_rel_threshold: f32::INFINITY,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Zmq,
+                ttft_first_routing: true,
+                ttft_idle_first_routing: true,
+                ttft_token_scale: 4,
+                ttft_cache_score_margin: usize::MAX,
+            },
+            tree,
+            registry,
+            oracle_for_tests(4),
+        );
+        let workers = vec![
+            worker("http://w0:30000", "tiny"),
+            worker("http://w1:30000", "tiny"),
+            worker("http://w2:30000", "tiny"),
+        ];
+        workers[0].set_reported_load(4);
+        workers[1].set_reported_load(0);
+        workers[2].set_reported_load(0);
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let picks: Vec<String> = (0..4)
+            .map(|_| {
+                policy
+                    .select(&workers, &ctx)
+                    .expect("must pick")
+                    .url
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(
+            picks,
+            vec![
+                "http://w1:30000",
+                "http://w2:30000",
+                "http://w1:30000",
+                "http://w2:30000",
+            ],
         );
     }
 
@@ -2434,6 +2522,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: usize::MAX,
             },
@@ -2504,6 +2593,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::RouteHistory,
                 ttft_first_routing: true,
+                ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: usize::MAX,
             },
@@ -2556,6 +2646,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: 0,
             },

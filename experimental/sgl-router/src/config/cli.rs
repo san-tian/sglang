@@ -121,6 +121,10 @@ pub struct Cli {
     /// configured score band. Only meaningful with cache-aware policies.
     #[arg(long)]
     pub ttft_first_routing: bool,
+    /// In TTFT-first mode, choose from the least-pressured workers first and
+    /// use cache overlap only as a tie-breaker inside that idle set.
+    #[arg(long)]
+    pub ttft_idle_first_routing: bool,
     /// Prompt-token count that maps to one local TTFT pressure unit for
     /// token-weighted pending reservations. Must be greater than zero.
     #[arg(long)]
@@ -384,6 +388,7 @@ impl Cli {
             || self.cache_tree_bigram
             || self.cache_tree_max_nodes.is_some()
             || self.ttft_first_routing
+            || self.ttft_idle_first_routing
             || self.ttft_token_scale.is_some()
             || self.ttft_cache_score_margin.is_some()
             || self.cache_state_url.is_some()
@@ -645,6 +650,7 @@ impl Cli {
                 use_reported_load,
                 tree_source,
                 ttft_first_routing: self.ttft_first_routing,
+                ttft_idle_first_routing: self.ttft_idle_first_routing,
                 ttft_token_scale: self.ttft_token_scale.unwrap_or(d.ttft_token_scale),
                 ttft_cache_score_margin: self
                     .ttft_cache_score_margin
