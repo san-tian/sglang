@@ -52,6 +52,7 @@ use crate::server::metrics::{
 use crate::tokenizer::TokenizerRegistry;
 use crate::workers::Worker;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// Selection policy that scores candidates by tree-overlap with the
@@ -80,6 +81,10 @@ pub struct CacheAwareZmqPolicy {
     /// `PolicyRegistry::attach_metrics` after the registry is built).
     metrics: OnceLock<Arc<MetricsRegistry>>,
     remote_cache_state: Option<Arc<RemoteCacheStateClient>>,
+    /// Round-robin cursor for exact ties. This prevents cold/no-cache traffic
+    /// from collapsing onto one stable worker while preserving cache affinity
+    /// whenever a worker has a strictly better overlap or score.
+    fair_tie_cursor: AtomicUsize,
 }
 
 impl std::fmt::Debug for CacheAwareZmqPolicy {
@@ -105,6 +110,7 @@ impl CacheAwareZmqPolicy {
             block_size_oracle,
             metrics: OnceLock::new(),
             remote_cache_state: None,
+            fair_tie_cursor: AtomicUsize::new(0),
         }
     }
 
@@ -134,13 +140,52 @@ impl CacheAwareZmqPolicy {
             .map(Arc::clone)
     }
 
-    fn pick_min_ttft_load(&self, workers: &[Arc<Worker>]) -> Option<Arc<Worker>> {
-        workers
+    fn pick_fair_worker(&self, mut candidates: Vec<Arc<Worker>>) -> Option<Arc<Worker>> {
+        if candidates.is_empty() {
+            return None;
+        }
+        candidates.sort_by(|left, right| left.url.cmp(&right.url));
+        let index = self.fair_tie_cursor.fetch_add(1, Ordering::Relaxed) % candidates.len();
+        Some(Arc::clone(&candidates[index]))
+    }
+
+    fn pick_min_load_fair(
+        &self,
+        workers: &[Arc<Worker>],
+        use_reported: bool,
+    ) -> Option<Arc<Worker>> {
+        let min_load = workers
             .iter()
-            .min_by_key(|w| {
+            .map(|w| w.effective_load(use_reported))
+            .min()?;
+        self.pick_fair_worker(
+            workers
+                .iter()
+                .filter(|w| w.effective_load(use_reported) == min_load)
+                .map(Arc::clone)
+                .collect(),
+        )
+    }
+
+    fn pick_min_ttft_load(&self, workers: &[Arc<Worker>]) -> Option<Arc<Worker>> {
+        let min_load = workers
+            .iter()
+            .map(|w| {
                 w.effective_ttft_load(self.config.use_reported_load, self.config.ttft_token_scale)
             })
-            .map(Arc::clone)
+            .min()?;
+        self.pick_fair_worker(
+            workers
+                .iter()
+                .filter(|w| {
+                    w.effective_ttft_load(
+                        self.config.use_reported_load,
+                        self.config.ttft_token_scale,
+                    ) == min_load
+                })
+                .map(Arc::clone)
+                .collect(),
+        )
     }
 
     fn hit_load_guard_diverts(&self, hot_load: usize, cool_load: usize) -> bool {
@@ -271,7 +316,7 @@ impl CacheAwareZmqPolicy {
             .unwrap_or(usize::MAX);
         let score_limit = best_score.saturating_add(self.config.ttft_cache_score_margin);
 
-        let chosen = workers
+        let eligible: Vec<(Arc<Worker>, usize, usize)> = workers
             .iter()
             .filter_map(|w| {
                 let worker_matched = matched_blocks_for_worker(w, matched_blocks, matched_urls);
@@ -282,15 +327,28 @@ impl CacheAwareZmqPolicy {
                     None
                 }
             })
-            .max_by(
-                |(left_worker, left_score, left_matched),
-                 (right_worker, right_score, right_matched)| {
-                    left_matched
-                        .cmp(right_matched)
-                        .then_with(|| right_score.cmp(left_score))
-                        .then_with(|| right_worker.url.cmp(&left_worker.url))
-                },
-            )
+            .collect();
+
+        let chosen = eligible
+            .iter()
+            .map(|(_, _, worker_matched)| *worker_matched)
+            .max()
+            .and_then(|best_matched| {
+                let best_score_for_match = eligible
+                    .iter()
+                    .filter(|(_, _, worker_matched)| *worker_matched == best_matched)
+                    .map(|(_, score, _)| *score)
+                    .min()?;
+                let candidates = eligible
+                    .iter()
+                    .filter(|(_, score, worker_matched)| {
+                        *worker_matched == best_matched && *score == best_score_for_match
+                    })
+                    .map(|(w, _, _)| Arc::clone(w))
+                    .collect();
+                self.pick_fair_worker(candidates)
+                    .map(|w| (w, best_score_for_match, best_matched))
+            })
             .map(|(w, score, worker_matched)| {
                 tracing::debug!(
                     model = %ctx.model(),
@@ -440,7 +498,7 @@ impl CacheAwareZmqPolicy {
         // 1. Load-imbalance fast-path: even the best cache hit gets
         //    dropped in favour of evening out load.
         if !self.config.ttft_first_routing && self.is_imbalanced(workers) {
-            return Self::pick_min_load(workers, self.config.use_reported_load);
+            return self.pick_min_load_fair(workers, self.config.use_reported_load);
         }
 
         // 2. Routing tokens. Prefer the ids computed once at ingress; fall
@@ -457,7 +515,7 @@ impl CacheAwareZmqPolicy {
                         return if self.config.ttft_first_routing {
                             self.pick_min_ttft_load(workers)
                         } else {
-                            Self::pick_min_load(workers, self.config.use_reported_load)
+                            self.pick_min_load_fair(workers, self.config.use_reported_load)
                         }
                     }
                 };
@@ -465,14 +523,14 @@ impl CacheAwareZmqPolicy {
                     return if self.config.ttft_first_routing {
                         self.pick_min_ttft_load(workers)
                     } else {
-                        Self::pick_min_load(workers, self.config.use_reported_load)
+                        self.pick_min_load_fair(workers, self.config.use_reported_load)
                     };
                 };
                 let Some(rt) = request_tokens_for(&self.tokenizers, ctx.model(), &value) else {
                     return if self.config.ttft_first_routing {
                         self.pick_min_ttft_load(workers)
                     } else {
-                        Self::pick_min_load(workers, self.config.use_reported_load)
+                        self.pick_min_load_fair(workers, self.config.use_reported_load)
                     };
                 };
                 fallback_ids = rt.ids;
@@ -493,7 +551,7 @@ impl CacheAwareZmqPolicy {
             return if self.config.ttft_first_routing {
                 self.pick_min_ttft_load(workers)
             } else {
-                Self::pick_min_load(workers, self.config.use_reported_load)
+                self.pick_min_load_fair(workers, self.config.use_reported_load)
             };
         };
         // EAGLE-family workers hash KV blocks over token bigrams; the query
@@ -510,7 +568,7 @@ impl CacheAwareZmqPolicy {
             return if self.config.ttft_first_routing {
                 self.pick_min_ttft_load(workers)
             } else {
-                Self::pick_min_load(workers, self.config.use_reported_load)
+                self.pick_min_load_fair(workers, self.config.use_reported_load)
             };
         }
         let matched = self.match_prefix(ctx.model(), &block_hashes);
@@ -563,26 +621,28 @@ impl CacheAwareZmqPolicy {
             // Route-history feeding: even on a min-load fallback, record this
             // prefix against the worker we actually send it to, so the next
             // request sharing the prefix can match it. (No-op in zmq mode.)
-            let chosen = Self::pick_min_load(workers, self.config.use_reported_load);
+            let chosen = self.pick_min_load_fair(workers, self.config.use_reported_load);
             self.feed_route_history(ctx.model(), &chosen, &block_hashes);
             return chosen;
         }
         // Among workers in the matched set, pick the lowest-load one.
         let matched_urls: HashSet<&str> =
             matched.worker_urls.iter().map(|url| url.as_str()).collect();
-        let best_matched: Option<Arc<Worker>> = workers
+        let matched_workers: Vec<Arc<Worker>> = workers
             .iter()
             .filter(|w| matched_urls.contains(w.url.as_str()))
-            .min_by_key(|w| w.effective_load(self.config.use_reported_load))
-            .map(Arc::clone);
+            .map(Arc::clone)
+            .collect();
+        let best_matched: Option<Arc<Worker>> =
+            self.pick_min_load_fair(&matched_workers, self.config.use_reported_load);
         // Cache-hit load guard: even when a cache hit wins, the hit worker
         // may be individually backed up while the system as a whole still
         // looks balanced (so the imbalance fast-path above didn't fire).
         // Divert to the globally least-loaded worker when the hit worker
         // leads it past both thresholds. OFF by default (rel = INFINITY).
         let best_matched = best_matched.map(|hot| self.apply_hit_load_guard(hot, workers));
-        let chosen =
-            best_matched.or_else(|| Self::pick_min_load(workers, self.config.use_reported_load));
+        let chosen = best_matched
+            .or_else(|| self.pick_min_load_fair(workers, self.config.use_reported_load));
         if let Some(w) = &chosen {
             tracing::debug!(
                 model = %ctx.model(),
@@ -860,6 +920,50 @@ mod tests {
         let ctx = SelectionContext::new(&model, Some(body));
         let chosen = policy.select(&workers, &ctx).expect("must pick");
         assert_eq!(chosen.url, "http://w1:30000");
+    }
+
+    /// Empty tree and equal load: fallback traffic should not stick to one
+    /// stable worker. This is the cold-prefix path for new/underused hosts.
+    #[test]
+    fn empty_tree_equal_load_rotates_min_load_fallback() {
+        let tree = Arc::new(HashTree::new());
+        let registry = tokenizer_registry_with_tiny();
+        let policy = CacheAwareZmqPolicy::new(
+            cfg_default(),
+            tree,
+            Arc::clone(&registry),
+            oracle_for_tests(4),
+        );
+        let workers = vec![
+            worker("http://w0:30000", "tiny"),
+            worker("http://w1:30000", "tiny"),
+            worker("http://w2:30000", "tiny"),
+        ];
+        let (ids, _) = tiny_ids_and_hashes(&registry, "hello world hello world hello world");
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let picks: Vec<String> = (0..6)
+            .map(|_| {
+                policy
+                    .select(&workers, &ctx)
+                    .expect("must pick")
+                    .url
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(
+            picks,
+            vec![
+                "http://w0:30000",
+                "http://w1:30000",
+                "http://w2:30000",
+                "http://w0:30000",
+                "http://w1:30000",
+                "http://w2:30000",
+            ],
+        );
     }
 
     /// Tree contains w0's prefix; cache-aware selection picks w0 even
@@ -2024,6 +2128,114 @@ mod tests {
             oracle_for_tests(4),
         );
         (policy, ids)
+    }
+
+    #[test]
+    fn ttft_first_no_cache_signal_rotates_equal_score_workers() {
+        let tree = Arc::new(HashTree::new());
+        let registry = tokenizer_registry_with_tiny();
+        let (ids, _) = tiny_ids_and_hashes(&registry, "hello world hello world hello world");
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                hit_load_abs_threshold: 0,
+                hit_load_rel_threshold: f32::INFINITY,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Zmq,
+                ttft_first_routing: true,
+                ttft_token_scale: 4,
+                ttft_cache_score_margin: 0,
+            },
+            tree,
+            registry,
+            oracle_for_tests(4),
+        );
+        let workers = vec![
+            worker("http://w0:30000", "tiny"),
+            worker("http://w1:30000", "tiny"),
+            worker("http://w2:30000", "tiny"),
+        ];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let picks: Vec<String> = (0..6)
+            .map(|_| {
+                policy
+                    .select(&workers, &ctx)
+                    .expect("must pick")
+                    .url
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(
+            picks,
+            vec![
+                "http://w0:30000",
+                "http://w1:30000",
+                "http://w2:30000",
+                "http://w0:30000",
+                "http://w1:30000",
+                "http://w2:30000",
+            ],
+        );
+    }
+
+    #[test]
+    fn ttft_first_cache_tie_rotates_without_spilling_to_cold_worker() {
+        let tree = Arc::new(HashTree::new());
+        let registry = tokenizer_registry_with_tiny();
+        let text = "hello world hello world hello world";
+        let (ids, hashes) = tiny_ids_and_hashes(&registry, text);
+        tree.insert(&KvWorkerId::new("http://w0:30000".into(), 0), None, &hashes);
+        tree.insert(&KvWorkerId::new("http://w1:30000".into(), 0), None, &hashes);
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                hit_load_abs_threshold: 0,
+                hit_load_rel_threshold: f32::INFINITY,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Zmq,
+                ttft_first_routing: true,
+                ttft_token_scale: 4,
+                ttft_cache_score_margin: usize::MAX,
+            },
+            tree,
+            registry,
+            oracle_for_tests(4),
+        );
+        let workers = vec![
+            worker("http://w0:30000", "tiny"),
+            worker("http://w1:30000", "tiny"),
+            worker("http://w2:30000", "tiny"),
+        ];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let picks: Vec<String> = (0..4)
+            .map(|_| {
+                policy
+                    .select(&workers, &ctx)
+                    .expect("must pick")
+                    .url
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(
+            picks,
+            vec![
+                "http://w0:30000",
+                "http://w1:30000",
+                "http://w0:30000",
+                "http://w1:30000",
+            ],
+            "cache-equal workers should rotate, while the cold worker stays excluded",
+        );
     }
 
     #[test]
