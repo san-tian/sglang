@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use sgl_router::config::{Cli, LogFormat, RuntimeMode};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -240,13 +240,26 @@ fn push_split_arg(args: &mut Vec<OsString>, flag: &str, value: &str) {
     args.extend(value.split_whitespace().map(OsString::from));
 }
 
-async fn push_worker_registry_env(args: &mut Vec<OsString>) -> Result<()> {
+async fn push_worker_registry_env(
+    args: &mut Vec<OsString>,
+) -> Result<Option<sgl_router::discovery::app_config_runtime::RuntimeLeaseDiscoveryConfig>> {
+    let runtime_key = non_empty_env("WORKER_RUNTIME_APP_CONFIG_KEY");
     if non_empty_env("WORKER_URLS").is_some() {
-        return Ok(());
+        if runtime_key.is_some() {
+            anyhow::bail!(
+                "WORKER_RUNTIME_APP_CONFIG_KEY requires the named worker registry; WORKER_URLS cannot preserve worker names"
+            );
+        }
+        return Ok(None);
     }
     let source = worker_registry_source_from_env()?;
     if !source.is_configured() {
-        return Ok(());
+        if runtime_key.is_some() {
+            anyhow::bail!(
+                "WORKER_RUNTIME_APP_CONFIG_KEY requires an App Configuration worker registry source"
+            );
+        }
+        return Ok(None);
     }
     let Some(pool) = non_empty_env("WORKER_REGISTRY_POOL") else {
         anyhow::bail!(
@@ -256,19 +269,66 @@ async fn push_worker_registry_env(args: &mut Vec<OsString>) -> Result<()> {
     let raw_json = source.load().await?;
     let registry = sgl_router::app_config_registry::parse_registry(&raw_json)?;
     let default_suffix = non_empty_env("WORKER_REGISTRY_URL_SUFFIX");
-    let worker_urls = sgl_router::app_config_registry::worker_urls_for_pool(
+    let named_worker_urls = sgl_router::app_config_registry::named_worker_urls_for_pool(
         &registry,
         &pool,
         default_suffix.as_deref(),
     )?;
     tracing::info!(
         pool = %pool,
-        worker_count = worker_urls.len(),
+        worker_count = named_worker_urls.len(),
         "loaded worker URLs from worker registry"
     );
     args.push(OsString::from("--worker-urls"));
-    args.extend(worker_urls.into_iter().map(OsString::from));
-    Ok(())
+    args.extend(
+        named_worker_urls
+            .iter()
+            .map(|worker| OsString::from(&worker.url)),
+    );
+
+    let Some(runtime_key) = runtime_key else {
+        return Ok(None);
+    };
+    use sgl_router::discovery::app_config_runtime::{
+        RuntimeLeaseDiscoveryConfig, DEFAULT_POLL_INTERVAL_SECS, WORKER_RUNTIME_APP_CONFIG_KEY,
+        WORKER_RUNTIME_APP_CONFIG_LABEL,
+    };
+    if runtime_key != WORKER_RUNTIME_APP_CONFIG_KEY {
+        anyhow::bail!("WORKER_RUNTIME_APP_CONFIG_KEY does not match the v1 runtime contract");
+    }
+    let runtime_label = non_empty_env("WORKER_RUNTIME_APP_CONFIG_LABEL")
+        .unwrap_or_else(|| WORKER_RUNTIME_APP_CONFIG_LABEL.to_string());
+    if runtime_label != WORKER_RUNTIME_APP_CONFIG_LABEL {
+        anyhow::bail!("WORKER_RUNTIME_APP_CONFIG_LABEL does not match the v1 runtime contract");
+    }
+    let base_app_config = source
+        .app_config
+        .as_ref()
+        .context("worker runtime polling requires the base registry to use App Configuration")?;
+    let poll_interval_secs =
+        env_u64("WORKER_RUNTIME_POLL_INTERVAL_SECS")?.unwrap_or(DEFAULT_POLL_INTERVAL_SECS);
+    if poll_interval_secs == 0 {
+        anyhow::bail!("WORKER_RUNTIME_POLL_INTERVAL_SECS must be greater than zero");
+    }
+    let timeout_secs =
+        env_u64("WORKER_RUNTIME_APP_CONFIG_TIMEOUT_SECS")?.unwrap_or(base_app_config.timeout_secs);
+    if timeout_secs == 0 {
+        anyhow::bail!("WORKER_RUNTIME_APP_CONFIG_TIMEOUT_SECS must be greater than zero");
+    }
+    Ok(Some(RuntimeLeaseDiscoveryConfig {
+        source: sgl_router::app_config_registry::AppConfigSource {
+            endpoint: base_app_config.endpoint.clone(),
+            key: runtime_key,
+            label: Some(runtime_label),
+            managed_identity_client_id: base_app_config.managed_identity_client_id.clone(),
+            timeout_secs,
+        },
+        pool,
+        base_workers: named_worker_urls,
+        known_workers: registry.workers.keys().cloned().collect::<BTreeSet<_>>(),
+        known_pools: registry.pools.keys().cloned().collect::<BTreeSet<_>>(),
+        poll_interval_secs,
+    }))
 }
 
 fn worker_registry_source_from_env() -> Result<sgl_router::app_config_registry::RegistrySource> {
@@ -313,13 +373,29 @@ fn is_truthy(value: &str) -> bool {
     )
 }
 
-async fn cli_from_args_or_env() -> Result<Cli> {
+struct StartupConfig {
+    cli: Cli,
+    runtime_lease: Option<sgl_router::discovery::app_config_runtime::RuntimeLeaseDiscoveryConfig>,
+}
+
+async fn cli_from_args_or_env() -> Result<StartupConfig> {
     if std::env::args_os().len() > 1 {
-        Ok(Cli::parse())
+        if non_empty_env("WORKER_RUNTIME_APP_CONFIG_KEY").is_some() {
+            anyhow::bail!(
+                "WORKER_RUNTIME_APP_CONFIG_KEY is supported only by worker-registry environment startup"
+            );
+        }
+        Ok(StartupConfig {
+            cli: Cli::parse(),
+            runtime_lease: None,
+        })
     } else {
         let mut args = env_to_cli_args();
-        push_worker_registry_env(&mut args).await?;
-        Ok(Cli::parse_from(args))
+        let runtime_lease = push_worker_registry_env(&mut args).await?;
+        Ok(StartupConfig {
+            cli: Cli::parse_from(args),
+            runtime_lease,
+        })
     }
 }
 
@@ -329,10 +405,12 @@ async fn main() -> Result<()> {
     // output. The configured-format subscriber installs after this and
     // becomes a no-op via try_init's idempotency.
     install_bootstrap_subscriber();
-    let cli = cli_from_args_or_env().await?;
-    let cfg = cli
+    let startup = cli_from_args_or_env().await?;
+    let cfg = startup
+        .cli
         .into_config()
         .context("resolve configuration from CLI flags")?;
+    let runtime_lease = startup.runtime_lease;
 
     init_tracing(&cfg.observability.log_level, cfg.observability.log_format)?;
 
@@ -343,6 +421,9 @@ async fn main() -> Result<()> {
         cfg.server.port
     );
 
+    if runtime_lease.is_some() && cfg.runtime_mode != RuntimeMode::Gateway {
+        anyhow::bail!("worker runtime lease discovery is only valid in gateway mode");
+    }
     match cfg.runtime_mode {
         RuntimeMode::CacheState => return run_cache_state(cfg).await,
         RuntimeMode::RouterState => return run_router_state(cfg).await,
@@ -546,9 +627,23 @@ async fn main() -> Result<()> {
     });
 
     // Spawn discovery + manager tasks.
-    let (event_rx, discovery_handle) = sgl_router::discovery::spawn_discovery(&cfg)
-        .await
-        .context("spawn discovery")?;
+    let (event_rx, discovery_handle) = if let Some(runtime_lease) = runtime_lease {
+        let bearer_keys = match &cfg.discovery {
+            sgl_router::config::DiscoveryBackend::StaticUrls(static_cfg) => {
+                static_cfg.bearer_keys.clone()
+            }
+            sgl_router::config::DiscoveryBackend::K8s(_) => anyhow::bail!(
+                "worker runtime lease discovery requires static base registry discovery"
+            ),
+        };
+        sgl_router::discovery::spawn_runtime_lease_discovery(runtime_lease, bearer_keys)
+            .await
+            .context("spawn worker runtime lease discovery")?
+    } else {
+        sgl_router::discovery::spawn_discovery(&cfg)
+            .await
+            .context("spawn discovery")?
+    };
     // Only ZMQ cache-aware mode attaches the KV-event index to the manager.
     // Route-history feeds the tree from routing decisions, and non-cache
     // policies such as tiered_spillover should not introspect /server_info or

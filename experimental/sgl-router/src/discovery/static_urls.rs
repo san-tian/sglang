@@ -198,21 +198,15 @@ pub(crate) fn normalize_worker_url(entry: &str) -> Result<String> {
     Ok(parsed.as_str().trim_end_matches('/').to_string())
 }
 
-/// Spawn the static-URLs producer task and return its `JoinHandle`.
-///
-/// Returns `Result` for parity with [`crate::discovery::k8s::spawn`] (which
-/// can fail to construct a `kube::Client`) AND because a malformed
-/// `@min_priority=` suffix is rejected here rather than ignored.
-pub async fn spawn(
-    cfg: StaticUrlsDiscoveryConfig,
-    tx: mpsc::Sender<DiscoveryEvent>,
-) -> Result<tokio::task::JoinHandle<()>> {
-    // Parse + validate every entry up front so a bad suffix fails startup
-    // loudly instead of after the task is detached.
+/// Parse static discovery configuration into the exact `WorkerSpec`s emitted
+/// by the backend. Runtime-lease discovery reuses this helper so drain/rejoin
+/// preserves URL identity, all capability suffixes, and per-worker bearer
+/// credentials exactly as ordinary static discovery does.
+pub(crate) fn build_worker_specs(cfg: &StaticUrlsDiscoveryConfig) -> Result<Vec<WorkerSpec>> {
     let parsed: Vec<(String, WorkerCapabilities)> = cfg
         .urls
         .iter()
-        .map(|e| parse_worker_entry(e))
+        .map(|entry| parse_worker_entry(entry))
         .collect::<Result<_>>()?;
     let bearer_keys: HashMap<String, String> = cfg
         .bearer_keys
@@ -224,12 +218,14 @@ pub async fn spawn(
             ))
         })
         .collect::<Result<_>>()?;
-    let handle = tokio::spawn(async move {
-        for (url, caps) in parsed {
+
+    parsed
+        .into_iter()
+        .map(|(url, caps)| {
             let bearer_token = normalize_worker_url(&url)
                 .ok()
                 .and_then(|normalized| bearer_keys.get(&normalized).cloned());
-            let spec = WorkerSpec {
+            Ok(WorkerSpec {
                 id: WorkerId(url.clone()),
                 url,
                 mode: WorkerMode::Plain,
@@ -241,7 +237,25 @@ pub async fn spawn(
                 backend: caps.backend,
                 tier: caps.tier,
                 routes: caps.routes,
-            };
+            })
+        })
+        .collect()
+}
+
+/// Spawn the static-URLs producer task and return its `JoinHandle`.
+///
+/// Returns `Result` for parity with [`crate::discovery::k8s::spawn`] (which
+/// can fail to construct a `kube::Client`) AND because a malformed
+/// `@min_priority=` suffix is rejected here rather than ignored.
+pub async fn spawn(
+    cfg: StaticUrlsDiscoveryConfig,
+    tx: mpsc::Sender<DiscoveryEvent>,
+) -> Result<tokio::task::JoinHandle<()>> {
+    // Parse + validate every entry up front so a bad suffix fails startup
+    // loudly instead of after the task is detached.
+    let specs = build_worker_specs(&cfg)?;
+    let handle = tokio::spawn(async move {
+        for spec in specs {
             if tx.send(DiscoveryEvent::Added(spec)).await.is_err() {
                 tracing::info!(
                     "static_urls discovery: event channel closed during fan-out; exiting"

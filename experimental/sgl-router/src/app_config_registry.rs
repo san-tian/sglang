@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{anyhow, Context, Result};
+use reqwest::header::{ETAG, IF_NONE_MATCH};
+use reqwest::StatusCode;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use url::Url;
 
 const APP_CONFIG_SCOPE_RESOURCE: &str = "https://azconfig.io";
@@ -49,11 +53,42 @@ pub struct RegistryWorker {
 #[derive(Debug, Deserialize)]
 struct ManagedIdentityToken {
     access_token: String,
+    #[serde(default)]
+    expires_on: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AppConfigKeyValue {
     value: String,
+    #[serde(default)]
+    etag: Option<serde_json::Value>,
+    #[serde(default, rename = "@etag")]
+    alternate_etag: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedWorkerUrl {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Debug)]
+pub struct AppConfigValue {
+    pub value: String,
+    pub etag: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct AppConfigClient {
+    source: AppConfigSource,
+    client: reqwest::Client,
+    cached_token: Arc<Mutex<Option<CachedToken>>>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedToken {
+    access_token: String,
+    expires_at: SystemTime,
 }
 
 #[derive(Debug)]
@@ -96,30 +131,155 @@ impl RegistrySource {
 
 impl AppConfigSource {
     pub async fn fetch_value(&self) -> Result<String> {
-        if self.timeout_secs == 0 {
+        let client = AppConfigClient::new(self.clone())?;
+        client
+            .fetch(None)
+            .await
+            .map_err(|_| anyhow!("fetch worker registry from Azure App Configuration failed"))?
+            .map(|value| value.value)
+            .context("Azure App Configuration unexpectedly returned not-modified")
+    }
+}
+
+impl AppConfigClient {
+    pub fn new(source: AppConfigSource) -> Result<Self> {
+        if source.timeout_secs == 0 {
             return Err(anyhow!("App Configuration timeout must be greater than 0"));
         }
+        // Validate the endpoint/key before the background task is detached so a
+        // local configuration error fails startup rather than becoming a poll
+        // loop that can never succeed.
+        app_config_key_url(&source.endpoint, &source.key, source.label.as_deref())?;
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(self.timeout_secs))
+            .timeout(Duration::from_secs(source.timeout_secs))
             .build()
             .context("build App Configuration HTTP client")?;
-        let token =
-            fetch_managed_identity_token(&client, self.managed_identity_client_id.as_deref())
-                .await?;
-        let url = app_config_key_url(&self.endpoint, &self.key, self.label.as_deref())?;
-        let response = client
-            .get(url)
-            .bearer_auth(token)
+        Ok(Self {
+            source,
+            client,
+            cached_token: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    /// Fetch an App Configuration value, optionally using an accepted ETag.
+    ///
+    /// `None` means the service returned HTTP 304. Callers must only pass the
+    /// ETag of their last *validated and applied* document; retaining an ETag
+    /// from a rejected document would pin the consumer to invalid state.
+    pub async fn fetch(&self, accepted_etag: Option<&str>) -> Result<Option<AppConfigValue>> {
+        let token = self.access_token(false).await?;
+        let response = self.send(&token, accepted_etag).await?;
+        if response.status() == StatusCode::UNAUTHORIZED {
+            // A token can be revoked before its advertised expiry. Invalidate
+            // and retry exactly once with a newly minted token.
+            let token = self.access_token(true).await?;
+            return self
+                .decode_response(self.send(&token, accepted_etag).await?)
+                .await;
+        }
+        self.decode_response(response).await
+    }
+
+    async fn send(&self, token: &str, accepted_etag: Option<&str>) -> Result<reqwest::Response> {
+        let url = app_config_key_url(
+            &self.source.endpoint,
+            &self.source.key,
+            self.source.label.as_deref(),
+        )?;
+        let mut request = self.client.get(url).bearer_auth(token);
+        if let Some(etag) = accepted_etag.filter(|etag| !etag.trim().is_empty()) {
+            request = request.header(IF_NONE_MATCH, etag);
+        }
+        request
             .send()
             .await
-            .context("fetch worker registry from Azure App Configuration")?
+            .context("fetch value from Azure App Configuration")
+    }
+
+    async fn decode_response(&self, response: reqwest::Response) -> Result<Option<AppConfigValue>> {
+        if response.status() == StatusCode::NOT_MODIFIED {
+            return Ok(None);
+        }
+        let response = response
             .error_for_status()
-            .context("Azure App Configuration worker registry request failed")?
+            .context("Azure App Configuration request failed")?;
+        let header_etag = response
+            .headers()
+            .get(ETAG)
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("Azure App Configuration returned a non-text ETag header")
+                    .map(str::to_owned)
+            })
+            .transpose()?;
+        let body = response
             .json::<AppConfigKeyValue>()
             .await
             .context("decode Azure App Configuration key/value response")?;
-        Ok(response.value)
+        let etag = match header_etag {
+            Some(etag) => Some(etag),
+            None => body_etag(body.etag, body.alternate_etag)?,
+        };
+        if etag.as_ref().is_some_and(|etag| etag.is_empty()) {
+            return Err(anyhow!("Azure App Configuration returned an empty ETag"));
+        }
+        Ok(Some(AppConfigValue {
+            value: body.value,
+            etag,
+        }))
     }
+
+    async fn access_token(&self, force_refresh: bool) -> Result<String> {
+        let mut guard = self.cached_token.lock().await;
+        let now = SystemTime::now();
+        if !force_refresh {
+            if let Some(token) = guard.as_ref() {
+                // Refresh one minute early so a token cannot expire between
+                // acquisition and the App Configuration request.
+                if token
+                    .expires_at
+                    .duration_since(now)
+                    .is_ok_and(|remaining| remaining > Duration::from_secs(60))
+                {
+                    return Ok(token.access_token.clone());
+                }
+            }
+        }
+        let token = fetch_managed_identity_token(
+            &self.client,
+            self.source.managed_identity_client_id.as_deref(),
+        )
+        .await?;
+        let access_token = token.access_token.clone();
+        *guard = Some(token);
+        Ok(access_token)
+    }
+}
+
+fn body_etag(
+    primary: Option<serde_json::Value>,
+    alternate: Option<serde_json::Value>,
+) -> Result<Option<String>> {
+    let mut saw_empty = false;
+    for (field, value) in [("etag", primary), ("@etag", alternate)] {
+        match value {
+            None | Some(serde_json::Value::Null) => continue,
+            Some(serde_json::Value::String(value)) if value.is_empty() => {
+                saw_empty = true;
+            }
+            Some(serde_json::Value::String(value)) => return Ok(Some(value)),
+            Some(_) => {
+                return Err(anyhow!(
+                    "Azure App Configuration returned a non-text {field} field"
+                ));
+            }
+        }
+    }
+    if saw_empty {
+        return Err(anyhow!("Azure App Configuration returned an empty ETag"));
+    }
+    Ok(None)
 }
 
 pub fn parse_registry(raw_json: &str) -> Result<WorkerRegistry> {
@@ -139,6 +299,15 @@ pub fn worker_urls_for_pool(
     pool: &str,
     default_url_suffix: Option<&str>,
 ) -> Result<Vec<String>> {
+    named_worker_urls_for_pool(registry, pool, default_url_suffix)
+        .map(|workers| workers.into_iter().map(|worker| worker.url).collect())
+}
+
+pub fn named_worker_urls_for_pool(
+    registry: &WorkerRegistry,
+    pool: &str,
+    default_url_suffix: Option<&str>,
+) -> Result<Vec<NamedWorkerUrl>> {
     let names = registry
         .pools
         .get(pool)
@@ -147,46 +316,75 @@ pub fn worker_urls_for_pool(
         return Err(anyhow!("worker registry pool {pool:?} is empty"));
     }
 
-    let mut urls = Vec::with_capacity(names.len());
-    for name in names {
-        let worker = registry.workers.get(name).with_context(|| {
-            format!("worker registry pool {pool:?} references missing worker {name:?}")
-        })?;
-        if !worker.enabled {
-            return Err(anyhow!(
-                "worker registry pool {pool:?} references disabled worker {name:?}"
-            ));
-        }
-        let url = worker
-            .url
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-            .with_context(|| {
-                format!("worker registry worker {name:?} in pool {pool:?} has no url")
+    names
+        .iter()
+        .map(|name| {
+            let worker = registry.workers.get(name).with_context(|| {
+                format!("worker registry pool {pool:?} references missing worker {name:?}")
             })?;
-        let suffix = worker
-            .pool_url_suffixes
-            .get(pool)
-            .map(String::as_str)
-            .or(default_url_suffix)
-            .unwrap_or("");
-        urls.push(format!("{url}{suffix}"));
-    }
-    Ok(urls)
+            if !worker.enabled {
+                return Err(anyhow!(
+                    "worker registry pool {pool:?} references disabled worker {name:?}"
+                ));
+            }
+            let url = worker
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+                .with_context(|| {
+                    format!("worker registry worker {name:?} in pool {pool:?} has no url")
+                })?;
+            let suffix = worker
+                .pool_url_suffixes
+                .get(pool)
+                .map(String::as_str)
+                .or(default_url_suffix)
+                .unwrap_or("");
+            Ok(NamedWorkerUrl {
+                name: name.clone(),
+                url: format!("{url}{suffix}"),
+            })
+        })
+        .collect()
 }
 
 fn app_config_key_url(endpoint: &str, key: &str, label: Option<&str>) -> Result<Url> {
-    let endpoint = endpoint.trim_end_matches('/');
-    if endpoint.is_empty() {
+    if endpoint.trim().is_empty() {
         return Err(anyhow!("App Configuration endpoint is empty"));
     }
     if key.trim().is_empty() {
         return Err(anyhow!("App Configuration key is empty"));
     }
+    let authority = endpoint
+        .strip_prefix("https://")
+        .context("App Configuration endpoint must use canonical https:// form")?;
+    if authority.is_empty() || authority.starts_with('/') {
+        return Err(anyhow!(
+            "App Configuration endpoint must include a canonical host authority"
+        ));
+    }
+    let base = Url::parse(endpoint).context("parse App Configuration endpoint")?;
+    if base.scheme() != "https" {
+        return Err(anyhow!("App Configuration endpoint must use https"));
+    }
+    if base.host_str().is_none() {
+        return Err(anyhow!("App Configuration endpoint must include a host"));
+    }
+    if !base.username().is_empty() || base.password().is_some() {
+        return Err(anyhow!(
+            "App Configuration endpoint must not include userinfo"
+        ));
+    }
+    if base.path() != "/" || base.query().is_some() || base.fragment().is_some() {
+        return Err(anyhow!(
+            "App Configuration endpoint must be a service base URL without path, query, or fragment"
+        ));
+    }
+    let endpoint = endpoint.strip_suffix('/').unwrap_or(endpoint);
     let encoded_key: String = url::form_urlencoded::byte_serialize(key.as_bytes()).collect();
     let mut url = Url::parse(&format!("{endpoint}/kv/{encoded_key}"))
-        .with_context(|| format!("parse App Configuration endpoint {endpoint:?}"))?;
+        .context("build App Configuration key URL")?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("api-version", "1.0");
@@ -200,7 +398,7 @@ fn app_config_key_url(endpoint: &str, key: &str, label: Option<&str>) -> Result<
 async fn fetch_managed_identity_token(
     client: &reqwest::Client,
     client_id: Option<&str>,
-) -> Result<String> {
+) -> Result<CachedToken> {
     let token_request = managed_identity_token_request(client_id)?;
     let mut request = client.get(token_request.url);
     for (name, value) in token_request.headers {
@@ -218,7 +416,30 @@ async fn fetch_managed_identity_token(
     if token.access_token.trim().is_empty() {
         return Err(anyhow!("managed identity returned an empty access token"));
     }
-    Ok(token.access_token)
+    let now = SystemTime::now();
+    // ACA and IMDS currently return a Unix epoch value (often encoded as a
+    // string). Keep a conservative five-minute cache when the optional field
+    // is absent or changes shape; correctness then degrades to extra token
+    // requests, never to using a token indefinitely.
+    let expires_at = token
+        .expires_on
+        .as_ref()
+        .and_then(parse_token_expiry)
+        .filter(|expiry| *expiry > now)
+        .unwrap_or_else(|| now + Duration::from_secs(300));
+    Ok(CachedToken {
+        access_token: token.access_token,
+        expires_at,
+    })
+}
+
+fn parse_token_expiry(value: &serde_json::Value) -> Option<SystemTime> {
+    let seconds = match value {
+        serde_json::Value::Number(value) => value.as_u64(),
+        serde_json::Value::String(value) => value.parse::<u64>().ok(),
+        _ => None,
+    }?;
+    UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
 }
 
 fn managed_identity_token_request(client_id: Option<&str>) -> Result<ManagedIdentityRequest> {
@@ -264,6 +485,34 @@ fn managed_identity_token_request(client_id: Option<&str>) -> Result<ManagedIden
 mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
+
+    async fn one_shot_response(
+        status: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> reqwest::Response {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let rendered_headers = headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect::<String>();
+        let body = body.to_owned();
+        let status = status.to_owned();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 {status}\r\n{rendered_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        reqwest::get(format!("http://{address}/")).await.unwrap()
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -329,6 +578,24 @@ mod tests {
     }
 
     #[test]
+    fn app_config_url_rejects_unsafe_or_non_base_endpoints() {
+        for endpoint in [
+            "http://config.example.test",
+            "https://user@config.example.test",
+            "https://config.example.test/prefix",
+            "https://config.example.test///",
+            "https://config.example.test?redirect=evil",
+            "https://config.example.test#fragment",
+            "https:///missing-host",
+        ] {
+            assert!(
+                app_config_key_url(endpoint, "key", Some("runtime")).is_err(),
+                "unsafe endpoint unexpectedly accepted: {endpoint}"
+            );
+        }
+    }
+
+    #[test]
     fn managed_identity_request_uses_aca_identity_endpoint_when_present() {
         let _guard = env_lock().lock().unwrap();
         std::env::set_var("IDENTITY_ENDPOINT", "http://localhost:42356/msi/token");
@@ -356,5 +623,90 @@ mod tests {
         assert!(req.url.as_str().starts_with(MANAGED_IDENTITY_TOKEN_URL));
         assert!(req.url.as_str().contains("api-version=2018-02-01"));
         assert_eq!(req.headers, vec![("Metadata", "true".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn app_config_decode_prefers_header_etag_then_body_variants() {
+        let source = AppConfigSource {
+            endpoint: "https://example.invalid".into(),
+            key: "key".into(),
+            label: Some("label".into()),
+            managed_identity_client_id: None,
+            timeout_secs: 1,
+        };
+        let client = AppConfigClient::new(source).unwrap();
+
+        let response = one_shot_response(
+            "200 OK",
+            &[
+                ("Content-Type", "application/json"),
+                ("ETag", "header-etag"),
+            ],
+            r#"{"value":"{}","etag":"body-etag","@etag":"alternate-etag"}"#,
+        )
+        .await;
+        let value = client.decode_response(response).await.unwrap().unwrap();
+        assert_eq!(value.etag.as_deref(), Some("header-etag"));
+
+        let response = one_shot_response(
+            "200 OK",
+            &[("Content-Type", "application/json")],
+            r#"{"value":"{}","etag":"body-etag"}"#,
+        )
+        .await;
+        let value = client.decode_response(response).await.unwrap().unwrap();
+        assert_eq!(value.etag.as_deref(), Some("body-etag"));
+
+        let response = one_shot_response(
+            "200 OK",
+            &[("Content-Type", "application/json")],
+            r#"{"value":"{}","@etag":"alternate-etag"}"#,
+        )
+        .await;
+        let value = client.decode_response(response).await.unwrap().unwrap();
+        assert_eq!(value.etag.as_deref(), Some("alternate-etag"));
+
+        let response = one_shot_response(
+            "200 OK",
+            &[("Content-Type", "application/json")],
+            r#"{"value":"{}","etag":"","@etag":"alternate-etag"}"#,
+        )
+        .await;
+        let value = client.decode_response(response).await.unwrap().unwrap();
+        assert_eq!(value.etag.as_deref(), Some("alternate-etag"));
+
+        let response = one_shot_response(
+            "200 OK",
+            &[
+                ("Content-Type", "application/json"),
+                ("ETag", "header-etag"),
+            ],
+            r#"{"value":"{}","etag":42}"#,
+        )
+        .await;
+        let value = client.decode_response(response).await.unwrap().unwrap();
+        assert_eq!(value.etag.as_deref(), Some("header-etag"));
+
+        let response = one_shot_response(
+            "200 OK",
+            &[("Content-Type", "application/json")],
+            r#"{"value":"{}","etag":""}"#,
+        )
+        .await;
+        assert!(client.decode_response(response).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn app_config_decode_treats_304_as_unchanged() {
+        let source = AppConfigSource {
+            endpoint: "https://example.invalid".into(),
+            key: "key".into(),
+            label: Some("label".into()),
+            managed_identity_client_id: None,
+            timeout_secs: 1,
+        };
+        let client = AppConfigClient::new(source).unwrap();
+        let response = one_shot_response("304 Not Modified", &[], "").await;
+        assert!(client.decode_response(response).await.unwrap().is_none());
     }
 }
