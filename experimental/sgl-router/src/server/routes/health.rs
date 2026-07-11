@@ -123,6 +123,7 @@ mod tests {
                     bearer_token: None,
                     backend: Default::default(),
                     tier: Default::default(),
+                    routes: crate::discovery::WorkerRouteSet::all(),
                 })
                 .expect("test worker accepted");
         }

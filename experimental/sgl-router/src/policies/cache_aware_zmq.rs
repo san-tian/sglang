@@ -849,6 +849,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         }))
     }
 
@@ -868,6 +869,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         });
         worker.attach_router_state_overlay(overlay);
         Arc::new(worker)

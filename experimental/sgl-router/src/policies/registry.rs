@@ -33,7 +33,7 @@
 //!    available for a PD-mode model" (new `NoPrefillWorkersAvailable`)
 //!    — only the resolver has the cohort context to tell which is which.
 
-use crate::discovery::{ModelId, WorkerMode};
+use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
 use crate::workers::{Worker, WorkerRegistry};
 use std::sync::Arc;
 
@@ -293,6 +293,33 @@ pub struct EligibleCandidates {
     pub excluded_all: bool,
 }
 
+/// Restrict `workers` to those that declare support for a router-facing API
+/// route. This lets heterogeneous pools carry compatibility proxies that only
+/// implement part of the public API surface without leaking passthrough
+/// requests to them.
+pub fn filter_route_eligible(workers: &[Arc<Worker>], route: WorkerRoute) -> EligibleCandidates {
+    let eligible: Vec<Arc<Worker>> = workers
+        .iter()
+        .filter(|w| w.supports_route(route))
+        .cloned()
+        .collect();
+
+    if eligible.is_empty() && !workers.is_empty() {
+        return EligibleCandidates {
+            workers: Vec::new(),
+            excluded_any: false,
+            excluded_all: true,
+        };
+    }
+
+    let excluded_any = eligible.len() != workers.len();
+    EligibleCandidates {
+        workers: eligible,
+        excluded_any,
+        excluded_all: false,
+    }
+}
+
 /// Restrict `workers` to those eligible for a request of the given
 /// `request_priority`, removing every worker whose
 /// [`Worker::min_priority`] exceeds it. A worker with `min_priority = None`
@@ -458,7 +485,7 @@ fn host_of(worker_url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{ModelId, WorkerId, WorkerSpec};
+    use crate::discovery::{ModelId, WorkerId, WorkerRouteSet, WorkerSpec};
 
     fn spec(id: &str, mode: WorkerMode, model: &str) -> WorkerSpec {
         WorkerSpec {
@@ -472,6 +499,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         }
     }
 
@@ -497,6 +525,23 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+        }))
+    }
+
+    fn route_worker(id: &str, routes: WorkerRouteSet) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode: WorkerMode::Plain,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes,
         }))
     }
 
@@ -507,6 +552,24 @@ mod tests {
         assert_eq!(out.workers.len(), 2);
         assert!(!out.excluded_any);
         assert!(!out.excluded_all);
+    }
+
+    #[test]
+    fn filter_route_eligible_removes_chat_only_from_passthrough() {
+        let ws = vec![
+            route_worker("amd-chat-only", WorkerRouteSet::chat_only()),
+            route_worker("b200-all", WorkerRouteSet::all()),
+        ];
+
+        let chat = filter_route_eligible(&ws, WorkerRoute::Chat);
+        assert_eq!(chat.workers.len(), 2);
+        assert!(!chat.excluded_any);
+
+        let responses = filter_route_eligible(&ws, WorkerRoute::Responses);
+        assert_eq!(responses.workers.len(), 1);
+        assert_eq!(responses.workers[0].id.0, "b200-all");
+        assert!(responses.excluded_any);
+        assert!(!responses.excluded_all);
     }
 
     #[test]
@@ -592,6 +655,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         }))
     }
 
@@ -826,6 +890,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         }
     }
 

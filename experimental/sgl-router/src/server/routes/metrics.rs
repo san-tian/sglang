@@ -162,6 +162,7 @@ mod tests {
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             })
             .unwrap();
         let app = crate::server::app::build_router(ctx.clone());

@@ -14,8 +14,10 @@
 //! policies (`power_of_two`, `cache_aware_zmq`) see accurate in-flight
 //! counts — without this the LB scheme would route on stale load.
 
-use crate::discovery::{ModelId, WorkerMode};
-use crate::policies::registry::{filter_eligible, PdPoolResolver, PdResolveError};
+use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
+use crate::policies::registry::{
+    filter_eligible, filter_route_eligible, PdPoolResolver, PdResolveError,
+};
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
 use crate::server::error::ApiError;
@@ -555,6 +557,20 @@ async fn messages_inner(
                 model: model_str.clone(),
             },
         })?;
+
+    let route_eligible = filter_route_eligible(&workers, WorkerRoute::Messages);
+    if route_eligible.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            healthy_workers = workers.len(),
+            route = forward_path,
+            "route capability filter removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = route_eligible.workers;
 
     // Resolve the model's policy BEFORE priority filtering — see the
     // `/v1/chat/completions` path: an unknown model must 404 `ModelNotFound`

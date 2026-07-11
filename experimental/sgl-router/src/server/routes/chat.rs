@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::discovery::{ModelId, WorkerMode};
+use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
 use crate::policies::registry::{
-    filter_eligible, has_context_limited_worker, PdPoolResolver, PdResolveError,
+    filter_eligible, filter_route_eligible, has_context_limited_worker, PdPoolResolver,
+    PdResolveError,
 };
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::router_state::RouterStateReservationGuard;
@@ -276,6 +277,20 @@ async fn chat_completions_inner(
                 model: model_str.clone(),
             },
         })?;
+
+    let route_eligible = filter_route_eligible(&workers, WorkerRoute::Chat);
+    if route_eligible.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            healthy_workers = workers.len(),
+            route = "/v1/chat/completions",
+            "route capability filter removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = route_eligible.workers;
 
     // Resolve the model's policy BEFORE priority filtering so an unknown /
     // unsupported model still surfaces as 404 `ModelNotFound` rather than

@@ -134,6 +134,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         }));
         w.set_reported_load(reported_load);
         for _ in 0..pending {

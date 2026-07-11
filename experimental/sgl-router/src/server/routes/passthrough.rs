@@ -7,8 +7,10 @@
 //! while still applying router-side model selection, priority gating, active
 //! load accounting, and alias fallback.
 
-use crate::discovery::{ModelId, WorkerMode};
-use crate::policies::registry::{filter_eligible, PdPoolResolver, PdResolveError};
+use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
+use crate::policies::registry::{
+    filter_eligible, filter_route_eligible, PdPoolResolver, PdResolveError,
+};
 use crate::policies::SelectionContext;
 use crate::policies::{request_tokens_for, RequestTokens};
 use crate::server::app_context::AppContext;
@@ -172,6 +174,25 @@ async fn passthrough_primary(
                 model: model_str.clone(),
             },
         })?;
+
+    let route = match path {
+        "/v1/completions" => WorkerRoute::Completions,
+        "/v1/responses" => WorkerRoute::Responses,
+        _ => WorkerRoute::Chat,
+    };
+    let route_eligible = filter_route_eligible(&workers, route);
+    if route_eligible.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            healthy_workers = workers.len(),
+            path,
+            "route capability filter removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = route_eligible.workers;
 
     let policy = ctx
         .policies

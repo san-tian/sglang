@@ -85,6 +85,63 @@ pub enum WorkerTier {
     Shared,
 }
 
+/// Request routes a worker is allowed to serve.
+///
+/// Defaults to all routes so existing worker registries keep their current
+/// behavior. Static URL discovery can narrow this with `@routes=...` for
+/// heterogeneous pools where a compatibility proxy only implements part of the
+/// router-facing API surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerRouteSet {
+    pub chat: bool,
+    pub completions: bool,
+    pub messages: bool,
+    pub responses: bool,
+}
+
+impl WorkerRouteSet {
+    pub const fn all() -> Self {
+        Self {
+            chat: true,
+            completions: true,
+            messages: true,
+            responses: true,
+        }
+    }
+
+    pub const fn chat_only() -> Self {
+        Self {
+            chat: true,
+            completions: false,
+            messages: false,
+            responses: false,
+        }
+    }
+
+    pub fn supports(self, route: WorkerRoute) -> bool {
+        match route {
+            WorkerRoute::Chat => self.chat,
+            WorkerRoute::Completions => self.completions,
+            WorkerRoute::Messages => self.messages,
+            WorkerRoute::Responses => self.responses,
+        }
+    }
+}
+
+impl Default for WorkerRouteSet {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerRoute {
+    Chat,
+    Completions,
+    Messages,
+    Responses,
+}
+
 /// Immutable worker description emitted by a discovery backend.
 ///
 /// Backends emit [`DiscoveryEvent::Added`] carrying a `WorkerSpec` when a
@@ -143,6 +200,9 @@ pub struct WorkerSpec {
     /// compatibility with existing discovery payloads and policies.
     #[serde(default)]
     pub tier: WorkerTier,
+    /// Router-facing API routes this worker can safely serve.
+    #[serde(default)]
+    pub routes: WorkerRouteSet,
 }
 
 /// Event produced by a discovery backend and consumed by `WorkerManager`.
@@ -187,6 +247,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
+            routes: WorkerRouteSet::all(),
         };
         let s = serde_json::to_string(&w).unwrap();
         let d: WorkerSpec = serde_json::from_str(&s).unwrap();
@@ -206,6 +267,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
+            routes: WorkerRouteSet::all(),
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"bootstrap_port\":8997"));
@@ -226,6 +288,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
+            routes: WorkerRouteSet::all(),
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"min_priority\":100"));
@@ -289,6 +352,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::Vllm,
             tier: WorkerTier::Bulk,
+            routes: WorkerRouteSet::all(),
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"backend\":\"vllm\""));
@@ -336,6 +400,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::Sglang,
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         let s = serde_json::to_string(&e).unwrap();
         let d: DiscoveryEvent = serde_json::from_str(&s).unwrap();

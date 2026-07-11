@@ -236,6 +236,7 @@ mod tests {
                     bearer_token: None,
                     backend: Default::default(),
                     tier: Default::default(),
+                    routes: crate::discovery::WorkerRouteSet::all(),
                 })
                 .expect("worker accepted");
         }
@@ -360,6 +361,7 @@ mod tests {
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             })
             .expect("prefill accepted");
         ctx.registry
@@ -374,6 +376,7 @@ mod tests {
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             })
             .expect("decode accepted");
 

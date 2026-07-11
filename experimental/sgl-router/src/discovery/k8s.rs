@@ -143,6 +143,7 @@ fn extract_workers(es: &EndpointSlice, mode: WorkerMode) -> Vec<WorkerSpec> {
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             });
         }
     }

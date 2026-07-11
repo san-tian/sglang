@@ -150,6 +150,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier,
+            routes: crate::discovery::WorkerRouteSet::all(),
         }))
     }
 

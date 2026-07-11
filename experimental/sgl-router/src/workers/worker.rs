@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::discovery::{ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerTier};
+use crate::discovery::{
+    ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerRoute, WorkerRouteSet, WorkerTier,
+};
 use crate::health::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use crate::router_state::RouterStateLoadOverlay;
 use axum::http::{header, HeaderMap, HeaderValue};
@@ -163,6 +165,8 @@ pub struct Worker {
     backend: WorkerBackend,
     /// Operator-defined routing tier used by tier-aware policies.
     tier: WorkerTier,
+    /// Router-facing API routes this worker is allowed to serve.
+    routes: WorkerRouteSet,
     /// Worker-reported real load (from the background load poller hitting
     /// the worker's `/get_load`). Decoupled from `active_requests`
     /// (router-side in-flight count), which is a poor signal for a mixed
@@ -219,6 +223,7 @@ impl Worker {
             max_context_tokens: spec.max_context_tokens,
             backend: spec.backend,
             tier: spec.tier,
+            routes: spec.routes,
             reported_load: Arc::new(AtomicI64::new(REPORTED_LOAD_UNSET)),
             global_pending: None,
             bearer_token: spec.bearer_token,
@@ -258,6 +263,14 @@ impl Worker {
 
     pub fn tier(&self) -> WorkerTier {
         self.tier
+    }
+
+    pub fn supports_route(&self, route: WorkerRoute) -> bool {
+        self.routes.supports(route)
+    }
+
+    pub fn routes(&self) -> WorkerRouteSet {
+        self.routes
     }
 
     /// Optional per-worker bearer token. Shared-key pools leave this unset
@@ -445,6 +458,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         assert_eq!(w.active_load(), 0);
         let g = w.load_guard();
@@ -470,6 +484,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         // Seed router-side in-flight = 2.
         let _g1 = w.load_guard();
@@ -521,6 +536,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
 
         w.set_reported_load(2);
@@ -556,6 +572,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         let overlay = RouterStateLoadOverlay::new();
         overlay.update(RouterStateSnapshotResponse {
@@ -592,6 +609,7 @@ mod tests {
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
+                routes: WorkerRouteSet::all(),
             });
             assert_eq!(w.mode(), m);
         }
@@ -610,6 +628,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         assert_eq!(w.mode(), WorkerMode::Prefill);
         w.set_mode(WorkerMode::Decode);
@@ -631,6 +650,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         assert_eq!(w.bootstrap_port(), Some(8997));
     }
@@ -648,6 +668,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         assert_eq!(w.bootstrap_port(), None);
     }
@@ -665,6 +686,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         assert_eq!(w.bootstrap_host(), "10.0.0.1");
     }
@@ -682,6 +704,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         assert_eq!(w.bootstrap_host(), "prefill-0.svc.cluster.local");
     }
@@ -703,6 +726,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: WorkerRouteSet::all(),
         });
         assert_eq!(w.bootstrap_host(), "localhost");
     }

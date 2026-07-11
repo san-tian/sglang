@@ -209,6 +209,7 @@ mod tests {
                 bearer_token: None,
                 backend: WorkerBackend::Vllm,
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -236,6 +237,7 @@ mod tests {
                 bearer_token: None,
                 backend: WorkerBackend::Sglang,
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -275,6 +277,7 @@ mod tests {
                 bearer_token: None,
                 backend: WorkerBackend::SglangProxy,
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();

@@ -23,7 +23,7 @@
 
 use crate::config::StaticUrlsDiscoveryConfig;
 use crate::discovery::{
-    DiscoveryEvent, WorkerBackend, WorkerId, WorkerMode, WorkerSpec, WorkerTier,
+    DiscoveryEvent, WorkerBackend, WorkerId, WorkerMode, WorkerRouteSet, WorkerSpec, WorkerTier,
 };
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -37,6 +37,7 @@ const MIN_PRIORITY_TOKEN: &str = "@min_priority=";
 const MAX_CONTEXT_TOKENS_TOKEN: &str = "@max_context_tokens=";
 const BACKEND_TOKEN: &str = "@backend=";
 const TIER_TOKEN: &str = "@tier=";
+const ROUTES_TOKEN: &str = "@routes=";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WorkerCapabilities {
@@ -44,6 +45,7 @@ pub(crate) struct WorkerCapabilities {
     pub max_context_tokens: Option<usize>,
     pub backend: WorkerBackend,
     pub tier: WorkerTier,
+    pub routes: WorkerRouteSet,
 }
 
 impl Default for WorkerCapabilities {
@@ -53,6 +55,7 @@ impl Default for WorkerCapabilities {
             max_context_tokens: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
+            routes: WorkerRouteSet::all(),
         }
     }
 }
@@ -82,6 +85,7 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
             MAX_CONTEXT_TOKENS_TOKEN,
             BACKEND_TOKEN,
             TIER_TOKEN,
+            ROUTES_TOKEN,
         ]
         .into_iter()
         .filter_map(|token| base.rfind(token).map(|pos| (pos, token)))
@@ -124,7 +128,7 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
                     ));
                 }
             };
-        } else {
+        } else if token == TIER_TOKEN {
             caps.tier = match value.trim() {
                 "default" => WorkerTier::Default,
                 "bulk" => WorkerTier::Bulk,
@@ -136,9 +140,51 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
                     ));
                 }
             };
+        } else {
+            caps.routes = parse_routes(value.trim(), entry)?;
         }
     }
     Ok((base.to_string(), caps))
+}
+
+fn parse_routes(value: &str, entry: &str) -> Result<WorkerRouteSet> {
+    if value.is_empty() {
+        return Err(anyhow::anyhow!(
+            "invalid routes in worker URL entry {entry:?}: value must not be empty"
+        ));
+    }
+    if value == "all" {
+        return Ok(WorkerRouteSet::all());
+    }
+
+    let mut routes = WorkerRouteSet {
+        chat: false,
+        completions: false,
+        messages: false,
+        responses: false,
+    };
+    for item in value.split(',') {
+        match item.trim() {
+            "chat" | "chat_completions" | "chat-completions" => routes.chat = true,
+            "completions" => routes.completions = true,
+            "messages" => routes.messages = true,
+            "responses" => routes.responses = true,
+            "all" => return Ok(WorkerRouteSet::all()),
+            "" => {
+                return Err(anyhow::anyhow!(
+                    "invalid routes in worker URL entry {entry:?}: empty route name"
+                ));
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "invalid routes in worker URL entry {entry:?}: \
+                     {other:?} is not one of: all, chat, completions, messages, responses"
+                ));
+            }
+        }
+    }
+
+    Ok(routes)
 }
 
 /// Normalize worker URLs for config-key matching. This mirrors
@@ -194,6 +240,7 @@ pub async fn spawn(
                 bearer_token,
                 backend: caps.backend,
                 tier: caps.tier,
+                routes: caps.routes,
             };
             if tx.send(DiscoveryEvent::Added(spec)).await.is_err() {
                 tracing::info!(
@@ -274,6 +321,25 @@ mod tests {
         assert_eq!(caps.backend, WorkerBackend::SglangProxy);
         assert_eq!(caps.min_priority, None);
         assert_eq!(caps.tier, WorkerTier::Default);
+    }
+
+    #[test]
+    fn parse_entry_extracts_route_suffix() {
+        let (url, caps) =
+            parse_worker_entry("http://mi300x-1p3d:30000@backend=sglang_proxy@routes=chat")
+                .unwrap();
+        assert_eq!(url, "http://mi300x-1p3d:30000");
+        assert!(caps.routes.chat);
+        assert!(!caps.routes.completions);
+        assert!(!caps.routes.messages);
+        assert!(!caps.routes.responses);
+
+        let (_url, caps) =
+            parse_worker_entry("http://b200:30000@routes=messages,responses").unwrap();
+        assert!(!caps.routes.chat);
+        assert!(!caps.routes.completions);
+        assert!(caps.routes.messages);
+        assert!(caps.routes.responses);
     }
 
     #[test]
@@ -367,6 +433,14 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("backend"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_entry_rejects_unknown_route() {
+        let err = parse_worker_entry("http://w:30000@routes=chat,images")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("routes"), "got: {err}");
     }
 
     #[test]

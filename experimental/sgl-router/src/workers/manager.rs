@@ -371,6 +371,7 @@ fn reconcile_unresolved_workers(
             bearer_token: worker.bearer_token().map(ToOwned::to_owned),
             backend: worker.backend(),
             tier: worker.tier(),
+            routes: worker.routes(),
         };
         // `debug!` not `info!`: this fires every interval for each
         // still-unresolved worker, so info-level would spam for a worker
@@ -560,6 +561,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         let cb = cb_config_for_spec(&spec, &cfg).expect("model has cb config");
         assert_eq!(cb.threshold.get(), 5);
@@ -654,6 +656,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -702,6 +705,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -758,6 +762,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::Vllm,
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -818,6 +823,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::SglangProxy,
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -876,6 +882,7 @@ mod tests {
             bearer_token: None,
             backend: WorkerBackend::Vllm,
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -929,6 +936,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -983,6 +991,7 @@ mod tests {
                 bearer_token: None,
                 backend: Default::default(),
                 tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
             };
             tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
             let registered = tokio::time::timeout(Duration::from_secs(2), async {
@@ -1058,6 +1067,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait until the manager has both registered the worker AND
@@ -1164,6 +1174,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait for the manager to land the registry write so the
@@ -1249,6 +1260,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -1357,6 +1369,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
 
@@ -1444,6 +1457,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         };
         tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
 
@@ -1573,6 +1587,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         }))
         .await
         .unwrap();
@@ -1705,6 +1720,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         }))
         .await
         .unwrap();
@@ -1781,6 +1797,7 @@ mod tests {
             bearer_token: None,
             backend: Default::default(),
             tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
         }))
         .await
         .unwrap();
