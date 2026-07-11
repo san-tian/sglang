@@ -20,8 +20,10 @@
 //! register active-load + hold the per-worker LoadGuard so load-aware policies
 //! (`power_of_two`, `cache_aware_zmq`) see accurate in-flight counts.
 
-use crate::discovery::{ModelId, WorkerMode};
-use crate::policies::registry::{filter_eligible, PdPoolResolver, PdResolveError};
+use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
+use crate::policies::registry::{
+    filter_eligible, filter_route_eligible, PdPoolResolver, PdResolveError,
+};
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
 use crate::server::error::ApiError;
@@ -501,6 +503,20 @@ async fn responses_inner(
         .policies
         .get(&model_id)
         .ok_or_else(|| ApiError::ModelNotFound(model_str.clone()))?;
+
+    let route_eligible = filter_route_eligible(&workers, WorkerRoute::Responses);
+    if route_eligible.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            healthy_workers = workers.len(),
+            route = "/v1/responses",
+            "route capability filter removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = route_eligible.workers;
 
     // PD-disaggregated mode is unsupported on this route (same rationale as
     // /v1/messages): this passthrough forwards to a single worker and does NOT
