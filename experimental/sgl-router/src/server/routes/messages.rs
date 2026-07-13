@@ -20,6 +20,7 @@ use crate::policies::registry::{
 };
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::GatewayKeyIdentity;
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -34,7 +35,7 @@ use crate::server::routes::tool_schema::normalize_tool_schema;
 use crate::server::trace::TraceContext;
 use crate::workers::LoadGuard;
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, Response};
 use bytes::Bytes;
 use serde::Deserialize;
@@ -366,11 +367,17 @@ fn anthropic_routing_value(body: &Bytes) -> Option<Value> {
 /// raw Anthropic body to `<worker>/v1/messages`.
 pub async fn messages(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<Extension<GatewayKeyIdentity>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response<Body> {
     let result = async {
-        let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+        let body = apply_request_priority_override(
+            &ctx.config.priority_override,
+            entry_identity.as_ref().map(|identity| &identity.0),
+            &headers,
+            body,
+        )?;
         if let Some(response) =
             maybe_forward_external_model(&ctx, &headers, &body, "/v1/messages").await?
         {
@@ -465,11 +472,17 @@ pub async fn messages(
 /// each turn to size context, so it MUST be served once claude-proxy is retired.
 pub async fn count_tokens(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<Extension<GatewayKeyIdentity>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response<Body> {
     let result = async {
-        let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+        let body = apply_request_priority_override(
+            &ctx.config.priority_override,
+            entry_identity.as_ref().map(|identity| &identity.0),
+            &headers,
+            body,
+        )?;
         if let Some(response) =
             maybe_forward_external_model(&ctx, &headers, &body, "/v1/messages/count_tokens").await?
         {

@@ -14,6 +14,7 @@ use crate::policies::registry::{
 use crate::policies::SelectionContext;
 use crate::policies::{request_tokens_for, RequestTokens};
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::GatewayKeyIdentity;
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -29,7 +30,7 @@ use crate::server::routes::external_model::maybe_forward as maybe_forward_extern
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::workers::LoadGuard;
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, Response};
 use bytes::Bytes;
 use serde::Deserialize;
@@ -61,28 +62,52 @@ fn parse_probe(body: &Bytes) -> Result<PassthroughProbe, ApiError> {
 
 pub async fn completions(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<Extension<GatewayKeyIdentity>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
-    passthrough(State(ctx), headers, body, "/v1/completions", "completions").await
+    passthrough(
+        State(ctx),
+        entry_identity.as_ref().map(|identity| &identity.0),
+        headers,
+        body,
+        "/v1/completions",
+        "completions",
+    )
+    .await
 }
 
 pub async fn responses(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<Extension<GatewayKeyIdentity>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
-    passthrough(State(ctx), headers, body, "/v1/responses", "responses").await
+    passthrough(
+        State(ctx),
+        entry_identity.as_ref().map(|identity| &identity.0),
+        headers,
+        body,
+        "/v1/responses",
+        "responses",
+    )
+    .await
 }
 
 async fn passthrough(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<&GatewayKeyIdentity>,
     headers: HeaderMap,
     body: Bytes,
     path: &'static str,
     log_name: &'static str,
 ) -> Result<Response<Body>, ApiError> {
-    let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+    let body = apply_request_priority_override(
+        &ctx.config.priority_override,
+        entry_identity,
+        &headers,
+        body,
+    )?;
     if let Some(response) = maybe_forward_external_model(&ctx, &headers, &body, path).await? {
         return Ok(response);
     }

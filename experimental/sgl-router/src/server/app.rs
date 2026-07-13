@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::{authenticate_gateway_key, GatewayKeyring};
 use crate::server::routes::chat::MAX_CHAT_BODY_BYTES;
 use crate::server::routes::messages::MAX_MESSAGES_BODY_BYTES;
 use crate::server::routes::passthrough::MAX_PASSTHROUGH_BODY_BYTES;
@@ -53,10 +54,23 @@ async fn log_413(req: Request, next: Next) -> Response {
 }
 
 pub fn build_router(ctx: Arc<AppContext>) -> Router {
-    Router::new()
+    build_router_with_gateway_keyring(ctx, Arc::new(GatewayKeyring::disabled()))
+}
+
+pub fn build_router_with_gateway_keyring(
+    ctx: Arc<AppContext>,
+    keyring: Arc<GatewayKeyring>,
+) -> Router {
+    let public_routes = Router::new()
         .route("/healthz", get(crate::server::routes::health::healthz))
         .route("/readyz", get(crate::server::routes::health::readyz))
         .route("/metrics", get(crate::server::routes::metrics::metrics))
+        .route(
+            "/flush_cache",
+            post(crate::server::routes::cache::flush_cache),
+        );
+
+    let protected_routes = Router::new()
         .route(
             "/v1/models",
             get(crate::server::routes::models::list_models),
@@ -99,10 +113,13 @@ pub fn build_router(ctx: Arc<AppContext>) -> Router {
                 .layer(DefaultBodyLimit::max(MAX_RESPONSES_BODY_BYTES))
                 .layer(middleware::from_fn(log_413)),
         )
-        .route(
-            "/flush_cache",
-            post(crate::server::routes::cache::flush_cache),
-        )
+        .layer(middleware::from_fn_with_state(
+            keyring,
+            authenticate_gateway_key,
+        ));
+
+    public_routes
+        .merge(protected_routes)
         // After routing, so MatchedPath is set for every route.
         .layer(middleware::from_fn_with_state(ctx.clone(), count_requests))
         .with_state(ctx)

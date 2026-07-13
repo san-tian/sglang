@@ -9,6 +9,7 @@ use crate::policies::registry::{
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::router_state::RouterStateReservationGuard;
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::GatewayKeyIdentity;
 use crate::server::error::ApiError;
 use crate::server::metrics::{
     MetricsRegistry, PriorityFilterOutcome, RequestOutcome, SseClientDisconnectPhase,
@@ -25,7 +26,7 @@ use crate::server::routes::tool_schema::normalize_chat_tool_schemas;
 use crate::server::trace::TraceContext;
 use crate::workers::{LoadGuard, Worker};
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Response};
 use bytes::Bytes;
 use serde::de::IgnoredAny;
@@ -161,10 +162,16 @@ impl Drop for RecordDurationOnDrop {
 /// otherwise buffer.
 pub async fn chat_completions(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<Extension<GatewayKeyIdentity>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
-    let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+    let body = apply_request_priority_override(
+        &ctx.config.priority_override,
+        entry_identity.as_ref().map(|identity| &identity.0),
+        &headers,
+        body,
+    )?;
     if let Some(response) =
         maybe_forward_external_model(&ctx, &headers, &body, "/v1/chat/completions").await?
     {

@@ -14,7 +14,8 @@
 //! RTX-6000 reserved for high-priority production traffic).
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, HeaderValue, Request, StatusCode};
+use http_body_util::BodyExt;
 use sgl_router::config::{
     ActiveLoadConfig, Config, DiscoveryBackend, ModelConfig, ObservabilityConfig, PolicyKind,
     ProxyConfig, ServerConfig, StaticUrlsDiscoveryConfig, TieredSpilloverConfig,
@@ -22,8 +23,9 @@ use sgl_router::config::{
 use sgl_router::discovery::{ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerSpec, WorkerTier};
 use sgl_router::policies::factory::build_registry_with_defaults;
 use sgl_router::proxy::Proxy;
-use sgl_router::server::app::build_router;
+use sgl_router::server::app::{build_router, build_router_with_gateway_keyring};
 use sgl_router::server::app_context::AppContext;
+use sgl_router::server::entry_auth::GatewayKeyring;
 use sgl_router::tokenizer::TokenizerRegistry;
 use sgl_router::workers::WorkerRegistry;
 use std::sync::Arc;
@@ -183,6 +185,40 @@ fn messages_request(priority: Option<i64>) -> Request<Body> {
 
 fn was_hit(w: &MockWorker) -> bool {
     w.captured.lock().unwrap().last_body.is_some()
+}
+
+fn gateway_keyring() -> Arc<GatewayKeyring> {
+    Arc::new(
+        GatewayKeyring::from_json(
+            r#"{
+                "version": 1,
+                "keys": [
+                    {"key_id":"external-a","class":"external","enabled":true},
+                    {"key_id":"external-b","class":"external","enabled":true},
+                    {"key_id":"internal-a","class":"internal","enabled":true},
+                    {"key_id":"disabled-a","class":"external","enabled":false}
+                ]
+            }"#,
+            r#"{
+                "external-a":"external-secret-a",
+                "external-b":"external-secret-b",
+                "internal-a":"internal-secret-a",
+                "disabled-a":"disabled-secret-a"
+            }"#,
+        )
+        .unwrap(),
+    )
+}
+
+fn with_header(
+    mut request: Request<Body>,
+    name: &'static str,
+    value: &'static str,
+) -> Request<Body> {
+    request
+        .headers_mut()
+        .insert(name, HeaderValue::from_static(value));
+    request
 }
 
 /// A low-priority (here: absent → 0) request must NEVER land on a
@@ -491,4 +527,191 @@ async fn malformed_priority_treated_as_low() {
         !was_hit(&gated),
         "string priority must coerce to 0 and stay off the gated worker",
     );
+}
+
+#[tokio::test]
+async fn external_gateway_keys_force_priority_100_and_use_only_worker_bearer() {
+    let gated = MockWorker::start(vec![]).await;
+    let mut cfg = forced_priority(0);
+    cfg.priority_override.trusted_priority_header = Some("x-internal-priority".into());
+    cfg.priority_override.trusted_priority_secret_header =
+        Some("x-internal-priority-secret".into());
+    cfg.priority_override.trusted_priority_secret = Some("trusted-secret".into());
+    let mut gated_spec = plain_spec("gated", &gated.url, Some(100));
+    gated_spec.bearer_token = Some("worker-secret".into());
+    let ctx = build_ctx_with_config(cfg, vec![gated_spec]);
+    let keyring = gateway_keyring();
+
+    for (header_name, api_key) in [
+        ("x-api-key", "external-secret-a"),
+        ("ocp-apim-subscription-key", "external-secret-b"),
+    ] {
+        let mut request = with_header(chat_request(Some(0)), header_name, api_key);
+        request
+            .headers_mut()
+            .insert("x-internal-priority", HeaderValue::from_static("-1"));
+        request.headers_mut().insert(
+            "x-internal-priority-secret",
+            HeaderValue::from_static("trusted-secret"),
+        );
+        let response = build_router_with_gateway_keyring(Arc::clone(&ctx), Arc::clone(&keyring))
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(captured_priority(&gated), Some(100));
+    }
+
+    let captured = gated.captured.lock().unwrap();
+    assert_eq!(
+        captured.headers.get("authorization").map(String::as_str),
+        Some("Bearer worker-secret")
+    );
+    assert!(!captured
+        .headers
+        .values()
+        .any(|value| value.contains("external-secret")));
+    assert!(!captured.headers.contains_key("x-api-key"));
+    assert!(!captured.headers.contains_key("ocp-apim-subscription-key"));
+}
+
+#[tokio::test]
+async fn internal_gateway_key_forces_priority_0_over_client_and_trusted_values() {
+    let worker = MockWorker::start(vec![]).await;
+    let mut cfg = forced_priority(100);
+    cfg.priority_override.trusted_priority_header = Some("x-internal-priority".into());
+    cfg.priority_override.trusted_priority_secret_header =
+        Some("x-internal-priority-secret".into());
+    cfg.priority_override.trusted_priority_secret = Some("trusted-secret".into());
+    let mut worker_spec = plain_spec("worker", &worker.url, None);
+    worker_spec.bearer_token = Some("worker-secret".into());
+    let ctx = build_ctx_with_config(cfg, vec![worker_spec]);
+
+    let mut request = with_header(
+        chat_request(Some(100)),
+        "authorization",
+        "Bearer internal-secret-a",
+    );
+    request
+        .headers_mut()
+        .insert("x-internal-priority", HeaderValue::from_static("100"));
+    request.headers_mut().insert(
+        "x-internal-priority-secret",
+        HeaderValue::from_static("trusted-secret"),
+    );
+    let response = build_router_with_gateway_keyring(ctx, gateway_keyring())
+        .oneshot(request)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(captured_priority(&worker), Some(0));
+    let captured = worker.captured.lock().unwrap();
+    assert_eq!(
+        captured.headers.get("authorization").map(String::as_str),
+        Some("Bearer worker-secret")
+    );
+    assert!(!captured
+        .headers
+        .values()
+        .any(|value| value.contains("internal-secret-a")));
+}
+
+#[tokio::test]
+async fn authenticated_client_credential_is_removed_when_worker_has_no_bearer() {
+    let worker = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![plain_spec("worker", &worker.url, None)]);
+    let request = with_header(
+        chat_request(None),
+        "authorization",
+        "Bearer external-secret-a",
+    );
+
+    let response = build_router_with_gateway_keyring(ctx, gateway_keyring())
+        .oneshot(request)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let captured = worker.captured.lock().unwrap();
+    assert!(!captured.headers.contains_key("authorization"));
+    assert!(!captured
+        .headers
+        .values()
+        .any(|value| value.contains("external-secret-a")));
+}
+
+#[tokio::test]
+async fn missing_unknown_and_disabled_gateway_keys_share_sanitized_401_and_never_hit_worker() {
+    let worker = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![plain_spec("worker", &worker.url, None)]);
+    let keyring = gateway_keyring();
+    let requests = [
+        chat_request(None),
+        with_header(chat_request(None), "authorization", "Bearer unknown-secret"),
+        with_header(chat_request(None), "x-api-key", "disabled-secret-a"),
+    ];
+    let mut bodies = Vec::new();
+
+    for request in requests {
+        let response = build_router_with_gateway_keyring(Arc::clone(&ctx), Arc::clone(&keyring))
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::WWW_AUTHENTICATE)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer realm=\"gateway\"")
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8_lossy(&body);
+        assert!(!text.contains("unknown-secret"));
+        assert!(!text.contains("disabled-secret-a"));
+        bodies.push(body);
+    }
+
+    assert!(bodies.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(!was_hit(&worker));
+}
+
+#[tokio::test]
+async fn gateway_operational_routes_remain_public_while_api_routes_are_protected() {
+    let ctx = build_ctx(Vec::new());
+    ctx.mark_ready();
+    let health_response = build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health_response.status(), StatusCode::OK);
+
+    let flush_response = build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/flush_cache")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(flush_response.status(), StatusCode::OK);
+
+    let models_response = build_router_with_gateway_keyring(ctx, gateway_keyring())
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(models_response.status(), StatusCode::UNAUTHORIZED);
 }

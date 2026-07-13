@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::PriorityOverrideConfig;
+use crate::server::entry_auth::GatewayKeyIdentity;
 use crate::server::error::ApiError;
 use axum::http::{HeaderMap, HeaderName};
 use bytes::Bytes;
@@ -9,10 +10,11 @@ use serde_json::{Number, Value};
 
 pub(crate) fn apply_request_priority_override(
     config: &PriorityOverrideConfig,
+    entry_identity: Option<&GatewayKeyIdentity>,
     headers: &HeaderMap,
     body: Bytes,
 ) -> Result<Bytes, ApiError> {
-    let Some(priority) = effective_priority_override(config, headers) else {
+    let Some(priority) = effective_priority_override(config, entry_identity, headers) else {
         return Ok(body);
     };
 
@@ -32,9 +34,13 @@ pub(crate) fn apply_request_priority_override(
 
 fn effective_priority_override(
     config: &PriorityOverrideConfig,
+    entry_identity: Option<&GatewayKeyIdentity>,
     headers: &HeaderMap,
 ) -> Option<i64> {
-    trusted_priority(config, headers).or(config.force_request_priority)
+    entry_identity
+        .map(GatewayKeyIdentity::forced_priority)
+        .or_else(|| trusted_priority(config, headers))
+        .or(config.force_request_priority)
 }
 
 fn trusted_priority(config: &PriorityOverrideConfig, headers: &HeaderMap) -> Option<i64> {
@@ -60,6 +66,7 @@ fn trusted_priority(config: &PriorityOverrideConfig, headers: &HeaderMap) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::entry_auth::{GatewayKeyClass, GatewayKeyIdentity};
     use serde_json::json;
 
     fn cfg(force: Option<i64>) -> PriorityOverrideConfig {
@@ -90,7 +97,8 @@ mod tests {
     fn leaves_body_unchanged_without_override() {
         let input = Bytes::from_static(br#"{"model":"m"}"#);
         let output =
-            apply_request_priority_override(&cfg(None), &HeaderMap::new(), input.clone()).unwrap();
+            apply_request_priority_override(&cfg(None), None, &HeaderMap::new(), input.clone())
+                .unwrap();
         assert_eq!(output, input);
     }
 
@@ -98,6 +106,7 @@ mod tests {
     fn applies_forced_priority() {
         let output = apply_request_priority_override(
             &cfg(Some(0)),
+            None,
             &HeaderMap::new(),
             Bytes::from_static(br#"{"model":"m","priority":100}"#),
         )
@@ -112,6 +121,7 @@ mod tests {
         headers.insert("x-internal-priority-secret", "secret".parse().unwrap());
         let output = apply_request_priority_override(
             &trusted_cfg(Some(0)),
+            None,
             &headers,
             Bytes::from_static(br#"{"model":"m"}"#),
         )
@@ -126,6 +136,7 @@ mod tests {
         headers.insert("x-internal-priority-secret", "wrong".parse().unwrap());
         let output = apply_request_priority_override(
             &trusted_cfg(Some(0)),
+            None,
             &headers,
             Bytes::from_static(br#"{"model":"m"}"#),
         )
@@ -140,6 +151,7 @@ mod tests {
         headers.insert("x-internal-priority-secret", "secret".parse().unwrap());
         let output = apply_request_priority_override(
             &trusted_cfg(Some(0)),
+            None,
             &headers,
             Bytes::from_static(br#"{"model":"m"}"#),
         )
@@ -151,6 +163,7 @@ mod tests {
     fn rejects_non_object_json_when_override_is_active() {
         let err = apply_request_priority_override(
             &cfg(Some(0)),
+            None,
             &HeaderMap::new(),
             Bytes::from_static(br#"[]"#),
         )
@@ -162,6 +175,7 @@ mod tests {
     fn rewrite_preserves_other_fields() {
         let output = apply_request_priority_override(
             &cfg(Some(0)),
+            None,
             &HeaderMap::new(),
             Bytes::from(
                 serde_json::to_vec(&json!({"model":"m","messages":[{"role":"user"}]})).unwrap(),
@@ -171,5 +185,37 @@ mod tests {
         let parsed: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(parsed["model"], "m");
         assert_eq!(parsed["priority"], 0);
+    }
+
+    #[test]
+    fn external_identity_overrides_client_force_and_trusted_header() {
+        let identity = GatewayKeyIdentity::new("external", GatewayKeyClass::External);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-internal-priority", "-99".parse().unwrap());
+        headers.insert("x-internal-priority-secret", "secret".parse().unwrap());
+        let output = apply_request_priority_override(
+            &trusted_cfg(Some(-50)),
+            Some(&identity),
+            &headers,
+            Bytes::from_static(br#"{"model":"m","priority":0}"#),
+        )
+        .unwrap();
+        assert_eq!(body_priority(output), 100);
+    }
+
+    #[test]
+    fn internal_identity_overrides_client_force_and_trusted_header() {
+        let identity = GatewayKeyIdentity::new("internal", GatewayKeyClass::Internal);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-internal-priority", "100".parse().unwrap());
+        headers.insert("x-internal-priority-secret", "secret".parse().unwrap());
+        let output = apply_request_priority_override(
+            &trusted_cfg(Some(100)),
+            Some(&identity),
+            &headers,
+            Bytes::from_static(br#"{"model":"m","priority":100}"#),
+        )
+        .unwrap();
+        assert_eq!(body_priority(output), 0);
     }
 }
