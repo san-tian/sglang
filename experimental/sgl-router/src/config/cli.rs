@@ -33,9 +33,10 @@ use crate::discovery::WorkerTier;
 )]
 pub struct Cli {
     /// Runtime mode. `gateway` is the normal OpenAI-compatible router.
+    /// `pd_proxy` is a Chat-only internal proxy for one prefill/decode group.
     /// `cache_state` runs only the distributed cache-state HTTP API for
     /// internal gateway queries. `router_state` runs only the distributed
-    /// active-load API. Non-gateway modes do not require worker discovery.
+    /// active-load API. Cache/router-state modes do not require discovery.
     #[arg(long, value_enum, default_value = "gateway")]
     pub mode: RuntimeMode,
 
@@ -419,7 +420,7 @@ impl Cli {
             || self.ttft_cache_score_margin.is_some()
             || self.cache_state_url.is_some()
             || self.cache_state_timeout_ms != 20;
-        if self.mode == RuntimeMode::Gateway
+        if matches!(self.mode, RuntimeMode::Gateway | RuntimeMode::PdProxy)
             && tuned_cache_aware
             && !matches!(
                 self.policy,
@@ -992,6 +993,19 @@ mod tests {
         assert_eq!(c.model.id, "qwen3-0.6b");
         assert_eq!(c.proxy.request_timeout_secs, 300);
         assert_eq!(c.active_load.stale_request_timeout_secs, 600);
+    }
+
+    #[test]
+    fn parses_pd_proxy_mode_with_static_workers() {
+        let c = into_config_owned(with_model(&[
+            "--mode",
+            "pd_proxy",
+            "--worker-urls",
+            "http://prefill:30100",
+            "http://decode:30200",
+        ]))
+        .unwrap();
+        assert_eq!(c.runtime_mode, RuntimeMode::PdProxy);
     }
 
     /// With `--tokenizer-path` omitted, the tokenizer source defaults to the

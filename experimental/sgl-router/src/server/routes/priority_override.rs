@@ -37,10 +37,13 @@ fn effective_priority_override(
     entry_identity: Option<&GatewayKeyIdentity>,
     headers: &HeaderMap,
 ) -> Option<i64> {
-    entry_identity
-        .map(GatewayKeyIdentity::forced_priority)
-        .or_else(|| trusted_priority(config, headers))
-        .or(config.force_request_priority)
+    match entry_identity {
+        // An authenticated entry identity owns priority semantics. External
+        // and internal gateway classes force their assigned value; the
+        // dedicated proxy class deliberately preserves the upstream body.
+        Some(identity) => identity.priority_override(),
+        None => trusted_priority(config, headers).or(config.force_request_priority),
+    }
 }
 
 fn trusted_priority(config: &PriorityOverrideConfig, headers: &HeaderMap) -> Option<i64> {
@@ -217,5 +220,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body_priority(output), 0);
+    }
+
+    #[test]
+    fn proxy_identity_preserves_upstream_priority_and_body_bytes() {
+        let identity = GatewayKeyIdentity::new("proxy", GatewayKeyClass::Proxy);
+        let input = Bytes::from_static(br#"{"model":"m","priority":50}"#);
+        let output = apply_request_priority_override(
+            &trusted_cfg(Some(0)),
+            Some(&identity),
+            &HeaderMap::new(),
+            input.clone(),
+        )
+        .unwrap();
+        assert_eq!(output, input);
     }
 }

@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::server::app_context::AppContext;
+use crate::{
+    config::RuntimeMode,
+    discovery::{ModelId, WorkerMode},
+};
 use axum::extract::State;
 use axum::http::StatusCode;
 use std::sync::Arc;
@@ -16,13 +20,30 @@ pub async fn healthz() -> StatusCode {
 /// Requires BOTH:
 /// 1. `AppContext::mark_ready()` was called by main (process bootstrap
 ///    finished — config loaded, tokenizers built, server bound), AND
-/// 2. At least one worker is registered. Without this second check,
+/// 2. A usable worker shape is registered. A gateway needs any worker;
+///    a dedicated PD proxy needs at least one healthy Prefill and Decode.
+///    Without this second check,
 ///    `/readyz` flips green before the first `DiscoveryEvent::Added`
 ///    has been processed — the Service starts sending traffic to a
 ///    pod whose registry is empty, and every request returns 503
 ///    `no_healthy_workers`.
 pub async fn readyz(State(ctx): State<Arc<AppContext>>) -> StatusCode {
-    if ctx.is_ready() && !ctx.registry.is_empty() {
+    let workers_ready = match ctx.config.runtime_mode {
+        RuntimeMode::PdProxy => {
+            let model = ModelId(ctx.config.model.id.clone());
+            let workers = ctx.registry.healthy_workers_for(&model);
+            workers
+                .iter()
+                .any(|worker| worker.mode() == WorkerMode::Prefill)
+                && workers
+                    .iter()
+                    .any(|worker| worker.mode() == WorkerMode::Decode)
+        }
+        RuntimeMode::Gateway | RuntimeMode::CacheState | RuntimeMode::RouterState => {
+            !ctx.registry.is_empty()
+        }
+    };
+    if ctx.is_ready() && workers_ready {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
@@ -104,20 +125,65 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
     }
 
+    #[tokio::test]
+    async fn pd_proxy_readyz_requires_both_prefill_and_decode() {
+        let only_prefill = test_ctx_with_modes(true, RuntimeMode::PdProxy, &[WorkerMode::Prefill]);
+        let res = crate::server::app::build_router(only_prefill)
+            .oneshot(
+                Request::builder()
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let pd = test_ctx_with_modes(
+            true,
+            RuntimeMode::PdProxy,
+            &[WorkerMode::Prefill, WorkerMode::Decode],
+        );
+        let res = crate::server::app::build_router(pd)
+            .oneshot(
+                Request::builder()
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
     fn test_ctx(ready: bool, with_worker: bool) -> Arc<AppContext> {
-        use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
-        let ctx = AppContext::stub();
+        let modes = if with_worker {
+            &[WorkerMode::Plain][..]
+        } else {
+            &[]
+        };
+        test_ctx_with_modes(ready, RuntimeMode::Gateway, modes)
+    }
+
+    fn test_ctx_with_modes(
+        ready: bool,
+        runtime_mode: RuntimeMode,
+        modes: &[WorkerMode],
+    ) -> Arc<AppContext> {
+        use crate::discovery::{WorkerId, WorkerSpec};
+        let mut ctx = AppContext::stub();
+        ctx.config.runtime_mode = runtime_mode;
         if ready {
             ctx.mark_ready();
         }
-        if with_worker {
+        for (index, mode) in modes.iter().copied().enumerate() {
             ctx.registry
                 .add(WorkerSpec {
-                    id: WorkerId("test-w".into()),
-                    url: "http://test:30000".into(),
-                    mode: WorkerMode::Plain,
-                    model_ids: vec![ModelId("test".into())],
-                    bootstrap_port: None,
+                    id: WorkerId(format!("test-w-{index}")),
+                    url: format!("http://test-{index}:30000"),
+                    mode,
+                    model_ids: vec![ModelId("stub-model".into())],
+                    bootstrap_port: (mode == WorkerMode::Prefill).then_some(8998),
                     min_priority: None,
                     max_context_tokens: None,
                     bearer_token: None,

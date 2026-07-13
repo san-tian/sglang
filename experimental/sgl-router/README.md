@@ -62,6 +62,29 @@ static-discovery suffix such as `@tier=shared`; per-worker
 not hot reload: changing the registry requires a new revision/restart unless a
 future runtime polling path is enabled.
 
+### Dedicated Prefill/Decode Proxy
+
+`pd_proxy` mode is for a stateless, independently replicated router in front of
+one prefill/decode worker group. It requires static `WORKER_URLS`, authenticates
+the upstream gateway with one `PD_PROXY_API_KEY`, and preserves the request
+priority already assigned upstream:
+
+```bash
+ROUTER_MODE=pd_proxy \
+MODEL_ID=zai-org/GLM-5.2-FP8 \
+WORKER_URLS="http://prefill-a:30100 http://prefill-b:30100 http://decode-a:30200 http://decode-b:30200" \
+PD_PROXY_API_KEY=... \
+WORKER_INTROSPECT_KEY=... \
+WORKER_BEARER_KEY=... \
+sgl-router
+```
+
+The mode exposes Chat generation only; Completions, Messages, Responses, and
+cache-flush routes are not registered. `/readyz` returns 200 only when at least
+one healthy Prefill and one healthy Decode are available. Stateful Responses
+must remain on the existing compatibility proxy until cross-replica state has
+an external store.
+
 Kubernetes EndpointSlice discovery:
 
 ```bash

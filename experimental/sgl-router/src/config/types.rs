@@ -61,6 +61,11 @@ pub enum RuntimeMode {
     #[default]
     #[value(name = "gateway")]
     Gateway,
+    /// Internal stateless proxy for a single prefill/decode worker group.
+    /// It exposes only the Chat generation route and preserves the priority
+    /// already assigned by the upstream gateway.
+    #[value(name = "pd_proxy")]
+    PdProxy,
     #[value(name = "cache_state")]
     CacheState,
     #[value(name = "router_state")]
