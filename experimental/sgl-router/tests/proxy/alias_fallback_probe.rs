@@ -61,6 +61,7 @@ fn alias_config(primary_url: &str, fallback_url: &str) -> Config {
             fallback_base_url: fallback_url.to_string(),
             fallback_bearer_token: None,
         }),
+        external_model: None,
     }
 }
 

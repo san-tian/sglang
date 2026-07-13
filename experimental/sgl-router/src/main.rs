@@ -4,6 +4,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use sgl_router::config::{Cli, LogFormat, RuntimeMode};
+use sgl_router::server::entry_auth::GatewayKeyring;
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -121,6 +122,11 @@ fn env_to_cli_args() -> Vec<OsString> {
     );
     push_env_arg(
         &mut args,
+        "WORKER_BEARER_KEY",
+        "--default-worker-bearer-key",
+    );
+    push_env_arg(
+        &mut args,
         "LOAD_POLL_INTERVAL_SECS",
         "--load-poll-interval-secs",
     );
@@ -182,6 +188,13 @@ fn env_to_cli_args() -> Vec<OsString> {
     );
     push_worker_urls_env(&mut args);
     push_split_env_arg(&mut args, "WORKER_BEARER_KEYS", "--worker-bearer-keys");
+    push_env_arg(&mut args, "EXTERNAL_MODEL_ID", "--external-model-id");
+    push_env_arg(&mut args, "EXTERNAL_MODEL_URL", "--external-model-url");
+    push_env_arg(
+        &mut args,
+        "EXTERNAL_MODEL_BEARER_TOKEN",
+        "--external-model-bearer-token",
+    );
     args
 }
 
@@ -429,6 +442,18 @@ async fn main() -> Result<()> {
         RuntimeMode::RouterState => return run_router_state(cfg).await,
         RuntimeMode::Gateway => {}
     }
+
+    // Production gateway auth is fail-closed: both the Git-managed policy
+    // inventory and the Key Vault-provided secret inventory are required and
+    // must match before any discovery/background tasks are started.
+    let gateway_keyring =
+        Arc::new(GatewayKeyring::from_env().context("load gateway entry authentication keyring")?);
+    tracing::info!(
+        configured_keys = gateway_keyring.configured_key_count(),
+        enabled_keys = gateway_keyring.enabled_key_count(),
+        disabled_keys = gateway_keyring.disabled_key_count(),
+        "gateway entry API-key authentication enabled"
+    );
 
     let tokenizers = Arc::new(
         sgl_router::tokenizer::TokenizerRegistry::load_from_config(&cfg)
@@ -683,7 +708,8 @@ async fn main() -> Result<()> {
     );
     ctx.mark_ready();
 
-    let app = sgl_router::server::app::build_router(ctx.clone());
+    let app =
+        sgl_router::server::app::build_router_with_gateway_keyring(ctx.clone(), gateway_keyring);
 
     let bind = format!("{}:{}", cfg.server.host, cfg.server.port);
     let listener = tokio::net::TcpListener::bind(&bind)
@@ -1057,6 +1083,7 @@ mod tests {
                 "WORKER_BEARER_KEYS",
                 "http://worker-a:30000=token-a http://worker-b:30000=token-b",
             ),
+            ("WORKER_BEARER_KEY", "default-worker-token"),
             ("FORCE_REQUEST_PRIORITY", "0"),
             ("TIER_PRIMARY", "bulk"),
             ("TIER_SPILLOVER", "shared"),
@@ -1085,6 +1112,7 @@ mod tests {
         for flag in [
             "--worker-urls",
             "--worker-bearer-keys",
+            "--default-worker-bearer-key",
             "--force-request-priority",
             "--tier-primary",
             "--tier-spillover",

@@ -15,6 +15,43 @@ impl Config {
         if self.model.id.is_empty() {
             return Err(anyhow!("model id must be non-empty"));
         }
+        if let Some(external) = &self.external_model {
+            if external.model_id.trim().is_empty() {
+                return Err(anyhow!("external model id must be non-empty"));
+            }
+            if external.model_id == self.model.id {
+                return Err(anyhow!(
+                    "external model id must differ from the local model id"
+                ));
+            }
+            if external.bearer_token.trim().is_empty() {
+                return Err(anyhow!("external model bearer token must be non-empty"));
+            }
+            if !external
+                .bearer_token
+                .bytes()
+                .all(|byte| matches!(byte, 0x21..=0x7e))
+            {
+                return Err(anyhow!(
+                    "external model bearer token must contain only visible ASCII without whitespace"
+                ));
+            }
+            axum::http::HeaderValue::from_str(&format!("Bearer {}", external.bearer_token))
+                .map_err(|_| {
+                    anyhow!("external model bearer token is not a valid HTTP header value")
+                })?;
+            let parsed = url::Url::parse(&external.base_url)
+                .map_err(|e| anyhow!("external model URL is invalid: {e}"))?;
+            if !matches!(parsed.scheme(), "http" | "https") {
+                return Err(anyhow!(
+                    "external model URL has unsupported scheme {:?}; only http and https are supported",
+                    parsed.scheme()
+                ));
+            }
+            if parsed.host_str().is_none() {
+                return Err(anyhow!("external model URL must include a host"));
+            }
+        }
         match &self.discovery {
             DiscoveryBackend::StaticUrls(s) => {
                 if s.urls.is_empty() {
@@ -155,12 +192,52 @@ mod tests {
             cache_state_url: None,
             cache_state_timeout_ms: 20,
             alias_fallback: None,
+            external_model: None,
         }
     }
 
     #[test]
     fn accepts_minimal_static_config() {
         cfg("qwen3", &["http://10.0.0.1:30000"]).validate().unwrap();
+    }
+
+    #[test]
+    fn validates_external_model_contract() {
+        let mut cfg = cfg("qwen3", &["http://10.0.0.1:30000"]);
+        cfg.external_model = Some(ExternalModelConfig {
+            model_id: "macaron-a2ui-tall".into(),
+            base_url: "http://provider.example:16596".into(),
+            bearer_token: "provider-secret".into(),
+        });
+        cfg.validate().unwrap();
+
+        cfg.external_model.as_mut().unwrap().model_id = cfg.model.id.clone();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("must differ"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_external_model_with_unsafe_url_or_invalid_token() {
+        let mut cfg = cfg("qwen3", &["http://10.0.0.1:30000"]);
+        cfg.external_model = Some(ExternalModelConfig {
+            model_id: "macaron-a2ui-tall".into(),
+            base_url: "file:///tmp/provider.sock".into(),
+            bearer_token: "provider-secret".into(),
+        });
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("unsupported scheme"), "got: {err}");
+
+        let external = cfg.external_model.as_mut().unwrap();
+        external.base_url = "https://provider.example".into();
+        external.bearer_token = "  ".into();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("must be non-empty"), "got: {err}");
+
+        for token in ["provider secret", "provider\nsecret", "provider\tsecret"] {
+            cfg.external_model.as_mut().unwrap().bearer_token = token.into();
+            let err = cfg.validate().unwrap_err().to_string();
+            assert!(err.contains("visible ASCII"), "token={token:?}, got: {err}");
+        }
     }
 
     #[test]

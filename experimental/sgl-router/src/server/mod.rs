@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod app_context;
+pub mod entry_auth;
 pub mod error;
 pub mod header_utils;
 pub mod metrics;

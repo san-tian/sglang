@@ -47,6 +47,7 @@ pub struct AppContext {
     /// so TTFT-first scoring sees pending work from sibling gateway replicas.
     pub router_state_overlay: Option<Arc<RouterStateLoadOverlay>>,
     pub alias_fallback_breaker: Option<Arc<CircuitBreaker>>,
+    pub external_model_breaker: Option<Arc<CircuitBreaker>>,
     pub trace_sink: Option<Arc<TraceSink>>,
     ready: AtomicBool,
 }
@@ -118,6 +119,10 @@ impl AppContext {
             .alias_fallback
             .as_ref()
             .map(|_| Arc::new(CircuitBreaker::new()));
+        let external_model_breaker = config
+            .external_model
+            .as_ref()
+            .map(|_| Arc::new(CircuitBreaker::new()));
         let trace_sink = TraceSink::from_config(&config.trace);
         Self {
             config,
@@ -131,6 +136,7 @@ impl AppContext {
             router_state_client,
             router_state_overlay,
             alias_fallback_breaker,
+            external_model_breaker,
             trace_sink,
             ready: AtomicBool::new(false),
         }
@@ -183,6 +189,7 @@ impl AppContext {
                 cache_state_url: None,
                 cache_state_timeout_ms: 20,
                 alias_fallback: None,
+                external_model: None,
             },
             tokenizers: Arc::new(TokenizerRegistry::default()),
             proxy: Arc::new(Proxy::new(std::time::Duration::from_secs(60)).expect("stub proxy")),
@@ -194,6 +201,7 @@ impl AppContext {
             router_state_client: None,
             router_state_overlay: None,
             alias_fallback_breaker: None,
+            external_model_breaker: None,
             trace_sink: None,
             ready: AtomicBool::new(false),
         }

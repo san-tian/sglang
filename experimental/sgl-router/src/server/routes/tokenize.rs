@@ -142,6 +142,7 @@ mod tests {
             cache_state_url: None,
             cache_state_timeout_ms: 20,
             alias_fallback: None,
+            external_model: None,
         };
         let registry = crate::tokenizer::TokenizerRegistry::load_from_config(&cfg).unwrap();
         let proxy = Arc::new(

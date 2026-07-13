@@ -26,6 +26,7 @@ use crate::policies::registry::{
 };
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::GatewayKeyIdentity;
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -36,12 +37,13 @@ use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_l
 use crate::server::routes::context_window::{
     enforce_context_eligibility, required_context_tokens_with_explicit_output,
 };
+use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::tool_schema::normalize_tool_schema;
 use crate::server::trace::TraceContext;
 use crate::workers::LoadGuard;
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, Response};
 use bytes::Bytes;
 use serde::Deserialize;
@@ -386,10 +388,21 @@ fn responses_routing_value(body: &Bytes) -> Option<Value> {
 /// the default OpenAI error envelope via `ApiError`'s `IntoResponse`.
 pub async fn responses(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<Extension<GatewayKeyIdentity>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
-    let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+    let body = apply_request_priority_override(
+        &ctx.config.priority_override,
+        entry_identity.as_ref().map(|identity| &identity.0),
+        &headers,
+        body,
+    )?;
+    if let Some(response) =
+        maybe_forward_external_model(&ctx, &headers, &body, "/v1/responses").await?
+    {
+        return Ok(response);
+    }
     let probe = parse_probe(&body)?;
     let model_str = probe
         .model

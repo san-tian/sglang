@@ -13,9 +13,9 @@ use crate::config::{
     default_cb_cool_down, default_proxy_request_timeout_secs, default_stale_request_timeout_secs,
     default_trace_body_max_bytes, resolve_mode, ActiveLoadConfig, AliasFallbackConfig,
     CacheAwareConfig, CacheTreeSource, CircuitBreakerConfig, Config, DiscoveryBackend,
-    ExternalQueueAdmissionConfig, K8sDiscoveryConfig, LogFormat, ModelConfig, ObservabilityConfig,
-    PolicyKind, PriorityOverrideConfig, ProxyConfig, RuntimeMode, ServerConfig,
-    StaticUrlsDiscoveryConfig, StickyConfig, TieredSpilloverConfig, TraceConfig,
+    ExternalModelConfig, ExternalQueueAdmissionConfig, K8sDiscoveryConfig, LogFormat, ModelConfig,
+    ObservabilityConfig, PolicyKind, PriorityOverrideConfig, ProxyConfig, RuntimeMode,
+    ServerConfig, StaticUrlsDiscoveryConfig, StickyConfig, TieredSpilloverConfig, TraceConfig,
     WorkerBearerKeyConfig,
 };
 use crate::discovery::WorkerTier;
@@ -202,13 +202,18 @@ pub struct Cli {
 
     /// Optional per-worker bearer-token mapping for static discovery.
     /// Format: `<worker-url>=<token>`, e.g.
-    /// `http://10.0.0.2:30000=sk-worker-02`. When present, proxied `/v1/*`
-    /// traffic to that worker uses this token instead of forwarding the
-    /// inbound client Authorization header, and router-owned `/server_info`
-    /// / `/get_load` calls use the same per-worker token. This is intended
-    /// for legacy pools whose SGLang workers still have distinct api-keys.
+    /// `http://10.0.0.2:30000=sk-worker-02`. Explicit mappings take precedence
+    /// over `--default-worker-bearer-key`. Router-owned `/server_info` and
+    /// proxied `/v1/*` requests use the selected worker token; entry client
+    /// credentials are never forwarded to workers.
     #[arg(long, num_args = 1..)]
     pub worker_bearer_keys: Vec<String>,
+
+    /// Default bearer token for static workers that have no explicit
+    /// `--worker-bearer-keys` mapping. The `WORKER_BEARER_KEY` environment
+    /// variable is the production secret-injection path.
+    #[arg(long, env = "WORKER_BEARER_KEY")]
+    pub default_worker_bearer_key: Option<String>,
 
     // ---- discovery: kubernetes ----
     /// Enable Kubernetes EndpointSlice discovery.
@@ -237,10 +242,9 @@ pub struct Cli {
     /// SGLang `--api-key` and expose `/server_info` behind that key (which
     /// is the only thing protecting a worker on a bare public IP).
     ///
-    /// This is distinct from per-request client auth: inbound client
-    /// `Authorization` is still forwarded verbatim to the worker for
-    /// `/v1/*` traffic. Introspection happens at startup before any client
-    /// request exists, so it needs its own credential. When omitted,
+    /// This is distinct from gateway-entry client auth and from
+    /// `--default-worker-bearer-key`. Introspection happens at startup before
+    /// any client request exists, so it needs its own credential. When omitted,
     /// introspection is unauthenticated (correct for workers with no
     /// `--api-key`); against a key-protected worker the unauthenticated
     /// `/server_info` returns 401, KV-event discovery is skipped, and
@@ -334,6 +338,20 @@ pub struct Cli {
     #[arg(long)]
     pub alias_fallback_bearer_token: Option<String>,
 
+    // ---- direct external model route (optional) ----
+    /// Public model id routed directly to a fixed external
+    /// OpenAI-compatible upstream instead of the local worker pool.
+    #[arg(long)]
+    pub external_model_id: Option<String>,
+    /// Base URL for `--external-model-id`. Request paths such as
+    /// `/v1/chat/completions` are joined against this origin.
+    #[arg(long)]
+    pub external_model_url: Option<String>,
+    /// Gateway-owned bearer token for the external upstream. The inbound
+    /// client credential is never forwarded to this upstream.
+    #[arg(long)]
+    pub external_model_bearer_token: Option<String>,
+
     // ---- observability ----
     /// Default tracing level (overridden by `RUST_LOG`).
     #[arg(long, default_value = "info")]
@@ -352,6 +370,14 @@ impl Cli {
     /// [`Config::validate`] for the remaining value-level invariants
     /// (model id, static worker URLs).
     pub fn into_config(self) -> Result<Config> {
+        if self.worker_urls.is_empty()
+            && (!self.worker_bearer_keys.is_empty() || self.default_worker_bearer_key.is_some())
+        {
+            return Err(anyhow!(
+                "--worker-bearer-keys and --default-worker-bearer-key require \
+                 --worker-urls static discovery"
+            ));
+        }
         let discovery = if matches!(
             self.mode,
             RuntimeMode::CacheState | RuntimeMode::RouterState
@@ -720,6 +746,24 @@ impl Cli {
             }
         };
 
+        let external_model = match (
+            self.external_model_id,
+            self.external_model_url,
+            self.external_model_bearer_token,
+        ) {
+            (None, None, None) => None,
+            (Some(model_id), Some(base_url), Some(bearer_token)) => Some(ExternalModelConfig {
+                model_id,
+                base_url,
+                bearer_token,
+            }),
+            _ => {
+                return Err(anyhow!(
+                    "--external-model-id / --external-model-url / --external-model-bearer-token must be set together"
+                ));
+            }
+        };
+
         let config = Config {
             runtime_mode: self.mode,
             server: ServerConfig {
@@ -771,6 +815,7 @@ impl Cli {
             cache_state_url: self.cache_state_url,
             cache_state_timeout_ms: self.cache_state_timeout_ms,
             alias_fallback,
+            external_model,
         };
         config.validate()?;
         Ok(config)
@@ -812,17 +857,17 @@ impl Cli {
                 }
                 DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
                     urls: self.worker_urls.clone(),
-                    bearer_keys: self
-                        .worker_bearer_keys
-                        .iter()
-                        .map(|raw| parse_worker_bearer_key(raw))
-                        .collect::<Result<_>>()?,
+                    bearer_keys: build_static_bearer_keys(
+                        &self.worker_urls,
+                        &self.worker_bearer_keys,
+                        self.default_worker_bearer_key.as_deref(),
+                    )?,
                 })
             }
             (false, true) => {
-                if !self.worker_bearer_keys.is_empty() {
+                if !self.worker_bearer_keys.is_empty() || self.default_worker_bearer_key.is_some() {
                     return Err(anyhow!(
-                        "--worker-bearer-keys require --worker-urls static discovery"
+                        "worker bearer-key options require --worker-urls static discovery"
                     ));
                 }
                 // Resolve (and validate) the selector flags into a
@@ -858,19 +903,52 @@ fn join_selector(terms: &[String]) -> Option<String> {
 
 fn parse_worker_bearer_key(raw: &str) -> Result<WorkerBearerKeyConfig> {
     let (worker_url, bearer_token) = raw.split_once('=').ok_or_else(|| {
-        anyhow!("--worker-bearer-keys entries must have format <worker-url>=<token>, got {raw:?}")
+        anyhow!("--worker-bearer-keys entries must have format <worker-url>=<token>")
     })?;
     let worker_url = worker_url.trim();
     let bearer_token = bearer_token.trim();
     if worker_url.is_empty() || bearer_token.is_empty() {
         return Err(anyhow!(
-            "--worker-bearer-keys entries require non-empty URL and token, got {raw:?}"
+            "--worker-bearer-keys entries require non-empty URL and token"
         ));
     }
     Ok(WorkerBearerKeyConfig {
         worker_url: worker_url.to_string(),
         bearer_token: bearer_token.to_string(),
     })
+}
+
+fn build_static_bearer_keys(
+    worker_urls: &[String],
+    explicit_entries: &[String],
+    default_bearer_key: Option<&str>,
+) -> Result<Vec<WorkerBearerKeyConfig>> {
+    let mut bearer_keys = explicit_entries
+        .iter()
+        .map(|raw| parse_worker_bearer_key(raw))
+        .collect::<Result<Vec<_>>>()?;
+    let Some(default_bearer_key) = default_bearer_key else {
+        return Ok(bearer_keys);
+    };
+    let default_bearer_key = default_bearer_key.trim();
+    if default_bearer_key.is_empty() {
+        return Err(anyhow!("--default-worker-bearer-key must be non-empty"));
+    }
+
+    let explicit_urls = bearer_keys
+        .iter()
+        .map(|entry| crate::discovery::static_urls::normalize_worker_url(&entry.worker_url))
+        .collect::<Result<std::collections::HashSet<_>>>()?;
+    for worker_url in worker_urls {
+        let normalized = crate::discovery::static_urls::normalize_worker_url(worker_url)?;
+        if !explicit_urls.contains(&normalized) {
+            bearer_keys.push(WorkerBearerKeyConfig {
+                worker_url: worker_url.clone(),
+                bearer_token: default_bearer_key.to_string(),
+            });
+        }
+    }
+    Ok(bearer_keys)
 }
 
 #[cfg(test)]
@@ -963,6 +1041,50 @@ mod tests {
             ),
             _ => panic!("expected static_urls backend"),
         }
+    }
+
+    #[test]
+    fn default_worker_bearer_key_fills_only_workers_without_explicit_mapping() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://10.0.0.1:30000@min_priority=100",
+            "http://10.0.0.2:30000",
+            "--worker-bearer-keys",
+            "http://10.0.0.1:30000=explicit-worker-secret",
+            "--default-worker-bearer-key",
+            "default-worker-secret",
+        ]))
+        .unwrap();
+        let DiscoveryBackend::StaticUrls(static_urls) = c.discovery else {
+            panic!("expected static URLs discovery");
+        };
+        assert_eq!(static_urls.bearer_keys.len(), 2);
+        assert_eq!(
+            static_urls.bearer_keys[0].bearer_token,
+            "explicit-worker-secret"
+        );
+        assert_eq!(
+            static_urls.bearer_keys[1].worker_url,
+            "http://10.0.0.2:30000"
+        );
+        assert_eq!(
+            static_urls.bearer_keys[1].bearer_token,
+            "default-worker-secret"
+        );
+    }
+
+    #[test]
+    fn default_worker_bearer_key_requires_static_worker_urls() {
+        let error = into_config_owned(with_model(&[
+            "--service-discovery",
+            "--selector",
+            "app=sglang",
+            "--default-worker-bearer-key",
+            "worker-secret",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("require --worker-urls"), "got: {error}");
     }
 
     #[test]

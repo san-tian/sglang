@@ -66,6 +66,7 @@ fn build_ctx_with_worker(worker_url: &str) -> Arc<AppContext> {
         cache_state_url: None,
         cache_state_timeout_ms: 20,
         alias_fallback: None,
+        external_model: None,
     };
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
     let registry = Arc::new(WorkerRegistry::default());
