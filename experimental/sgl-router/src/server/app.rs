@@ -116,6 +116,9 @@ pub fn build_router_with_gateway_keyring(
                 "/flush_cache",
                 post(crate::server::routes::cache::flush_cache_for_gateway),
             );
+    } else if ctx.config.runtime_mode == crate::config::RuntimeMode::PdProxy {
+        protected_routes =
+            protected_routes.route("/get_load", get(crate::server::routes::get_load::get_load));
     }
 
     protected_routes = protected_routes.layer(middleware::from_fn_with_state(
@@ -163,5 +166,16 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         }
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/get_load")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

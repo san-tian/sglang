@@ -7,6 +7,7 @@ pub mod cache;
 pub mod chat;
 pub mod context_window;
 pub mod external_model;
+pub mod get_load;
 pub mod health;
 pub mod messages;
 pub mod metrics;

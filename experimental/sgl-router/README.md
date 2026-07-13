@@ -76,14 +76,18 @@ WORKER_URLS="http://prefill-a:30100 http://prefill-b:30100 http://decode-a:30200
 PD_PROXY_API_KEY=... \
 WORKER_INTROSPECT_KEY=... \
 WORKER_BEARER_KEY=... \
+LOAD_POLL_INTERVAL_SECS=1 \
 sgl-router
 ```
 
 The mode exposes Chat generation only; Completions, Messages, Responses, and
-cache-flush routes are not registered. `/readyz` returns 200 only when at least
-one healthy Prefill and one healthy Decode are available. Stateful Responses
-must remain on the existing compatibility proxy until cross-replica state has
-an external store.
+cache-flush routes are not registered. It also exposes a keyed, SGLang-compatible
+`/get_load` endpoint so an outer gateway can register the deployment as an
+`sglang_proxy`; the endpoint skips Decode workers whose latest load poll failed
+and returns 503 when none have a usable snapshot. `/readyz` returns 200 only
+when at least one healthy Prefill and one healthy Decode are available.
+Stateful Responses must remain on the existing compatibility proxy until
+cross-replica state has an external store.
 
 Kubernetes EndpointSlice discovery:
 
