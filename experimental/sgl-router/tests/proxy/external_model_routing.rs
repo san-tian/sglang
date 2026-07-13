@@ -16,8 +16,9 @@ use sgl_router::config::{
 use sgl_router::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
 use sgl_router::policies::factory::build_registry_with_defaults as build_policy_registry;
 use sgl_router::proxy::Proxy;
-use sgl_router::server::app::build_router;
+use sgl_router::server::app::{build_router, build_router_with_gateway_keyring};
 use sgl_router::server::app_context::AppContext;
+use sgl_router::server::entry_auth::GatewayKeyring;
 use sgl_router::tokenizer::TokenizerRegistry;
 use sgl_router::workers::WorkerRegistry;
 use std::sync::Arc;
@@ -74,6 +75,32 @@ fn base_config(external_url: String) -> Config {
 }
 
 fn build_test_app(cfg: Config, local_worker_url: String) -> axum::Router {
+    let ctx = build_test_context(cfg, local_worker_url);
+    build_router(ctx)
+}
+
+fn build_authenticated_test_app(cfg: Config, local_worker_url: String) -> axum::Router {
+    let ctx = build_test_context(cfg, local_worker_url);
+    let keyring = Arc::new(
+        GatewayKeyring::from_json(
+            r#"{
+                "version": 1,
+                "keys": [
+                    {"key_id":"external-test","class":"external","enabled":true},
+                    {"key_id":"internal-test","class":"internal","enabled":true}
+                ]
+            }"#,
+            r#"{
+                "external-test":"external-client-secret",
+                "internal-test":"internal-client-secret"
+            }"#,
+        )
+        .unwrap(),
+    );
+    build_router_with_gateway_keyring(ctx, keyring)
+}
+
+fn build_test_context(cfg: Config, local_worker_url: String) -> Arc<AppContext> {
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
     let registry = Arc::new(WorkerRegistry::default());
     registry
@@ -93,9 +120,7 @@ fn build_test_app(cfg: Config, local_worker_url: String) -> axum::Router {
         .unwrap();
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(Duration::from_secs(5)).unwrap());
-    build_router(Arc::new(AppContext::new(
-        cfg, tokenizers, proxy, registry, policies,
-    )))
+    Arc::new(AppContext::new(cfg, tokenizers, proxy, registry, policies))
 }
 
 fn external_request(path: &str, body: Value) -> Request<Body> {
@@ -107,6 +132,25 @@ fn external_request(path: &str, body: Value) -> Request<Body> {
         .header("x-api-key", "client-anthropic-secret")
         .header("ocp-apim-subscription-key", "legacy-apim-secret")
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
+}
+
+fn authenticated_external_request(api_key: &str, priority: i64) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {api_key}"))
+        .header("x-api-key", api_key)
+        .header("ocp-apim-subscription-key", api_key)
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "model": EXTERNAL_MODEL,
+                "messages": [{"role": "user", "content": "hi"}],
+                "priority": priority,
+            }))
+            .unwrap(),
+        ))
         .unwrap()
 }
 
@@ -204,6 +248,38 @@ async fn external_model_streams_without_exposing_client_credentials() {
     );
     assert!(!captured.seen.contains("x-api-key"));
     assert!(!captured.seen.contains("ocp-apim-subscription-key"));
+}
+
+#[tokio::test]
+async fn gateway_key_class_controls_external_model_priority_without_leaking_client_keys() {
+    let external = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let local = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let app = build_authenticated_test_app(base_config(external.url.clone()), local.url.clone());
+
+    for (api_key, requested_priority, expected_priority) in [
+        ("external-client-secret", -7, 100),
+        ("internal-client-secret", 999, 0),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(authenticated_external_request(api_key, requested_priority))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let captured = external.captured.lock().unwrap();
+        assert_eq!(
+            captured.headers.get("authorization").map(String::as_str),
+            Some("Bearer provider-secret"),
+        );
+        assert!(!captured.seen.contains("x-api-key"));
+        assert!(!captured.seen.contains("ocp-apim-subscription-key"));
+        let forwarded: Value =
+            serde_json::from_slice(captured.last_body.as_ref().unwrap()).unwrap();
+        assert_eq!(forwarded["priority"], expected_priority);
+    }
+
+    assert!(local.captured.lock().unwrap().last_body.is_none());
 }
 
 #[tokio::test]
