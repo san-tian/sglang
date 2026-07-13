@@ -16,4 +16,5 @@ pub mod passthrough;
 pub mod priority_override;
 pub mod responses;
 pub mod tokenize;
+pub mod tool_arguments;
 pub mod tool_schema;
