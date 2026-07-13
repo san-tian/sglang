@@ -66,7 +66,7 @@ pub fn build_router_with_gateway_keyring(
         .route("/readyz", get(crate::server::routes::health::readyz))
         .route("/metrics", get(crate::server::routes::metrics::metrics));
 
-    let protected_routes = Router::new()
+    let mut protected_routes = Router::new()
         .route(
             "/v1/models",
             get(crate::server::routes::models::list_models),
@@ -84,43 +84,84 @@ pub fn build_router_with_gateway_keyring(
             post(crate::server::routes::chat::chat_completions)
                 .layer(DefaultBodyLimit::max(MAX_CHAT_BODY_BYTES))
                 .layer(middleware::from_fn(log_413)),
-        )
-        .route(
-            "/v1/completions",
-            post(crate::server::routes::passthrough::completions)
-                .layer(DefaultBodyLimit::max(MAX_PASSTHROUGH_BODY_BYTES))
-                .layer(middleware::from_fn(log_413)),
-        )
-        .route(
-            "/v1/messages",
-            post(crate::server::routes::messages::messages)
-                .layer(DefaultBodyLimit::max(MAX_MESSAGES_BODY_BYTES))
-                .layer(middleware::from_fn(log_413)),
-        )
-        .route(
-            "/v1/messages/count_tokens",
-            post(crate::server::routes::messages::count_tokens)
-                .layer(DefaultBodyLimit::max(MAX_MESSAGES_BODY_BYTES))
-                .layer(middleware::from_fn(log_413)),
-        )
-        .route(
-            "/v1/responses",
-            post(crate::server::routes::responses::responses)
-                .layer(DefaultBodyLimit::max(MAX_RESPONSES_BODY_BYTES))
-                .layer(middleware::from_fn(log_413)),
-        )
-        .route(
-            "/flush_cache",
-            post(crate::server::routes::cache::flush_cache_for_gateway),
-        )
-        .layer(middleware::from_fn_with_state(
-            keyring,
-            authenticate_gateway_key,
-        ));
+        );
+
+    if ctx.config.runtime_mode == crate::config::RuntimeMode::Gateway {
+        protected_routes = protected_routes
+            .route(
+                "/v1/completions",
+                post(crate::server::routes::passthrough::completions)
+                    .layer(DefaultBodyLimit::max(MAX_PASSTHROUGH_BODY_BYTES))
+                    .layer(middleware::from_fn(log_413)),
+            )
+            .route(
+                "/v1/messages",
+                post(crate::server::routes::messages::messages)
+                    .layer(DefaultBodyLimit::max(MAX_MESSAGES_BODY_BYTES))
+                    .layer(middleware::from_fn(log_413)),
+            )
+            .route(
+                "/v1/messages/count_tokens",
+                post(crate::server::routes::messages::count_tokens)
+                    .layer(DefaultBodyLimit::max(MAX_MESSAGES_BODY_BYTES))
+                    .layer(middleware::from_fn(log_413)),
+            )
+            .route(
+                "/v1/responses",
+                post(crate::server::routes::responses::responses)
+                    .layer(DefaultBodyLimit::max(MAX_RESPONSES_BODY_BYTES))
+                    .layer(middleware::from_fn(log_413)),
+            )
+            .route(
+                "/flush_cache",
+                post(crate::server::routes::cache::flush_cache_for_gateway),
+            );
+    }
+
+    protected_routes = protected_routes.layer(middleware::from_fn_with_state(
+        keyring,
+        authenticate_gateway_key,
+    ));
 
     public_routes
         .merge(protected_routes)
         // After routing, so MatchedPath is set for every route.
         .layer(middleware::from_fn_with_state(ctx.clone(), count_requests))
         .with_state(ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn pd_proxy_does_not_expose_stateful_or_non_pd_generation_routes() {
+        let mut ctx = AppContext::stub();
+        ctx.config.runtime_mode = crate::config::RuntimeMode::PdProxy;
+        let app = build_router(Arc::new(ctx));
+
+        for path in [
+            "/v1/completions",
+            "/v1/messages",
+            "/v1/responses",
+            "/flush_cache",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+    }
 }

@@ -24,6 +24,7 @@ use thiserror::Error;
 
 pub const GATEWAY_KEY_POLICIES_ENV: &str = "GATEWAY_KEY_POLICIES_JSON";
 pub const GATEWAY_API_KEYS_ENV: &str = "GATEWAY_API_KEYS_JSON";
+pub const PD_PROXY_API_KEY_ENV: &str = "PD_PROXY_API_KEY";
 
 const MAX_KEY_COUNT: usize = 1_024;
 const MAX_KEY_ID_BYTES: usize = 64;
@@ -37,13 +38,19 @@ const OCP_APIM_SUBSCRIPTION_KEY: HeaderName = HeaderName::from_static("ocp-apim-
 pub enum GatewayKeyClass {
     External,
     Internal,
+    /// Internal upstream gateway identity. This class cannot be selected by
+    /// the Git-managed gateway policy document; it is built only by the
+    /// dedicated PD-proxy key loader.
+    #[serde(skip)]
+    Proxy,
 }
 
 impl GatewayKeyClass {
-    pub const fn forced_priority(self) -> i64 {
+    pub const fn priority_override(self) -> Option<i64> {
         match self {
-            Self::External => 100,
-            Self::Internal => 0,
+            Self::External => Some(100),
+            Self::Internal => Some(0),
+            Self::Proxy => None,
         }
     }
 
@@ -51,6 +58,7 @@ impl GatewayKeyClass {
         match self {
             Self::External => "external",
             Self::Internal => "internal",
+            Self::Proxy => "proxy",
         }
     }
 }
@@ -77,8 +85,8 @@ impl GatewayKeyIdentity {
         self.class
     }
 
-    pub const fn forced_priority(&self) -> i64 {
-        self.class.forced_priority()
+    pub const fn priority_override(&self) -> Option<i64> {
+        self.class.priority_override()
     }
 
     pub(crate) fn new(key_id: impl Into<Arc<str>>, class: GatewayKeyClass) -> Self {
@@ -115,6 +123,9 @@ impl fmt::Debug for GatewayKeyring {
 pub enum GatewayKeyringError {
     #[error("{GATEWAY_KEY_POLICIES_ENV} and {GATEWAY_API_KEYS_ENV} are both required")]
     MissingEnvironment,
+
+    #[error("{PD_PROXY_API_KEY_ENV} is required in pd_proxy mode")]
+    MissingPdProxyEnvironment,
 
     #[error("{0} must contain valid UTF-8 JSON")]
     InvalidEnvironmentEncoding(&'static str),
@@ -190,6 +201,37 @@ impl GatewayKeyring {
         let policies = read_required_env(GATEWAY_KEY_POLICIES_ENV)?;
         let api_keys = read_required_env(GATEWAY_API_KEYS_ENV)?;
         Self::from_json(&policies, &api_keys)
+    }
+
+    /// Load the single upstream credential used by a dedicated PD proxy.
+    /// The raw key is reduced to a digest immediately and never enters CLI
+    /// arguments, logs, or request extensions.
+    pub fn from_pd_proxy_env() -> Result<Self, GatewayKeyringError> {
+        let api_key = match std::env::var(PD_PROXY_API_KEY_ENV) {
+            Ok(value) if !value.is_empty() => value,
+            Ok(_) | Err(std::env::VarError::NotPresent) => {
+                return Err(GatewayKeyringError::MissingPdProxyEnvironment)
+            }
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(GatewayKeyringError::InvalidEnvironmentEncoding(
+                    PD_PROXY_API_KEY_ENV,
+                ))
+            }
+        };
+        Self::from_pd_proxy_key(&api_key)
+    }
+
+    fn from_pd_proxy_key(api_key: &str) -> Result<Self, GatewayKeyringError> {
+        if !valid_api_key(api_key) {
+            return Err(GatewayKeyringError::InvalidApiKeys);
+        }
+        Ok(Self {
+            entries: vec![KeyEntry {
+                digest: digest(api_key.as_bytes()),
+                identity: GatewayKeyIdentity::new("pd-proxy-upstream", GatewayKeyClass::Proxy),
+                enabled: true,
+            }],
+        })
     }
 
     pub fn from_json(
@@ -462,11 +504,11 @@ mod tests {
         let external = keyring.authenticate("external-secret").unwrap();
         assert_eq!(external.key_id(), "external-a");
         assert_eq!(external.class(), GatewayKeyClass::External);
-        assert_eq!(external.forced_priority(), 100);
+        assert_eq!(external.priority_override(), Some(100));
 
         let internal = keyring.authenticate("internal-secret").unwrap();
         assert_eq!(internal.class(), GatewayKeyClass::Internal);
-        assert_eq!(internal.forced_priority(), 0);
+        assert_eq!(internal.priority_override(), Some(0));
         assert!(keyring.authenticate("disabled-secret").is_none());
         assert!(keyring.authenticate("unknown-secret").is_none());
 
@@ -526,6 +568,7 @@ mod tests {
     fn rejects_unknown_class_or_missing_enabled() {
         for policies in [
             r#"{"version":1,"keys":[{"key_id":"one","class":"partner","enabled":true}]}"#,
+            r#"{"version":1,"keys":[{"key_id":"one","class":"proxy","enabled":true}]}"#,
             r#"{"version":1,"keys":[{"key_id":"one","class":"external"}]}"#,
         ] {
             let error = GatewayKeyring::from_json(policies, r#"{"one":"secret"}"#).unwrap_err();
@@ -563,5 +606,26 @@ mod tests {
         let two = digest(b"two");
         assert!(constant_time_eq(&one, &another_one));
         assert!(!constant_time_eq(&one, &two));
+    }
+
+    #[test]
+    fn pd_proxy_key_authenticates_without_priority_override_or_secret_retention() {
+        let keyring = GatewayKeyring::from_pd_proxy_key("proxy-secret").unwrap();
+        let identity = keyring.authenticate("proxy-secret").unwrap();
+        assert_eq!(identity.key_id(), "pd-proxy-upstream");
+        assert_eq!(identity.class(), GatewayKeyClass::Proxy);
+        assert_eq!(identity.priority_override(), None);
+        assert!(keyring.authenticate("wrong-secret").is_none());
+        assert!(!format!("{keyring:?}").contains("proxy-secret"));
+    }
+
+    #[test]
+    fn pd_proxy_key_rejects_invalid_values() {
+        for key in ["", "contains a space", "contains\nnewline"] {
+            assert!(matches!(
+                GatewayKeyring::from_pd_proxy_key(key),
+                Err(GatewayKeyringError::InvalidApiKeys)
+            ));
+        }
     }
 }

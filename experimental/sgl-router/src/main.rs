@@ -107,6 +107,7 @@ fn env_to_cli_args() -> Vec<OsString> {
         .unwrap_or_else(|| OsString::from("sgl-router"))];
     push_env_arg_or_default(&mut args, "HOST", "--host", "0.0.0.0");
     push_env_arg_or_fallback_default(&mut args, "PORT", "ROUTER_PORT", "--port", "8080");
+    push_env_arg(&mut args, "ROUTER_MODE", "--mode");
     push_env_arg(&mut args, "MODEL_ID", "--model-id");
     push_env_arg(&mut args, "POLICY", "--policy");
     push_env_arg(&mut args, "REQUEST_TIMEOUT_SECS", "--request-timeout-secs");
@@ -440,15 +441,23 @@ async fn main() -> Result<()> {
     match cfg.runtime_mode {
         RuntimeMode::CacheState => return run_cache_state(cfg).await,
         RuntimeMode::RouterState => return run_router_state(cfg).await,
-        RuntimeMode::Gateway => {}
+        RuntimeMode::Gateway | RuntimeMode::PdProxy => {}
     }
 
-    // Production gateway auth is fail-closed: both the Git-managed policy
-    // inventory and the Key Vault-provided secret inventory are required and
-    // must match before any discovery/background tasks are started.
-    let gateway_keyring =
-        Arc::new(GatewayKeyring::from_env().context("load gateway entry authentication keyring")?);
+    // Entry auth is fail-closed before any discovery/background tasks start.
+    // A full gateway uses its policy/key inventories; an internal PD proxy
+    // accepts exactly one upstream credential and preserves request priority.
+    let gateway_keyring = Arc::new(match cfg.runtime_mode {
+        RuntimeMode::Gateway => {
+            GatewayKeyring::from_env().context("load gateway entry authentication keyring")?
+        }
+        RuntimeMode::PdProxy => {
+            GatewayKeyring::from_pd_proxy_env().context("load pd_proxy entry authentication key")?
+        }
+        RuntimeMode::CacheState | RuntimeMode::RouterState => unreachable!("handled above"),
+    });
     tracing::info!(
+        runtime_mode = ?cfg.runtime_mode,
         configured_keys = gateway_keyring.configured_key_count(),
         enabled_keys = gateway_keyring.enabled_key_count(),
         disabled_keys = gateway_keyring.disabled_key_count(),
@@ -1079,6 +1088,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let envs = [
             ("WORKER_URLS", "http://worker-a:30000 http://worker-b:30000"),
+            ("ROUTER_MODE", "pd_proxy"),
             (
                 "WORKER_BEARER_KEYS",
                 "http://worker-a:30000=token-a http://worker-b:30000=token-b",
@@ -1111,6 +1121,7 @@ mod tests {
 
         for flag in [
             "--worker-urls",
+            "--mode",
             "--worker-bearer-keys",
             "--default-worker-bearer-key",
             "--force-request-priority",
