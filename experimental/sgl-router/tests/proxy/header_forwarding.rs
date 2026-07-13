@@ -74,6 +74,7 @@ fn base_config() -> Config {
         cache_state_url: None,
         cache_state_timeout_ms: 20,
         alias_fallback: None,
+        external_model: None,
     };
     cfg
 }

@@ -36,6 +36,7 @@ use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_l
 use crate::server::routes::context_window::{
     enforce_context_eligibility, required_context_tokens_with_explicit_output,
 };
+use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::tool_schema::normalize_tool_schema;
 use crate::server::trace::TraceContext;
@@ -390,6 +391,11 @@ pub async fn responses(
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
     let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+    if let Some(response) =
+        maybe_forward_external_model(&ctx, &headers, &body, "/v1/responses").await?
+    {
+        return Ok(response);
+    }
     let probe = parse_probe(&body)?;
     let model_str = probe
         .model

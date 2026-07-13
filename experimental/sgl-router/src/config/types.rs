@@ -50,6 +50,10 @@ pub struct Config {
     pub cache_state_url: Option<String>,
     pub cache_state_timeout_ms: u64,
     pub alias_fallback: Option<AliasFallbackConfig>,
+    /// Optional model routed directly to a fixed external OpenAI-compatible
+    /// upstream. The upstream credential is injected at the gateway and
+    /// always replaces the client credential before proxying.
+    pub external_model: Option<ExternalModelConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
@@ -70,6 +74,42 @@ pub struct AliasFallbackConfig {
     pub fallback_model_id: String,
     pub fallback_base_url: String,
     pub fallback_bearer_token: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct ExternalModelConfig {
+    pub model_id: String,
+    pub base_url: String,
+    pub bearer_token: String,
+}
+
+impl std::fmt::Debug for ExternalModelConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalModelConfig")
+            .field("model_id", &self.model_id)
+            .field("base_url", &self.base_url)
+            .field("bearer_token", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod external_model_tests {
+    use super::ExternalModelConfig;
+
+    #[test]
+    fn debug_redacts_external_bearer_token() {
+        let cfg = ExternalModelConfig {
+            model_id: "macaron-a2ui-tall".into(),
+            base_url: "https://provider.example".into(),
+            bearer_token: "provider-secret-must-not-leak".into(),
+        };
+
+        let rendered = format!("{cfg:?}");
+        assert!(rendered.contains("macaron-a2ui-tall"));
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("provider-secret-must-not-leak"));
+    }
 }
 
 /// Outbound proxy tuning. Default mirrors SGLang's typical prefill /

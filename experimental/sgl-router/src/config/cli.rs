@@ -13,9 +13,9 @@ use crate::config::{
     default_cb_cool_down, default_proxy_request_timeout_secs, default_stale_request_timeout_secs,
     default_trace_body_max_bytes, resolve_mode, ActiveLoadConfig, AliasFallbackConfig,
     CacheAwareConfig, CacheTreeSource, CircuitBreakerConfig, Config, DiscoveryBackend,
-    ExternalQueueAdmissionConfig, K8sDiscoveryConfig, LogFormat, ModelConfig, ObservabilityConfig,
-    PolicyKind, PriorityOverrideConfig, ProxyConfig, RuntimeMode, ServerConfig,
-    StaticUrlsDiscoveryConfig, StickyConfig, TieredSpilloverConfig, TraceConfig,
+    ExternalModelConfig, ExternalQueueAdmissionConfig, K8sDiscoveryConfig, LogFormat, ModelConfig,
+    ObservabilityConfig, PolicyKind, PriorityOverrideConfig, ProxyConfig, RuntimeMode,
+    ServerConfig, StaticUrlsDiscoveryConfig, StickyConfig, TieredSpilloverConfig, TraceConfig,
     WorkerBearerKeyConfig,
 };
 use crate::discovery::WorkerTier;
@@ -333,6 +333,20 @@ pub struct Cli {
     pub alias_fallback_url: Option<String>,
     #[arg(long)]
     pub alias_fallback_bearer_token: Option<String>,
+
+    // ---- direct external model route (optional) ----
+    /// Public model id routed directly to a fixed external
+    /// OpenAI-compatible upstream instead of the local worker pool.
+    #[arg(long)]
+    pub external_model_id: Option<String>,
+    /// Base URL for `--external-model-id`. Request paths such as
+    /// `/v1/chat/completions` are joined against this origin.
+    #[arg(long)]
+    pub external_model_url: Option<String>,
+    /// Gateway-owned bearer token for the external upstream. The inbound
+    /// client credential is never forwarded to this upstream.
+    #[arg(long)]
+    pub external_model_bearer_token: Option<String>,
 
     // ---- observability ----
     /// Default tracing level (overridden by `RUST_LOG`).
@@ -720,6 +734,24 @@ impl Cli {
             }
         };
 
+        let external_model = match (
+            self.external_model_id,
+            self.external_model_url,
+            self.external_model_bearer_token,
+        ) {
+            (None, None, None) => None,
+            (Some(model_id), Some(base_url), Some(bearer_token)) => Some(ExternalModelConfig {
+                model_id,
+                base_url,
+                bearer_token,
+            }),
+            _ => {
+                return Err(anyhow!(
+                    "--external-model-id / --external-model-url / --external-model-bearer-token must be set together"
+                ));
+            }
+        };
+
         let config = Config {
             runtime_mode: self.mode,
             server: ServerConfig {
@@ -771,6 +803,7 @@ impl Cli {
             cache_state_url: self.cache_state_url,
             cache_state_timeout_ms: self.cache_state_timeout_ms,
             alias_fallback,
+            external_model,
         };
         config.validate()?;
         Ok(config)

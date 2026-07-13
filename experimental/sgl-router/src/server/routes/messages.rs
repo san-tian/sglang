@@ -28,6 +28,7 @@ use crate::server::routes::alias_fallback::{
 };
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
 use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
+use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::tool_schema::normalize_tool_schema;
 use crate::server::trace::TraceContext;
@@ -370,6 +371,11 @@ pub async fn messages(
 ) -> Response<Body> {
     let result = async {
         let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+        if let Some(response) =
+            maybe_forward_external_model(&ctx, &headers, &body, "/v1/messages").await?
+        {
+            return Ok(response);
+        }
         let probe = parse_probe(&body)?;
         let model_str = probe
             .model
@@ -464,6 +470,11 @@ pub async fn count_tokens(
 ) -> Response<Body> {
     let result = async {
         let body = apply_request_priority_override(&ctx.config.priority_override, &headers, body)?;
+        if let Some(response) =
+            maybe_forward_external_model(&ctx, &headers, &body, "/v1/messages/count_tokens").await?
+        {
+            return Ok(response);
+        }
         messages_inner(State(ctx), headers, body, "/v1/messages/count_tokens").await
     }
     .await;
@@ -1127,6 +1138,7 @@ mod tests {
             cache_state_url: None,
             cache_state_timeout_ms: 20,
             alias_fallback: None,
+            external_model: None,
         };
         let registry = TokenizerRegistry::load_from_config(&cfg).unwrap();
         registry.attach_chat_template_for_test(

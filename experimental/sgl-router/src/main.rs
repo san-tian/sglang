@@ -182,6 +182,13 @@ fn env_to_cli_args() -> Vec<OsString> {
     );
     push_worker_urls_env(&mut args);
     push_split_env_arg(&mut args, "WORKER_BEARER_KEYS", "--worker-bearer-keys");
+    push_env_arg(&mut args, "EXTERNAL_MODEL_ID", "--external-model-id");
+    push_env_arg(&mut args, "EXTERNAL_MODEL_URL", "--external-model-url");
+    push_env_arg(
+        &mut args,
+        "EXTERNAL_MODEL_BEARER_TOKEN",
+        "--external-model-bearer-token",
+    );
     args
 }
 
