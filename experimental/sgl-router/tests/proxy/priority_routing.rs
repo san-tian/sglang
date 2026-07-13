@@ -678,7 +678,7 @@ async fn missing_unknown_and_disabled_gateway_keys_share_sanitized_401_and_never
 }
 
 #[tokio::test]
-async fn gateway_operational_routes_remain_public_while_api_routes_are_protected() {
+async fn health_stays_public_while_api_and_cache_control_routes_are_protected() {
     let ctx = build_ctx(Vec::new());
     ctx.mark_ready();
     let health_response = build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
@@ -702,7 +702,35 @@ async fn gateway_operational_routes_remain_public_while_api_routes_are_protected
         )
         .await
         .unwrap();
-    assert_eq!(flush_response.status(), StatusCode::OK);
+    assert_eq!(flush_response.status(), StatusCode::UNAUTHORIZED);
+
+    let external_flush_response =
+        build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/flush_cache")
+                    .header("authorization", "Bearer external-secret-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    assert_eq!(external_flush_response.status(), StatusCode::FORBIDDEN);
+
+    let internal_flush_response =
+        build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/flush_cache")
+                    .header("x-api-key", "internal-secret-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    assert_eq!(internal_flush_response.status(), StatusCode::OK);
 
     let models_response = build_router_with_gateway_keyring(ctx, gateway_keyring())
         .oneshot(

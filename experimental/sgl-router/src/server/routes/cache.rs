@@ -4,8 +4,9 @@
 //! Cache-management admin endpoints.
 
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::{GatewayKeyClass, GatewayKeyIdentity};
 use crate::workers::worker::Worker;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -37,6 +38,33 @@ pub struct FlushCacheResult {
     pub failed: Vec<FailedWorker>,
     pub total_workers: usize,
     pub message: String,
+}
+
+/// Gateway wrapper for the fleet-wide cache control operation. Production
+/// entry authentication inserts an identity; only internal keys may invoke
+/// this control-plane route. The optional identity preserves the historical
+/// unauthenticated library-router contract used by unit tests and embedders.
+pub async fn flush_cache_for_gateway(
+    State(ctx): State<Arc<AppContext>>,
+    identity: Option<Extension<GatewayKeyIdentity>>,
+) -> Response {
+    if identity
+        .as_ref()
+        .is_some_and(|Extension(identity)| identity.class() != GatewayKeyClass::Internal)
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": {
+                    "type": "authorization_error",
+                    "code": "internal_key_required",
+                    "message": "internal API key required"
+                }
+            })),
+        )
+            .into_response();
+    }
+    flush_cache(State(ctx)).await
 }
 
 impl FlushCacheResult {

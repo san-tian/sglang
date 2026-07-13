@@ -64,11 +64,7 @@ pub fn build_router_with_gateway_keyring(
     let public_routes = Router::new()
         .route("/healthz", get(crate::server::routes::health::healthz))
         .route("/readyz", get(crate::server::routes::health::readyz))
-        .route("/metrics", get(crate::server::routes::metrics::metrics))
-        .route(
-            "/flush_cache",
-            post(crate::server::routes::cache::flush_cache),
-        );
+        .route("/metrics", get(crate::server::routes::metrics::metrics));
 
     let protected_routes = Router::new()
         .route(
@@ -112,6 +108,10 @@ pub fn build_router_with_gateway_keyring(
             post(crate::server::routes::responses::responses)
                 .layer(DefaultBodyLimit::max(MAX_RESPONSES_BODY_BYTES))
                 .layer(middleware::from_fn(log_413)),
+        )
+        .route(
+            "/flush_cache",
+            post(crate::server::routes::cache::flush_cache_for_gateway),
         )
         .layer(middleware::from_fn_with_state(
             keyring,
