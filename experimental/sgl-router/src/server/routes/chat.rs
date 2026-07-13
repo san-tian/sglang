@@ -22,6 +22,7 @@ use crate::server::routes::alias_fallback::{
 use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
+use crate::server::routes::tool_arguments::normalize_chat_tool_call_arguments;
 use crate::server::routes::tool_schema::normalize_chat_tool_schemas;
 use crate::server::trace::TraceContext;
 use crate::workers::{LoadGuard, Worker};
@@ -262,6 +263,7 @@ pub async fn chat_completions(
         &headers,
         body,
     )?;
+    let body = normalize_chat_tool_call_arguments(body)?;
     if let Some(response) =
         maybe_forward_external_model(&ctx, &headers, &body, "/v1/chat/completions").await?
     {

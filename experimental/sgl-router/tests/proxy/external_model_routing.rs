@@ -212,6 +212,94 @@ async fn external_model_uses_fixed_upstream_for_all_supported_paths() {
 }
 
 #[tokio::test]
+async fn external_chat_repairs_double_encoded_tool_arguments_before_forwarding() {
+    let external = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let local = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let app = build_test_app(base_config(external.url.clone()), local.url.clone());
+    let object = r#"{"city":"Beijing"}"#;
+
+    let response = app
+        .oneshot(external_request(
+            "/v1/chat/completions",
+            json!({
+                "model": EXTERNAL_MODEL,
+                "messages": [{
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "arguments": serde_json::to_string(object).unwrap(),
+                        }
+                    }]
+                }]
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let captured = external.captured.lock().unwrap();
+    let forwarded: Value =
+        serde_json::from_slice(captured.last_body.as_ref().expect("external request body"))
+            .unwrap();
+    let arguments = forwarded["messages"][0]["tool_calls"][0]["function"]["arguments"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(arguments).unwrap(),
+        json!({"city": "Beijing"})
+    );
+    assert!(local.captured.lock().unwrap().last_body.is_none());
+}
+
+#[tokio::test]
+async fn external_chat_rejects_unrepairable_tool_arguments_before_upstream() {
+    let external = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let local = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let app = build_test_app(base_config(external.url.clone()), local.url.clone());
+
+    let response = app
+        .oneshot(external_request(
+            "/v1/chat/completions",
+            json!({
+                "model": EXTERNAL_MODEL,
+                "messages": [{
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "arguments": "{\"city\":\"SENSITIVE_VALUE\"",
+                        }
+                    }]
+                }]
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-router-error-code")
+            .and_then(|value| value.to_str().ok()),
+        Some("bad_request")
+    );
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&bytes);
+    assert!(body.contains("messages[0].tool_calls[0].function.arguments"));
+    assert!(!body.contains("SENSITIVE_VALUE"));
+    assert!(external.captured.lock().unwrap().last_body.is_none());
+    assert!(local.captured.lock().unwrap().last_body.is_none());
+}
+
+#[tokio::test]
 async fn external_model_streams_without_exposing_client_credentials() {
     let chunks = vec!["data: {\"delta\":\"ok\"}\n\n", "data: [DONE]\n\n"];
     let external = crate::common::mock_worker::MockWorker::start(chunks.clone()).await;

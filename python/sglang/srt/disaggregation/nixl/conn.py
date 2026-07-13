@@ -142,9 +142,8 @@ def _align_equal_tp_dst_kv_geometry(
     the prebuilt NIXL dlist must cover only the shared target KV buffers. Other
     geometry mismatches stay fatal in _prep_equal_tp_dlist().
     """
-    if (
-        len(kv_ptrs) == len(kv_item_lens) == len(kv_data_lens)
-        and len(kv_ptrs) > len(kv_xfer_lens)
+    if len(kv_ptrs) == len(kv_item_lens) == len(kv_data_lens) and len(kv_ptrs) > len(
+        kv_xfer_lens
     ):
         extra = len(kv_ptrs) - len(kv_xfer_lens)
         logger.info(

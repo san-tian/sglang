@@ -25,6 +25,8 @@ from openai.types.responses import (
 from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
 from openai.types.responses.response_reasoning_item import (
     Content as ResponseReasoningTextContent,
+)
+from openai.types.responses.response_reasoning_item import (
     Summary as ResponseReasoningSummaryText,
 )
 from openai.types.responses.response_reasoning_summary_part_added_event import (
@@ -971,6 +973,7 @@ class OpenAIServingResponses(OpenAIServingChat):
         # Reasoning items render as {role: assistant, reasoning_content};
         # empty ones drop instead of injecting an empty assistant block.
         if msg_type == "reasoning":
+
             def _collect(parts):
                 out: list[str] = []
                 for entry in parts or []:
