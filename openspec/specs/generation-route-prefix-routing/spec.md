@@ -58,4 +58,3 @@ The router SHALL include supported chat tool schemas in chat-template rendering 
 #### Scenario: Tool-free prompt template compatibility
 - **WHEN** a supported chat-shaped generation request has no tools
 - **THEN** the derived route tokens SHALL remain compatible with the existing tool-free chat-template path
-

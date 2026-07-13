@@ -588,6 +588,7 @@ def _normalize_chat_completion_message_content(message: Any) -> Any:
     ]
     return message
 
+
 # Rerank content types for multimodal reranking (e.g., Qwen3-VL-Reranker)
 # Can be a simple string (text-only) or a list of multimodal content parts
 RerankContentPart = Union[
@@ -653,9 +654,7 @@ class ChatCompletionMessageGenericParam(BaseModel):
                 self.content, ensure_ascii=False, separators=(",", ":")
             )
             return self
-        raise ValueError(
-            "content must be a string, a list of content parts, or null"
-        )
+        raise ValueError("content must be a string, a list of content parts, or null")
 
 
 class ChatCompletionMessageUserParam(BaseModel):
@@ -860,8 +859,7 @@ class ChatCompletionRequest(BaseModel):
 
         values = values.copy()
         values["messages"] = [
-            _normalize_chat_completion_message_content(message)
-            for message in messages
+            _normalize_chat_completion_message_content(message) for message in messages
         ]
         return values
 
@@ -1410,9 +1408,11 @@ OpenAIServingRequest = Union[
 class ResponseReasoningParam(BaseModel):
     """Reasoning parameters for responses."""
 
-    effort: Optional[Literal["none", "minimal", "low", "medium", "high", "xhigh"]] = Field(
-        default="medium",
-        description="Constrains effort on reasoning for reasoning models.",
+    effort: Optional[Literal["none", "minimal", "low", "medium", "high", "xhigh"]] = (
+        Field(
+            default="medium",
+            description="Constrains effort on reasoning for reasoning models.",
+        )
     )
     summary: Optional[Literal["auto", "concise", "detailed"]] = Field(
         default=None,
