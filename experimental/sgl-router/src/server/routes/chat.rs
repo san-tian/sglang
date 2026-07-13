@@ -33,6 +33,7 @@ use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Observability header carrying the decode-pool URL selected via host
 /// affinity for a PD-disaggregated request. The router fans the
@@ -153,6 +154,95 @@ impl Drop for RecordDurationOnDrop {
     fn drop(&mut self) {
         self.metrics
             .observe_request_duration(&self.model, self.start.elapsed().as_secs_f64());
+    }
+}
+
+/// Only failures known to happen before the decode accepted the request are
+/// eligible for same-request reselection. Retrying a response timeout, 5xx, or
+/// mid-body failure could duplicate generation on two decode workers.
+fn can_reselect_pd_decode(error: &ApiError) -> bool {
+    match error {
+        ApiError::BreakerOpen { .. } | ApiError::WorkerMisconfigured { .. } => true,
+        ApiError::UpstreamUnreachable { source, .. } => source.chain().any(|cause| {
+            cause
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(|error| error.is_connect())
+        }),
+        _ => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn forward_pd_decode_attempt(
+    ctx: &Arc<AppContext>,
+    decode_worker: &Arc<Worker>,
+    base_headers: &HeaderMap,
+    outgoing_body: Bytes,
+    streaming: bool,
+    stale_token: &CancellationToken,
+    model: &str,
+    metrics_model: &str,
+    start: std::time::Instant,
+    stream_duration: Option<Arc<RecordDurationOnDrop>>,
+    trace_ctx: &TraceContext,
+) -> Result<Response<Body>, ApiError> {
+    let mut headers = base_headers.clone();
+    if let Ok(value) = HeaderValue::from_str(&decode_worker.url) {
+        headers.insert(X_SGL_DECODE_URL, value);
+    }
+    let decode_headers = decode_worker
+        .headers_for(&headers)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("build worker auth header: {e}")))?;
+    let decode_guard = decode_worker.load_guard();
+
+    if streaming {
+        // Keep one shared duration guard across both attempts. A failed
+        // connect drops only its Arc clone; a successful SSE pump holds the
+        // final clone until stream completion, so latency is recorded once.
+        let stream_guards: Box<dyn Send + 'static> = match stream_duration {
+            Some(duration) => Box::new((decode_guard, duration)),
+            None => Box::new(decode_guard),
+        };
+        let ttft_hook: Box<dyn FnOnce() + Send + 'static> = {
+            let metrics = Arc::clone(&ctx.metrics);
+            let model = metrics_model.to_string();
+            Box::new(move || {
+                metrics.observe_ttft(&model, start.elapsed().as_secs_f64());
+            })
+        };
+        let fetch = ctx.proxy.forward_streaming_to_traced(
+            &decode_worker.url,
+            &decode_worker.breaker,
+            "/v1/chat/completions",
+            decode_headers.as_ref(),
+            outgoing_body,
+            Some(stream_guards),
+            Some(ttft_hook),
+            Some(make_client_disconnect_hook(Arc::clone(&ctx.metrics))),
+            ctx.trace_sink.clone(),
+            trace_ctx.clone(),
+        );
+        tokio::select! {
+            biased;
+            result = fetch => result,
+            _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model.to_string() }),
+        }
+    } else {
+        let _decode_hold = decode_guard;
+        let fetch = ctx.proxy.forward_json_to_traced(
+            &decode_worker.url,
+            &decode_worker.breaker,
+            "/v1/chat/completions",
+            decode_headers.as_ref(),
+            outgoing_body,
+            ctx.trace_sink.clone(),
+            trace_ctx.clone(),
+        );
+        tokio::select! {
+            biased;
+            result = fetch => result,
+            _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model.to_string() }),
+        }
     }
 }
 
@@ -472,7 +562,7 @@ async fn chat_completions_inner(
     } else {
         None
     };
-    let decode_hint_url: Option<String> = decode_peer.as_ref().map(|d| d.url.clone());
+    let mut decode_hint_url: Option<String> = decode_peer.as_ref().map(|d| d.url.clone());
     let mut request_headers = headers;
     if let Some(url) = &decode_hint_url {
         match HeaderValue::from_str(url) {
@@ -604,7 +694,13 @@ async fn chat_completions_inner(
     let outgoing_body =
         build_outgoing_body(&body, request_value, forward_input_ids, bootstrap.as_ref())?;
 
-    let result = if let Some(decode_worker) = decode_peer {
+    let pd_stream_duration = if streaming && decode_peer.is_some() {
+        Some(Arc::new(make_duration_guard()))
+    } else {
+        None
+    };
+
+    let result = if let Some(mut decode_worker) = decode_peer {
         // PD-disagg dispatch (Pattern B — spawn prefill, await decode).
         //
         // SGLang's HTTP-mode disagg-prefill requires three flat
@@ -681,50 +777,68 @@ async fn chat_completions_inner(
             }
         });
 
-        // Synchronously await the decode worker. Its response is what
-        // the client sees. The decode side gets its own LoadGuard so
-        // per-worker `active_requests` reflects decode-pool load for
-        // cache-aware-zmq decisions on the decode side.
-        let decode_headers = decode_worker
-            .headers_for(&headers)
-            .map_err(|e| ApiError::Internal(anyhow::anyhow!("build worker auth header: {e}")))?;
-        let decode_guard = decode_worker.load_guard();
-        if streaming {
-            let stream_guards: Box<dyn Send + 'static> =
-                Box::new((decode_guard, make_duration_guard()));
-            let fetch = ctx.proxy.forward_streaming_to_traced(
-                &decode_worker.url,
-                &decode_worker.breaker,
-                "/v1/chat/completions",
-                decode_headers.as_ref(),
-                outgoing_body,
-                Some(stream_guards),
-                Some(make_ttft_hook()),
-                Some(make_client_disconnect_hook(Arc::clone(&ctx.metrics))),
-                ctx.trace_sink.clone(),
-                trace_ctx.clone(),
-            );
-            tokio::select! {
-                biased;
-                r = fetch => r,
-                _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model_str }),
+        // Await the selected decode. When the attempt fails at TCP connect (or
+        // loses a breaker race), exclude it and try one alternate decode with
+        // the same prefill request and bootstrap room. Other failures are not
+        // retried because the first decode may already be generating.
+        let first_result = forward_pd_decode_attempt(
+            &ctx,
+            &decode_worker,
+            &headers,
+            outgoing_body.clone(),
+            streaming,
+            &stale_token,
+            &model_str,
+            &metrics_model,
+            start,
+            pd_stream_duration.as_ref().map(Arc::clone),
+            &trace_ctx,
+        )
+        .await;
+        if first_result.as_ref().is_err_and(can_reselect_pd_decode) {
+            let failed_worker = decode_worker.id.clone();
+            match resolver.decode_with_affinity_excluding(
+                &model_id,
+                &worker.url,
+                request_priority,
+                required_context_tokens,
+                &failed_worker,
+            ) {
+                Ok(alternate) => {
+                    tracing::warn!(
+                        failed_decode = %decode_worker.url,
+                        alternate_decode = %alternate.url,
+                        bootstrap_room,
+                        "decode connect failed; reselecting one alternate for the same PD request",
+                    );
+                    decode_worker = alternate;
+                    decode_hint_url = Some(decode_worker.url.clone());
+                    forward_pd_decode_attempt(
+                        &ctx,
+                        &decode_worker,
+                        &headers,
+                        outgoing_body,
+                        streaming,
+                        &stale_token,
+                        &model_str,
+                        &metrics_model,
+                        start,
+                        pd_stream_duration.as_ref().map(Arc::clone),
+                        &trace_ctx,
+                    )
+                    .await
+                }
+                Err(reason) => {
+                    tracing::warn!(
+                        failed_decode = %decode_worker.url,
+                        ?reason,
+                        "decode connect failed and no alternate decode is available",
+                    );
+                    first_result
+                }
             }
         } else {
-            let _decode_hold = decode_guard;
-            let fetch = ctx.proxy.forward_json_to_traced(
-                &decode_worker.url,
-                &decode_worker.breaker,
-                "/v1/chat/completions",
-                decode_headers.as_ref(),
-                outgoing_body,
-                ctx.trace_sink.clone(),
-                trace_ctx.clone(),
-            );
-            tokio::select! {
-                biased;
-                r = fetch => r,
-                _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model_str }),
-            }
+            first_result
         }
     } else if streaming {
         // Plain mode, streaming. Both guards ride the SSE pump until

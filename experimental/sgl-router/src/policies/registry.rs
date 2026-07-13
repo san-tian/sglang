@@ -33,7 +33,7 @@
 //!    available for a PD-mode model" (new `NoPrefillWorkersAvailable`)
 //!    — only the resolver has the cohort context to tell which is which.
 
-use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
+use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerRoute};
 use crate::workers::{Worker, WorkerRegistry};
 use std::sync::Arc;
 
@@ -53,8 +53,8 @@ pub enum PdPools {
     Plain { workers: Vec<Arc<Worker>> },
     /// PD-disaggregation deployment: the model has prefill and/or decode
     /// workers. Either OR BOTH pools may be empty (e.g. every prefill
-    /// worker's circuit breaker is open, or every PD worker on the
-    /// model is currently unhealthy). The `*_candidates` helpers are
+    /// worker's circuit breaker is open or its load probe failed). The
+    /// `*_candidates` helpers are
     /// the only safe consumers — they map an empty pool to the
     /// appropriate `NoPrefillWorkersAvailable` / `NoDecodeWorkersAvailable`
     /// error. Callers that read this variant directly MUST treat an
@@ -94,14 +94,16 @@ impl PdPoolResolver {
         Self { workers }
     }
 
-    /// Classify a model and return its pool partition over healthy
-    /// workers. Workers whose circuit breaker is open are filtered out
-    /// at this layer so the policy never has to re-check.
+    /// Classify a model and return its pool partition over usable workers.
+    /// Workers whose circuit breaker is open are filtered out at this layer.
+    /// For PD pools, a worker whose latest load probe failed is also removed,
+    /// so prefill/decode dispatch, `/get_load`, and readiness share the same
+    /// availability signal. Plain pools retain their breaker-only semantics.
     ///
-    /// Returns `Err(NoHealthyWorkers)` only when the model has zero
-    /// **registered** workers (healthy or not). When the model is
-    /// registered as PD but every PD worker is currently unhealthy
-    /// (any failure path that flips `breaker.allow()` to false),
+    /// Returns `Err(NoHealthyWorkers)` when the model has zero registered
+    /// workers, or when a plain pool has no breaker-admitted workers. When the
+    /// model is registered as PD but every PD worker is currently unusable
+    /// (breaker-open or load-probe-failed),
     /// returns `Ok(Pd { prefill: [], decode: [] })` so
     /// `prefill_candidates` / `decode_candidates` can surface the more
     /// specific `NoPrefillWorkersAvailable` / `NoDecodeWorkersAvailable`
@@ -109,16 +111,22 @@ impl PdPoolResolver {
     /// code whether the empty pool is empty by registration or by
     /// transient health state.
     pub fn resolve(&self, model: &ModelId) -> Result<PdPools, PdResolveError> {
-        let all = self.workers.healthy_workers_for(model);
+        let registered = self.workers.workers_for(model);
+        if registered.is_empty() {
+            return Err(PdResolveError::NoHealthyWorkers);
+        }
+        let pd_intent = registered
+            .iter()
+            .any(|w| matches!(w.mode(), WorkerMode::Prefill | WorkerMode::Decode));
+        let all = if pd_intent {
+            self.workers.routable_workers_for(model)
+        } else {
+            self.workers.healthy_workers_for(model)
+        };
         if all.is_empty() {
-            // No healthy workers — distinguish "model never registered"
-            // (true 404-ish, operator misconfiguration) from "PD model
-            // with all breakers currently open" (transient health
-            // issue, deserves the per-pool code).
-            let registered = self.workers.workers_for(model);
-            let pd_intent = registered
-                .iter()
-                .any(|w| matches!(w.mode(), WorkerMode::Prefill | WorkerMode::Decode));
+            // A registered PD model with every breaker open or every load
+            // probe failed retains its PD shape so callers surface the
+            // pool-specific 503 rather than the generic error.
             return if pd_intent {
                 Ok(PdPools::Pd {
                     prefill: Vec::new(),
@@ -204,7 +212,47 @@ impl PdPoolResolver {
         request_priority: i64,
         required_context_tokens: Option<usize>,
     ) -> Result<Arc<Worker>, PdResolveError> {
-        let candidates = self.decode_candidates(model)?;
+        self.decode_with_affinity_avoiding(
+            model,
+            prefill_url,
+            request_priority,
+            required_context_tokens,
+            None,
+        )
+    }
+
+    /// Resolve one alternate decode while excluding a worker whose dispatch
+    /// just failed before request acceptance. This is deliberately a
+    /// single-worker exclusion: the chat path performs at most one retry.
+    pub fn decode_with_affinity_excluding(
+        &self,
+        model: &ModelId,
+        prefill_url: &str,
+        request_priority: i64,
+        required_context_tokens: Option<usize>,
+        excluded: &WorkerId,
+    ) -> Result<Arc<Worker>, PdResolveError> {
+        self.decode_with_affinity_avoiding(
+            model,
+            prefill_url,
+            request_priority,
+            required_context_tokens,
+            Some(excluded),
+        )
+    }
+
+    fn decode_with_affinity_avoiding(
+        &self,
+        model: &ModelId,
+        prefill_url: &str,
+        request_priority: i64,
+        required_context_tokens: Option<usize>,
+        excluded: Option<&WorkerId>,
+    ) -> Result<Arc<Worker>, PdResolveError> {
+        let mut candidates = self.decode_candidates(model)?;
+        if let Some(excluded) = excluded {
+            candidates.retain(|worker| &worker.id != excluded);
+        }
         let eligible = filter_eligible(&candidates, request_priority);
         let context_eligible = filter_context_eligible(&eligible.workers, required_context_tokens);
         select_decode_with_affinity(prefill_url, &context_eligible.workers)
@@ -949,6 +997,34 @@ mod tests {
         assert_eq!(
             chosen.url, "http://host_b:30001",
             "breaker-open affinity peer must fall back to the remote healthy peer",
+        );
+    }
+
+    /// A failed `/get_load` probe is an availability signal, not merely a
+    /// large load value. The PD resolver must skip that decode before host
+    /// affinity can pin the request to it.
+    #[test]
+    fn decoder_falls_back_when_affinity_peer_load_probe_failed() {
+        let r = registry(&[
+            spec_with_url("p1", "http://host_a:30000", WorkerMode::Prefill, "m"),
+            spec_with_url("d1", "http://host_a:30001", WorkerMode::Decode, "m"),
+            spec_with_url("d2", "http://host_b:30001", WorkerMode::Decode, "m"),
+        ]);
+        let resolver = PdPoolResolver::new(r);
+        let failed = resolver
+            .workers
+            .workers_for(&ModelId("m".into()))
+            .into_iter()
+            .find(|w| w.url == "http://host_a:30001")
+            .unwrap();
+        failed.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
+
+        let chosen = resolver
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .unwrap();
+        assert_eq!(
+            chosen.url, "http://host_b:30001",
+            "load-probe-failed affinity peer must be excluded before selection",
         );
     }
 

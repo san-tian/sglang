@@ -192,6 +192,13 @@ pub const REPORTED_LOAD_UNSET: i64 = -1;
 /// as HIGH load so spill-to-idle never routes onto a possibly-dead worker.
 pub const REPORTED_LOAD_FAILED: i64 = -2;
 
+/// Shared interpretation of the load-poller sentinel. Keeping this as a
+/// value-level helper lets metrics use the same atomic snapshot for both the
+/// reported-load and routable gauges.
+pub fn reported_load_allows_routing(reported_load: i64) -> bool {
+    reported_load != REPORTED_LOAD_FAILED
+}
+
 impl Worker {
     pub fn new(spec: crate::discovery::WorkerSpec) -> Self {
         Self::with_cb_config(spec, None)
@@ -349,6 +356,15 @@ impl Worker {
     /// a sentinel (`REPORTED_LOAD_FAILED`) on poll failure.
     pub fn set_reported_load(&self, v: i64) {
         self.reported_load.store(v, Ordering::Relaxed);
+    }
+
+    /// Whether the latest load probe permits dispatch to this worker.
+    ///
+    /// `REPORTED_LOAD_UNSET` remains eligible so a newly started router can
+    /// serve before its first poll. Only an explicit poll failure removes the
+    /// worker from probe-aware routing and readiness decisions.
+    pub fn load_probe_allows_routing(&self) -> bool {
+        reported_load_allows_routing(self.reported_load())
     }
 
     /// Effective load for routing decisions, honoring the configured load
