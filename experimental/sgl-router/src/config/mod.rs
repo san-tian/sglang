@@ -27,6 +27,19 @@ impl Config {
             if external.bearer_token.trim().is_empty() {
                 return Err(anyhow!("external model bearer token must be non-empty"));
             }
+            if !external
+                .bearer_token
+                .bytes()
+                .all(|byte| matches!(byte, 0x21..=0x7e))
+            {
+                return Err(anyhow!(
+                    "external model bearer token must contain only visible ASCII without whitespace"
+                ));
+            }
+            axum::http::HeaderValue::from_str(&format!("Bearer {}", external.bearer_token))
+                .map_err(|_| {
+                    anyhow!("external model bearer token is not a valid HTTP header value")
+                })?;
             let parsed = url::Url::parse(&external.base_url)
                 .map_err(|e| anyhow!("external model URL is invalid: {e}"))?;
             if !matches!(parsed.scheme(), "http" | "https") {
@@ -204,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_external_model_with_unsafe_url_or_empty_token() {
+    fn rejects_external_model_with_unsafe_url_or_invalid_token() {
         let mut cfg = cfg("qwen3", &["http://10.0.0.1:30000"]);
         cfg.external_model = Some(ExternalModelConfig {
             model_id: "macaron-a2ui-tall".into(),
@@ -219,6 +232,12 @@ mod tests {
         external.bearer_token = "  ".into();
         let err = cfg.validate().unwrap_err().to_string();
         assert!(err.contains("must be non-empty"), "got: {err}");
+
+        for token in ["provider secret", "provider\nsecret", "provider\tsecret"] {
+            cfg.external_model.as_mut().unwrap().bearer_token = token.into();
+            let err = cfg.validate().unwrap_err().to_string();
+            assert!(err.contains("visible ASCII"), "token={token:?}, got: {err}");
+        }
     }
 
     #[test]
