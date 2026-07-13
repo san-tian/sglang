@@ -184,6 +184,16 @@ impl WorkerRegistry {
             .collect()
     }
 
+    /// Workers admitted by both the circuit breaker and the latest load
+    /// probe. An unset probe remains routable during startup; an explicit
+    /// probe failure does not.
+    pub fn routable_workers_for(&self, model: &ModelId) -> Vec<Arc<Worker>> {
+        self.healthy_workers_for(model)
+            .into_iter()
+            .filter(|worker| worker.load_probe_allows_routing())
+            .collect()
+    }
+
     pub fn workers_for_mode(&self, model: &ModelId, mode: WorkerMode) -> Vec<Arc<Worker>> {
         self.workers_for(model)
             .into_iter()

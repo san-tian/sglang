@@ -12,7 +12,7 @@
 use crate::discovery::WorkerMode;
 use crate::server::app_context::AppContext;
 use crate::server::metrics::WorkerSnapshot;
-use crate::workers::worker::REPORTED_LOAD_FAILED;
+use crate::workers::worker::reported_load_allows_routing;
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
@@ -56,7 +56,7 @@ pub async fn metrics(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
                 global_pending_requests,
                 global_pending_tokens: saturating_i64(w.global_pending_token_load()),
                 reported_load,
-                routable: cb.admit && reported_load != REPORTED_LOAD_FAILED,
+                routable: cb.admit && reported_load_allows_routing(reported_load),
                 working: w.active_load() > 0
                     || w.pending_load() > 0
                     || w.global_pending_load() > 0

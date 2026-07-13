@@ -66,6 +66,11 @@ impl Proxy {
     /// misses both the wrapped reqwest timeout and the `io::ErrorKind::TimedOut`
     /// cases.
     fn classify_reqwest_error_for(worker: Url, e: reqwest::Error, path: &str) -> ApiError {
+        // A connect timeout is safe for the PD chat path to retry on another
+        // decode because the first worker never accepted the request. Preserve
+        // it as `UpstreamUnreachable` (with the reqwest source chain) instead
+        // of collapsing it into the broader response-timeout variant.
+        let is_connect = e.is_connect();
         let source = anyhow::Error::new(e).context(format!("worker {worker}: post {path}"));
         let is_timeout = source.chain().any(|c| {
             c.downcast_ref::<reqwest::Error>()
@@ -74,7 +79,9 @@ impl Proxy {
             c.downcast_ref::<std::io::Error>()
                 .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
         });
-        if is_timeout {
+        if is_connect {
+            ApiError::UpstreamUnreachable { worker, source }
+        } else if is_timeout {
             ApiError::UpstreamTimeout { worker }
         } else {
             ApiError::UpstreamUnreachable { worker, source }

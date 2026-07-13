@@ -31,7 +31,7 @@ pub async fn readyz(State(ctx): State<Arc<AppContext>>) -> StatusCode {
     let workers_ready = match ctx.config.runtime_mode {
         RuntimeMode::PdProxy => {
             let model = ModelId(ctx.config.model.id.clone());
-            let workers = ctx.registry.healthy_workers_for(&model);
+            let workers = ctx.registry.routable_workers_for(&model);
             workers
                 .iter()
                 .any(|worker| worker.mode() == WorkerMode::Prefill)
@@ -144,6 +144,60 @@ mod tests {
             RuntimeMode::PdProxy,
             &[WorkerMode::Prefill, WorkerMode::Decode],
         );
+        let res = crate::server::app::build_router(pd)
+            .oneshot(
+                Request::builder()
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn pd_proxy_readyz_rejects_load_probe_failed_decode() {
+        let pd = test_ctx_with_modes(
+            true,
+            RuntimeMode::PdProxy,
+            &[WorkerMode::Prefill, WorkerMode::Decode],
+        );
+        let decode = pd
+            .registry
+            .workers_for(&ModelId("stub-model".into()))
+            .into_iter()
+            .find(|worker| worker.mode() == WorkerMode::Decode)
+            .unwrap();
+        decode.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
+
+        let res = crate::server::app::build_router(pd)
+            .oneshot(
+                Request::builder()
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn pd_proxy_readyz_accepts_one_usable_decode_when_peer_probe_failed() {
+        let pd = test_ctx_with_modes(
+            true,
+            RuntimeMode::PdProxy,
+            &[WorkerMode::Prefill, WorkerMode::Decode, WorkerMode::Decode],
+        );
+        let failed = pd
+            .registry
+            .workers_for(&ModelId("stub-model".into()))
+            .into_iter()
+            .find(|worker| worker.mode() == WorkerMode::Decode)
+            .unwrap();
+        failed.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
+
         let res = crate::server::app::build_router(pd)
             .oneshot(
                 Request::builder()

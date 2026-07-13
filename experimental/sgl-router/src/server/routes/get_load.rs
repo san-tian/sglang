@@ -5,7 +5,7 @@
 
 use crate::discovery::{ModelId, WorkerMode};
 use crate::server::app_context::AppContext;
-use crate::workers::worker::{REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET};
+use crate::workers::worker::REPORTED_LOAD_UNSET;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -34,20 +34,17 @@ pub async fn get_load(
     let model = ModelId(ctx.config.model.id.clone());
     let entries: Vec<GetLoadEntry> = ctx
         .registry
-        .healthy_workers_for(&model)
+        .routable_workers_for(&model)
         .into_iter()
         .filter(|worker| worker.mode() == WorkerMode::Decode)
-        .filter_map(|worker| {
+        .map(|worker| {
             let reported = worker.reported_load();
-            if reported == REPORTED_LOAD_FAILED {
-                return None;
-            }
             let num_reqs = if reported == REPORTED_LOAD_UNSET {
                 saturating_i64(worker.active_load())
             } else {
                 reported.max(0)
             };
-            Some((worker, num_reqs))
+            (worker, num_reqs)
         })
         .enumerate()
         .map(|(dp_rank, (worker, num_reqs))| GetLoadEntry {
@@ -83,6 +80,7 @@ mod tests {
     use super::*;
     use crate::config::RuntimeMode;
     use crate::discovery::{WorkerId, WorkerRouteSet, WorkerSpec};
+    use crate::workers::worker::REPORTED_LOAD_FAILED;
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
