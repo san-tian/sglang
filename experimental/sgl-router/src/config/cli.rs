@@ -318,8 +318,8 @@ pub struct Cli {
     /// and a 2k request identically; real queue depth does not. Omitted =>
     /// poller disabled, decisions fall back to in-flight count (original
     /// behaviour). Must be `>= 1` when set. Auth reuses
-    /// `--worker-introspect-key`. Only meaningful with
-    /// `--policy cache_aware_zmq`.
+    /// `--worker-introspect-key`. Used by `pd_proxy` to publish aggregate
+    /// decode load, and by load-aware gateway policies for routing pressure.
     #[arg(long)]
     pub load_poll_interval_secs: Option<u64>,
 
@@ -577,15 +577,16 @@ impl Cli {
             if secs == 0 {
                 return Err(anyhow!("--load-poll-interval-secs must be >= 1"));
             }
-            if !matches!(
+            let load_aware_policy = matches!(
                 self.policy,
                 PolicyKind::CacheAwareZmq
                     | PolicyKind::TieredSpillover
                     | PolicyKind::CacheAwareSpillover
-            ) {
+            );
+            if self.mode != RuntimeMode::PdProxy && !load_aware_policy {
                 return Err(anyhow!(
-                    "--load-poll-interval-secs requires a load-aware policy \
-                     (cache_aware_zmq, tiered_spillover, or cache_aware_spillover)"
+                    "--load-poll-interval-secs requires pd_proxy mode or a load-aware \
+                     policy (cache_aware_zmq, tiered_spillover, or cache_aware_spillover)"
                 ));
             }
         }
@@ -1000,12 +1001,29 @@ mod tests {
         let c = into_config_owned(with_model(&[
             "--mode",
             "pd_proxy",
+            "--load-poll-interval-secs",
+            "1",
             "--worker-urls",
             "http://prefill:30100",
             "http://decode:30200",
         ]))
         .unwrap();
         assert_eq!(c.runtime_mode, RuntimeMode::PdProxy);
+        assert_eq!(c.load_poll_interval_secs, Some(1));
+    }
+
+    #[test]
+    fn gateway_round_robin_rejects_load_poll_interval() {
+        let err = into_config_owned(with_model(&[
+            "--load-poll-interval-secs",
+            "1",
+            "--worker-urls",
+            "http://worker:30000",
+        ]))
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("requires pd_proxy mode or a load-aware policy"));
     }
 
     /// With `--tokenizer-path` omitted, the tokenizer source defaults to the
