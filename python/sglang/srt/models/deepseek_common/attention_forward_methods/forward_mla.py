@@ -28,6 +28,7 @@ from sglang.srt.layers.quantization.fp8_kernel import (
     per_token_group_quant_mla_deep_gemm_masked_fp8,
 )
 from sglang.srt.layers.radix_attention import unified_attention_with_output
+from sglang.srt.layers.rotary_embedding.utils import canonicalize_rope_positions
 from sglang.srt.layers.utils.cp_utils import mla_use_prefill_cp
 from sglang.srt.lora.deepseek_mla_correction import (
     apply_q_correction as apply_kv_b_lora_q_correction,
@@ -540,7 +541,9 @@ class DeepseekMLAForwardMixin:
             and (not skip_rope_for_aiter_fused_mla)
             and (not _use_aiter or not _is_gfx95_supported or self.use_dsa)
         ):
-            q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
+            q_pe, k_pe = self.rotary_emb(
+                canonicalize_rope_positions(positions), q_pe, k_pe
+            )
 
         dsa_prefill_cp = dsa_use_prefill_cp(forward_batch)
         mla_prefill_cp = mla_use_prefill_cp(forward_batch)
