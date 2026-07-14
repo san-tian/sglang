@@ -14,6 +14,7 @@ pub mod metrics;
 pub mod models;
 pub mod passthrough;
 pub mod priority_override;
+pub mod reasoning_compat;
 pub mod responses;
 pub mod tokenize;
 pub mod tool_arguments;

@@ -22,6 +22,7 @@ use crate::server::routes::alias_fallback::{
 use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
+use crate::server::routes::reasoning_compat::{normalize_reasoning_request, ReasoningEndpoint};
 use crate::server::routes::tool_arguments::normalize_chat_tool_call_arguments;
 use crate::server::routes::tool_schema::normalize_chat_tool_schemas;
 use crate::server::trace::TraceContext;
@@ -269,6 +270,7 @@ pub async fn chat_completions(
     {
         return Ok(response);
     }
+    let body = normalize_reasoning_request(&ctx, ReasoningEndpoint::Chat, body)?;
     let body = normalize_chat_thinking_blocks(body)?;
     let body = normalize_chat_tool_message_object_content(body)?;
     let body = normalize_chat_tool_schema_required_nulls(body)?;
