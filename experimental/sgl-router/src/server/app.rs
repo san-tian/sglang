@@ -88,6 +88,7 @@ pub fn build_router_with_gateway_keyring(
     keyring: Arc<GatewayKeyring>,
 ) -> Router {
     let public_routes = Router::new()
+        .route("/health", get(crate::server::routes::health::healthz))
         .route("/healthz", get(crate::server::routes::health::healthz))
         .route("/readyz", get(crate::server::routes::health::readyz))
         .route("/metrics", get(crate::server::routes::metrics::metrics));

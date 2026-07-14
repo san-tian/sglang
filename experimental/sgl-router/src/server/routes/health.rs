@@ -58,18 +58,16 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn healthz_always_200() {
+    async fn liveness_aliases_always_200() {
         let app = crate::server::app::build_router(test_ctx(false, false));
-        let res = app
-            .oneshot(
-                Request::builder()
-                    .uri("/healthz")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        for path in ["/health", "/healthz"] {
+            let res = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "{path}");
+        }
     }
 
     #[tokio::test]

@@ -681,16 +681,14 @@ async fn missing_unknown_and_disabled_gateway_keys_share_sanitized_401_and_never
 async fn health_stays_public_while_api_and_cache_control_routes_are_protected() {
     let ctx = build_ctx(Vec::new());
     ctx.mark_ready();
-    let health_response = build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
-        .oneshot(
-            Request::builder()
-                .uri("/healthz")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(health_response.status(), StatusCode::OK);
+    for path in ["/health", "/healthz"] {
+        let health_response =
+            build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+        assert_eq!(health_response.status(), StatusCode::OK, "{path}");
+    }
 
     let flush_response = build_router_with_gateway_keyring(Arc::clone(&ctx), gateway_keyring())
         .oneshot(
