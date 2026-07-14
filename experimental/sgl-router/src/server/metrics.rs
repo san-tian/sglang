@@ -1035,7 +1035,7 @@ impl MetricsRegistry {
 
         // worker_reported_load (real request pressure from /get_load; -1 unset, -2 poll failed)
         out.push_str(
-            "# HELP sgl_router_worker_reported_load Worker-reported real load (summed num_reqs + num_waiting_reqs from /get_load) when the load poller is on; -1 = unset/not polled, -2 = last poll failed (treated as high load).\n",
+            "# HELP sgl_router_worker_reported_load Worker-reported real load (summed num_reqs + num_waiting_reqs from /get_load) when the load poller is on; -1 = unset/not polled, -2 = latest /get_load or /health probe failed (treated as high load).\n",
         );
         out.push_str("# TYPE sgl_router_worker_reported_load gauge\n");
         for w in &sorted {

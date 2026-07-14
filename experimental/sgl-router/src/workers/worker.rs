@@ -173,8 +173,9 @@ pub struct Worker {
     /// short/long workload. Sentinel values:
     ///   `REPORTED_LOAD_UNSET` (-1): no real data — poller disabled, or not
     ///     polled yet → consumers fall back to `active_load()`.
-    ///   `REPORTED_LOAD_FAILED` (-2): last poll failed (timeout/401/parse)
-    ///     → consumers treat this worker as HIGH load (don't spill onto it).
+    ///   `REPORTED_LOAD_FAILED` (-2): the latest `/get_load` or `/health`
+    ///     probe failed → consumers treat this worker as HIGH load and PD
+    ///     admission excludes it.
     ///   `>= 0`: real load signal (e.g. summed `num_waiting_reqs`).
     /// `Arc<AtomicI64>` so the poller updates it lock-free without a
     /// registry write-lock.
@@ -188,8 +189,8 @@ pub struct Worker {
 /// `reported_load` sentinel: no real data (poller off / not yet polled).
 /// Consumers fall back to the router-side in-flight `active_load()`.
 pub const REPORTED_LOAD_UNSET: i64 = -1;
-/// `reported_load` sentinel: last poll failed. Consumers treat the worker
-/// as HIGH load so spill-to-idle never routes onto a possibly-dead worker.
+/// `reported_load` sentinel: the latest load or health probe failed. Consumers
+/// treat the worker as HIGH load so routing avoids a possibly-dead worker.
 pub const REPORTED_LOAD_FAILED: i64 = -2;
 
 /// Shared interpretation of the load-poller sentinel. Keeping this as a
@@ -358,12 +359,12 @@ impl Worker {
         self.reported_load.store(v, Ordering::Relaxed);
     }
 
-    /// Whether the latest load probe permits dispatch to this worker.
+    /// Whether the latest combined load and health probe permits dispatch.
     ///
     /// `REPORTED_LOAD_UNSET` remains eligible so a newly started router can
     /// serve before its first poll. Only an explicit poll failure removes the
     /// worker from probe-aware routing and readiness decisions.
-    pub fn load_probe_allows_routing(&self) -> bool {
+    pub fn introspection_probe_allows_routing(&self) -> bool {
         reported_load_allows_routing(self.reported_load())
     }
 
