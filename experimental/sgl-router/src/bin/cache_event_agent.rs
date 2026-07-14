@@ -224,15 +224,23 @@ async fn main() -> Result<()> {
         let _ = metrics_handle.await;
         return Err(anyhow!("no subscriber tasks were started"));
     }
-    cancel.cancel();
-    let _ = metrics_handle.await;
+    supervise_subscribers(handles, metrics_handle, cancel.clone()).await;
+    info!("cache-event-agent stopped");
+    Ok(())
+}
+
+async fn supervise_subscribers(
+    handles: Vec<JoinHandle<()>>,
+    metrics_handle: JoinHandle<()>,
+    cancel: CancellationToken,
+) {
     for handle in handles {
         if let Err(err) = handle.await {
             error!(error = %err, "subscriber task panicked");
         }
     }
-    info!("cache-event-agent stopped");
-    Ok(())
+    cancel.cancel();
+    let _ = metrics_handle.await;
 }
 
 #[derive(Debug, Default)]
@@ -930,6 +938,36 @@ fn install_signal_handlers(cancel: CancellationToken) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn subscriber_lifecycle_waits_for_external_cancellation() {
+        let cancel = CancellationToken::new();
+        let subscriber_cancel = cancel.clone();
+        let subscriber = tokio::spawn(async move {
+            subscriber_cancel.cancelled().await;
+        });
+        let metrics_cancel = cancel.clone();
+        let metrics = tokio::spawn(async move {
+            metrics_cancel.cancelled().await;
+        });
+        let coordinator_cancel = cancel.clone();
+        let coordinator = tokio::spawn(supervise_subscribers(
+            vec![subscriber],
+            metrics,
+            coordinator_cancel,
+        ));
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            !coordinator.is_finished(),
+            "subscriber coordinator cancelled itself before an external shutdown"
+        );
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), coordinator)
+            .await
+            .expect("subscriber coordinator did not stop after cancellation")
+            .expect("subscriber coordinator task panicked");
+    }
 
     fn test_delivery(seq: i64) -> SinkDelivery {
         SinkDelivery {
