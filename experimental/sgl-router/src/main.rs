@@ -644,14 +644,13 @@ async fn main() -> Result<()> {
         None
     };
 
-    // Optional background load poller: when a load poll interval is set,
-    // poll each worker's /get_load for its real queue depth and feed it to
-    // cache_aware_zmq (instead of the router-side in-flight count). Reuses the
-    // worker introspect key for auth. None => not spawned (in-flight count).
+    // Optional background introspection poller: read each worker's /get_load
+    // for real queue depth and pair it with /health for routing admission.
+    // Reuses the worker introspect key for auth. None => not spawned.
     let load_poller_handle = cfg.load_poll_interval_secs.map(|secs| {
         tracing::info!(
             interval_secs = secs,
-            "spawning worker load poller (/get_load)"
+            "spawning worker load poller (/get_load + /health)"
         );
         sgl_router::policies::load_poller::spawn_load_poller(
             Arc::clone(&registry),

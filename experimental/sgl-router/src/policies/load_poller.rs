@@ -8,9 +8,10 @@
 //! 200k-token request and one 2k request both count as load 1, yet load
 //! the engine completely differently. This poller periodically asks each
 //! worker for its REAL request pressure via the worker's `/get_load` endpoint
-//! and stores it on `Worker::reported_load`, which the `cache_aware_zmq`
-//! policy consumes (via `Worker::effective_load`) for its min-load /
-//! imbalance / hit-load-guard decisions.
+//! and verifies scheduler liveness through `/health`. It stores the request
+//! pressure on `Worker::reported_load`, which the `cache_aware_zmq` policy
+//! consumes (via `Worker::effective_load`) for its min-load / imbalance /
+//! hit-load-guard decisions.
 //!
 //! Auth: `/get_load` is behind the worker's `--api-key` (401 without), so
 //! the poller carries the same `worker_introspect_key` bearer the KV-event
@@ -18,9 +19,11 @@
 //! plain HTTP on the worker's normal port — reachable over NAT/Vast public
 //! mappings with no special port.
 //!
-//! Failure handling: any poll error (timeout, non-2xx, parse) writes the
-//! `REPORTED_LOAD_FAILED` sentinel so the policy treats that worker as HIGH
-//! load and never spills onto a possibly-dead worker.
+//! Failure handling: any `/get_load` or `/health` error (timeout, non-2xx,
+//! parse) writes the `REPORTED_LOAD_FAILED` sentinel so the policy treats that
+//! worker as HIGH load and PD admission removes it. `/get_load` alone is not a
+//! sufficient liveness check: the HTTP process can still return cached load
+//! while the scheduler health endpoint is wedged.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,11 +46,9 @@ struct GetLoadEntry {
     num_waiting_reqs: i64,
 }
 
-/// Per-request timeout for the `/get_load` GET. Small: it is a tiny JSON
-/// payload from the worker's HTTP server and we poll on a short interval,
-/// so a slow worker should fail fast and be marked HIGH load rather than
-/// stall the whole poll round.
-const GET_LOAD_TIMEOUT: Duration = Duration::from_secs(3);
+/// Per-request timeout for worker introspection GETs. Small: both responses
+/// are tiny and a slow worker should fail fast rather than stall the round.
+const WORKER_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Sum active plus waiting requests across all dp ranks reported by one worker.
 ///
@@ -65,8 +66,23 @@ fn parse_total_request_pressure(body: &str) -> Option<i64> {
     )
 }
 
-/// Poll one worker's `/get_load` once and store the result (or the
-/// failure sentinel) on the worker. Never panics; never returns an error.
+fn worker_get(
+    client: &reqwest::Client,
+    worker: &crate::workers::worker::Worker,
+    url: &str,
+) -> reqwest::RequestBuilder {
+    let mut req = client.get(url).timeout(WORKER_PROBE_TIMEOUT);
+    if let Some(token) = worker.bearer_token() {
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .expect("worker bearer token must be a valid HTTP header value");
+        value.set_sensitive(true);
+        req = req.header(reqwest::header::AUTHORIZATION, value);
+    }
+    req
+}
+
+/// Poll one worker's `/get_load` and `/health` concurrently and store the load
+/// only when both probes succeed. Never panics; never returns an error.
 async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker::Worker>) {
     if !worker.backend().supports_sglang_load() {
         worker.set_reported_load(REPORTED_LOAD_UNSET);
@@ -77,33 +93,40 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
         );
         return;
     }
-    let url = format!("{}/get_load", worker.url.trim_end_matches('/'));
-    let outcome = async {
-        let mut req = client.get(&url).timeout(GET_LOAD_TIMEOUT);
-        if let Some(token) = worker.bearer_token() {
-            let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-                .expect("worker bearer token must be a valid HTTP header value");
-            value.set_sensitive(true);
-            req = req.header(reqwest::header::AUTHORIZATION, value);
-        }
-        let resp = req.send().await.ok()?;
+    let base = worker.url.trim_end_matches('/');
+    let load_url = format!("{base}/get_load");
+    let health_url = format!("{base}/health");
+    let load_probe = async {
+        let resp = worker_get(client, worker, &load_url).send().await.ok()?;
         if !resp.status().is_success() {
             return None;
         }
         let body = resp.text().await.ok()?;
         parse_total_request_pressure(&body)
-    }
-    .await;
-    match outcome {
-        Some(waiting) => worker.set_reported_load(waiting),
-        None => {
+    };
+    let health_probe = async {
+        let resp = match worker_get(client, worker, &health_url).send().await {
+            Ok(resp) => resp,
+            Err(_) => return false,
+        };
+        resp.status().is_success()
+    };
+    let (load, health_ok) = tokio::join!(load_probe, health_probe);
+    match (load, health_ok) {
+        (Some(waiting), true) => worker.set_reported_load(waiting),
+        (load, health_ok) => {
             worker.set_reported_load(REPORTED_LOAD_FAILED);
-            tracing::debug!(worker_url = %worker.url, "load-poller: /get_load failed; marking HIGH load");
+            tracing::debug!(
+                worker_url = %worker.url,
+                load_ok = load.is_some(),
+                health_ok,
+                "load-poller: worker introspection failed; marking HIGH load"
+            );
         }
     }
 }
 
-/// One poll round: fan out `/get_load` to every registered worker
+/// One poll round: fan out `/get_load` + `/health` to every registered worker
 /// concurrently and update each worker's `reported_load`.
 async fn poll_round(client: &reqwest::Client, registry: &Arc<WorkerRegistry>) {
     let workers = registry.all();
@@ -121,7 +144,7 @@ pub fn spawn_load_poller(
     interval: Duration,
     bearer: Option<String>,
 ) -> JanitorHandle {
-    let mut builder = reqwest::Client::builder().timeout(GET_LOAD_TIMEOUT);
+    let mut builder = reqwest::Client::builder().timeout(WORKER_PROBE_TIMEOUT);
     if let Some(token) = bearer.as_deref() {
         let mut headers = reqwest::header::HeaderMap::new();
         let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
@@ -158,6 +181,7 @@ mod tests {
     use super::*;
     use crate::discovery::{ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerSpec};
     use crate::workers::worker::REPORTED_LOAD_FAILED;
+    use axum::http::StatusCode;
     use axum::{routing::get, Json, Router};
     use serde_json::json;
     use tokio::net::TcpListener;
@@ -252,15 +276,17 @@ mod tests {
     async fn poll_round_reads_sglang_proxy_running_and_queue_load() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let worker_url = format!("http://{}", listener.local_addr().unwrap());
-        let app = Router::new().route(
-            "/get_load",
-            get(|| async {
-                Json(json!([
-                    {"dp_rank": 0, "num_reqs": 3, "num_waiting_reqs": 2},
-                    {"dp_rank": 1, "num_reqs": 1, "num_waiting_reqs": 5}
-                ]))
-            }),
-        );
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/get_load",
+                get(|| async {
+                    Json(json!([
+                        {"dp_rank": 0, "num_reqs": 3, "num_waiting_reqs": 2},
+                        {"dp_rank": 1, "num_reqs": 1, "num_waiting_reqs": 5}
+                    ]))
+                }),
+            );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let registry = Arc::new(WorkerRegistry::default());
@@ -286,6 +312,48 @@ mod tests {
         poll_round(&client, &registry).await;
 
         assert_eq!(worker.reported_load(), 11);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_round_rejects_worker_when_health_fails_but_load_is_zero() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::SERVICE_UNAVAILABLE }))
+            .route(
+                "/get_load",
+                get(|| async {
+                    Json(json!([
+                        {"dp_rank": 0, "num_reqs": 0, "num_waiting_reqs": 0}
+                    ]))
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let id = WorkerId("idle-but-unhealthy".into());
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: worker_url,
+                mode: WorkerMode::Decode,
+                model_ids: vec![ModelId("m".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: WorkerBackend::Sglang,
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+            })
+            .unwrap();
+        let worker = registry.get(&id).unwrap();
+
+        poll_round(&reqwest::Client::new(), &registry).await;
+
+        assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
+        assert!(!worker.introspection_probe_allows_routing());
         server.abort();
     }
 }

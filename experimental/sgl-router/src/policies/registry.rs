@@ -53,7 +53,7 @@ pub enum PdPools {
     Plain { workers: Vec<Arc<Worker>> },
     /// PD-disaggregation deployment: the model has prefill and/or decode
     /// workers. Either OR BOTH pools may be empty (e.g. every prefill
-    /// worker's circuit breaker is open or its load probe failed). The
+    /// worker's circuit breaker is open or its load/health probe failed). The
     /// `*_candidates` helpers are
     /// the only safe consumers — they map an empty pool to the
     /// appropriate `NoPrefillWorkersAvailable` / `NoDecodeWorkersAvailable`
@@ -96,14 +96,14 @@ impl PdPoolResolver {
 
     /// Classify a model and return its pool partition over usable workers.
     /// Workers whose circuit breaker is open are filtered out at this layer.
-    /// For PD pools, a worker whose latest load probe failed is also removed,
+    /// For PD pools, a worker whose latest load or health probe failed is also removed,
     /// so prefill/decode dispatch, `/get_load`, and readiness share the same
     /// availability signal. Plain pools retain their breaker-only semantics.
     ///
     /// Returns `Err(NoHealthyWorkers)` when the model has zero registered
     /// workers, or when a plain pool has no breaker-admitted workers. When the
     /// model is registered as PD but every PD worker is currently unusable
-    /// (breaker-open or load-probe-failed),
+    /// (breaker-open or introspection-probe-failed),
     /// returns `Ok(Pd { prefill: [], decode: [] })` so
     /// `prefill_candidates` / `decode_candidates` can surface the more
     /// specific `NoPrefillWorkersAvailable` / `NoDecodeWorkersAvailable`
