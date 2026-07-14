@@ -1767,6 +1767,26 @@ mod tests {
     }
 
     #[test]
+    fn prefill_work_normalized_score_mode_builds_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000@prefill_capacity=0.5",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "prefill-work-normalized",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.model.cache_aware.unwrap().ttft_score_mode,
+            TtftScoreMode::PrefillWorkNormalized
+        );
+    }
+
+    #[test]
     fn rejects_lmetric_without_ttft_first() {
         let err = into_config_owned(with_model(&[
             "--worker-urls",

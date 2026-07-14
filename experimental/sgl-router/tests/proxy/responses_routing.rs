@@ -73,6 +73,7 @@ fn build_ctx_with_worker(url: &str) -> Arc<AppContext> {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(TEST_TIMEOUT).unwrap());
@@ -137,6 +138,7 @@ fn build_cache_aware_ctx_with_workers(urls: [&str; 2]) -> Arc<AppContext> {
                 backend: Default::default(),
                 tier: Default::default(),
                 routes: Default::default(),
+                prefill_capacity_milli: 1000,
             })
             .unwrap();
         registry

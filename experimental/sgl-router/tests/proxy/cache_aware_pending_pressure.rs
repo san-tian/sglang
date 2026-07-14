@@ -138,6 +138,7 @@ fn worker_spec(id: &str, url: &str, min_priority: Option<i64>) -> WorkerSpec {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }
 }
 

@@ -87,6 +87,7 @@ fn build_ctx(url: String) -> Arc<AppContext> {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_registry_with_defaults(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(Duration::from_secs(5)).unwrap());

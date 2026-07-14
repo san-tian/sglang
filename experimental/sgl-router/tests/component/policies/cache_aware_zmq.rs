@@ -48,6 +48,7 @@ fn build_worker(url: &str, model: &str) -> Arc<Worker> {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }))
 }
 

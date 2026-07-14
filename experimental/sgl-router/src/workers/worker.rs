@@ -230,6 +230,8 @@ pub struct Worker {
     tier: WorkerTier,
     /// Router-facing API routes this worker is allowed to serve.
     routes: WorkerRouteSet,
+    /// Relative prefill capacity in milli-units. `1000` is the baseline.
+    prefill_capacity_milli: usize,
     /// Worker-reported real load (from the background load poller hitting
     /// the worker's `/get_load`). Decoupled from `active_requests`
     /// (router-side in-flight count), which is a poor signal for a mixed
@@ -299,6 +301,7 @@ impl Worker {
             backend: spec.backend,
             tier: spec.tier,
             routes: spec.routes,
+            prefill_capacity_milli: spec.prefill_capacity_milli,
             reported_load: Arc::new(AtomicI64::new(REPORTED_LOAD_UNSET)),
             reported_prefill_load: Arc::new(RwLock::new(None)),
             global_pending: None,
@@ -347,6 +350,10 @@ impl Worker {
 
     pub fn routes(&self) -> WorkerRouteSet {
         self.routes
+    }
+
+    pub fn prefill_capacity_milli(&self) -> usize {
+        self.prefill_capacity_milli.max(1)
     }
 
     /// Optional per-worker bearer token. Shared-key pools leave this unset
@@ -558,6 +565,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.active_load(), 0);
         let g = w.load_guard();
@@ -584,6 +592,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         // Seed router-side in-flight = 2.
         let _g1 = w.load_guard();
@@ -636,6 +645,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
 
         w.set_reported_load(2);
@@ -672,6 +682,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         let overlay = RouterStateLoadOverlay::new();
         overlay.update(RouterStateSnapshotResponse {
@@ -709,6 +720,7 @@ mod tests {
                 backend: Default::default(),
                 tier: Default::default(),
                 routes: WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             });
             assert_eq!(w.mode(), m);
         }
@@ -728,6 +740,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.mode(), WorkerMode::Prefill);
         w.set_mode(WorkerMode::Decode);
@@ -750,6 +763,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_port(), Some(8997));
     }
@@ -768,6 +782,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_port(), None);
     }
@@ -786,6 +801,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_host(), "10.0.0.1");
     }
@@ -804,6 +820,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_host(), "prefill-0.svc.cluster.local");
     }
@@ -826,6 +843,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_host(), "localhost");
     }

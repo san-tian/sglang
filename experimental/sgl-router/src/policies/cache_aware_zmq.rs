@@ -488,6 +488,7 @@ impl CacheAwareZmqPolicy {
             TtftScoreMode::PrefillWorkOnly | TtftScoreMode::Lmetric => {
                 snapshot.total_waiting_uncached_tokens
             }
+            TtftScoreMode::PrefillWorkNormalized => snapshot.total_waiting_uncached_tokens,
             TtftScoreMode::LmetricCandidateAware => snapshot
                 .candidate
                 .as_ref()
@@ -507,6 +508,12 @@ impl CacheAwareZmqPolicy {
             .saturating_add(reserved_tokens);
         if score_mode == TtftScoreMode::PrefillWorkOnly {
             return Some(prefill_factor);
+        }
+        if score_mode == TtftScoreMode::PrefillWorkNormalized {
+            return Some(normalize_prefill_work(
+                prefill_factor,
+                worker.prefill_capacity_milli(),
+            ));
         }
         let batch_factor = 1usize
             .saturating_add(snapshot.running_requests)
@@ -563,6 +570,11 @@ impl CacheAwareZmqPolicy {
         match score_mode {
             TtftScoreMode::Additive => true,
             TtftScoreMode::PrefillWorkOnly => matches!(
+                (worker.mode(), snapshot.role),
+                (WorkerMode::Plain, PrefillLoadRole::Integrated)
+                    | (WorkerMode::Prefill, PrefillLoadRole::Prefill)
+            ),
+            TtftScoreMode::PrefillWorkNormalized => matches!(
                 (worker.mode(), snapshot.role),
                 (WorkerMode::Plain, PrefillLoadRole::Integrated)
                     | (WorkerMode::Prefill, PrefillLoadRole::Prefill)
@@ -937,6 +949,14 @@ fn matched_blocks_for_worker(
     }
 }
 
+fn normalize_prefill_work(prefill_work_tokens: usize, capacity_milli: usize) -> usize {
+    let capacity_milli = capacity_milli.max(1);
+    prefill_work_tokens
+        .saturating_mul(1000)
+        .saturating_add(capacity_milli - 1)
+        / capacity_milli
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1047,6 +1067,15 @@ mod tests {
     }
 
     fn worker_with_backend(url: &str, model_id: &str, backend: WorkerBackend) -> Arc<Worker> {
+        worker_with_backend_and_capacity(url, model_id, backend, 1000)
+    }
+
+    fn worker_with_backend_and_capacity(
+        url: &str,
+        model_id: &str,
+        backend: WorkerBackend,
+        prefill_capacity_milli: usize,
+    ) -> Arc<Worker> {
         Arc::new(Worker::new(WorkerSpec {
             id: WorkerId(url.into()),
             url: url.into(),
@@ -1059,6 +1088,7 @@ mod tests {
             backend,
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli,
         }))
     }
 
@@ -1079,6 +1109,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         worker.attach_router_state_overlay(overlay);
         Arc::new(worker)
@@ -2522,6 +2553,41 @@ mod tests {
             TtftScoreMode::PrefillWorkOnly
         );
         assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 1150);
+    }
+
+    #[test]
+    fn prefill_work_normalized_scales_by_worker_capacity() {
+        let policy = lmetric_policy(TtftScoreMode::PrefillWorkNormalized);
+        let baseline = worker_with_backend_and_capacity(
+            "http://b300:30000",
+            "tiny",
+            WorkerBackend::Sglang,
+            1000,
+        );
+        let mi300x = worker_with_backend_and_capacity(
+            "http://mi300x:30000",
+            "tiny",
+            WorkerBackend::Sglang,
+            500,
+        );
+        let france = worker_with_backend_and_capacity(
+            "http://france:30000",
+            "tiny",
+            WorkerBackend::Sglang,
+            5000,
+        );
+        for worker in [&baseline, &mi300x, &france] {
+            worker.set_mode(WorkerMode::Prefill);
+            worker.set_reported_prefill_load(Some(native_prefill_snapshot(99, 10_000)));
+        }
+
+        assert_eq!(
+            policy.compatible_score_mode_for_worker(&baseline),
+            TtftScoreMode::PrefillWorkNormalized
+        );
+        assert_eq!(policy.ttft_score(&baseline, 25, 0, 60_000, 4, 0), 70_000);
+        assert_eq!(policy.ttft_score(&mi300x, 25, 0, 60_000, 4, 0), 140_000);
+        assert_eq!(policy.ttft_score(&france, 25, 0, 60_000, 4, 0), 14_000);
     }
 
     #[test]

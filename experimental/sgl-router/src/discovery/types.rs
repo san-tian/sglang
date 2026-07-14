@@ -203,6 +203,17 @@ pub struct WorkerSpec {
     /// Router-facing API routes this worker can safely serve.
     #[serde(default)]
     pub routes: WorkerRouteSet,
+    /// Relative prefill capacity in milli-units. `1000` means baseline
+    /// B200/B300 capacity, `500` means half speed, and `5000` means 5x
+    /// capacity. Static URL discovery seeds this from
+    /// `url@prefill_capacity=N`; policies that do not explicitly opt into
+    /// heterogenous normalization ignore it.
+    #[serde(default = "default_prefill_capacity_milli")]
+    pub prefill_capacity_milli: usize,
+}
+
+pub fn default_prefill_capacity_milli() -> usize {
+    1000
 }
 
 /// Event produced by a discovery backend and consumed by `WorkerManager`.
@@ -248,6 +259,7 @@ mod tests {
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         let s = serde_json::to_string(&w).unwrap();
         let d: WorkerSpec = serde_json::from_str(&s).unwrap();
@@ -268,6 +280,7 @@ mod tests {
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"bootstrap_port\":8997"));
@@ -289,6 +302,7 @@ mod tests {
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"min_priority\":100"));
@@ -353,6 +367,7 @@ mod tests {
             backend: WorkerBackend::Vllm,
             tier: WorkerTier::Bulk,
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"backend\":\"vllm\""));
@@ -401,6 +416,7 @@ mod tests {
             backend: WorkerBackend::Sglang,
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         let s = serde_json::to_string(&e).unwrap();
         let d: DiscoveryEvent = serde_json::from_str(&s).unwrap();
