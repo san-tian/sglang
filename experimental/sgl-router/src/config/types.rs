@@ -370,6 +370,19 @@ pub enum CacheTreeSource {
     RouteHistory,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum TtftScoreMode {
+    #[default]
+    #[value(name = "additive")]
+    Additive,
+    #[value(name = "prefill-work-only")]
+    PrefillWorkOnly,
+    #[value(name = "lmetric")]
+    Lmetric,
+    #[value(name = "lmetric-candidate-aware")]
+    LmetricCandidateAware,
+}
+
 /// Per-model cache-aware-ZMQ tuning.
 #[derive(Debug, Clone, Copy)]
 pub struct CacheAwareConfig {
@@ -423,6 +436,10 @@ pub struct CacheAwareConfig {
     /// by predicted first-token pressure and uses cache affinity only inside
     /// the configured score band.
     pub ttft_first_routing: bool,
+    /// First-token score formula. Additive preserves the existing behavior;
+    /// Prefill-work-only and LMetric modes require token-level worker load
+    /// snapshots.
+    pub ttft_score_mode: TtftScoreMode,
     /// In TTFT-first mode, rank by first-token pressure before cache scoring.
     /// Cache overlap then breaks ties only among the least-pressured workers.
     /// This trades cache affinity for faster exploration of healthy idle
@@ -449,6 +466,7 @@ impl Default for CacheAwareConfig {
             use_reported_load: false,
             tree_source: CacheTreeSource::Zmq,
             ttft_first_routing: false,
+            ttft_score_mode: TtftScoreMode::Additive,
             ttft_idle_first_routing: false,
             ttft_token_scale: default_ttft_token_scale(),
             ttft_cache_score_margin: default_ttft_cache_score_margin(),

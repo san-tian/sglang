@@ -9,7 +9,70 @@ use crate::router_state::RouterStateLoadOverlay;
 use axum::http::{header, HeaderMap, HeaderValue};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicI64, AtomicU8, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefillPriorityLoad {
+    pub priority: i64,
+    pub total_uncached_tokens: usize,
+    pub ahead_uncached_tokens: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidatePrefillLoad {
+    pub chunked_remaining_uncached_tokens: usize,
+    pub work_bucket_bounds: Vec<usize>,
+    pub priority_scheduling_enabled: bool,
+    pub schedule_low_priority_values_first: bool,
+    pub priorities: Vec<PrefillPriorityLoad>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefillLoadRole {
+    Integrated,
+    Prefill,
+}
+
+impl CandidatePrefillLoad {
+    pub fn work_ahead_tokens(
+        &self,
+        candidate_priority: i64,
+        candidate_uncached_tokens: usize,
+    ) -> Option<usize> {
+        let bucket = self
+            .work_bucket_bounds
+            .iter()
+            .position(|upper| candidate_uncached_tokens <= *upper)?;
+        let candidate_priority = if self.priority_scheduling_enabled {
+            candidate_priority
+        } else {
+            0
+        };
+        let mut ahead = self.chunked_remaining_uncached_tokens;
+        for group in &self.priorities {
+            let better_priority = self.priority_scheduling_enabled
+                && if self.schedule_low_priority_values_first {
+                    group.priority < candidate_priority
+                } else {
+                    group.priority > candidate_priority
+                };
+            if better_priority {
+                ahead = ahead.saturating_add(group.total_uncached_tokens);
+            } else if group.priority == candidate_priority {
+                ahead = ahead.saturating_add(*group.ahead_uncached_tokens.get(bucket)?);
+            }
+        }
+        Some(ahead)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefillLoadSnapshot {
+    pub role: PrefillLoadRole,
+    pub running_requests: usize,
+    pub total_waiting_uncached_tokens: usize,
+    pub candidate: Option<CandidatePrefillLoad>,
+}
 
 /// Parse a host from a worker URL. Matches SMG's `worker_builder.rs`
 /// fallback chain: parse as-is, retry with `http://` prefix if missing,
@@ -180,6 +243,10 @@ pub struct Worker {
     /// `Arc<AtomicI64>` so the poller updates it lock-free without a
     /// registry write-lock.
     reported_load: Arc<AtomicI64>,
+    /// Optional token-level prefill snapshot from a successful `/get_load`
+    /// poll. Old workers omit these fields, so absence is a compatibility
+    /// state rather than a probe failure.
+    reported_prefill_load: Arc<RwLock<Option<PrefillLoadSnapshot>>>,
     /// Optional global pending snapshot from the single-writer router-state
     /// service. Present only in multi-replica gateway deployments.
     global_pending: Option<Arc<RouterStateLoadOverlay>>,
@@ -233,6 +300,7 @@ impl Worker {
             tier: spec.tier,
             routes: spec.routes,
             reported_load: Arc::new(AtomicI64::new(REPORTED_LOAD_UNSET)),
+            reported_prefill_load: Arc::new(RwLock::new(None)),
             global_pending: None,
             bearer_token: spec.bearer_token,
         }
@@ -357,6 +425,20 @@ impl Worker {
     /// a sentinel (`REPORTED_LOAD_FAILED`) on poll failure.
     pub fn set_reported_load(&self, v: i64) {
         self.reported_load.store(v, Ordering::Relaxed);
+    }
+
+    pub fn reported_prefill_load(&self) -> Option<PrefillLoadSnapshot> {
+        self.reported_prefill_load
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn set_reported_prefill_load(&self, snapshot: Option<PrefillLoadSnapshot>) {
+        *self
+            .reported_prefill_load
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
     }
 
     /// Whether the latest combined load and health probe permits dispatch.
