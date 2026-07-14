@@ -226,10 +226,10 @@ struct ReconciliationMetrics {
     snapshots_failed: AtomicU64,
     reconciliation_duration_micros: AtomicU64,
     reconciliation_duration_count: AtomicU64,
-    stream_apply_commit_success_micros: AtomicU64,
-    stream_apply_commit_success_count: AtomicU64,
-    stream_apply_commit_failure_micros: AtomicU64,
-    stream_apply_commit_failure_count: AtomicU64,
+    stream_apply_checkpoint_success_micros: AtomicU64,
+    stream_apply_checkpoint_success_count: AtomicU64,
+    stream_apply_checkpoint_failure_micros: AtomicU64,
+    stream_apply_checkpoint_failure_count: AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -535,25 +535,25 @@ impl CacheStateService {
         }
     }
 
-    pub fn record_stream_apply_commit(&self, duration: Duration, success: bool) {
+    pub fn record_stream_apply_checkpoint(&self, duration: Duration, success: bool) {
         let duration_micros = duration.as_micros().min(u128::from(u64::MAX)) as u64;
         let (sum, count) = if success {
             (
                 &self
                     .reconciliation_metrics
-                    .stream_apply_commit_success_micros,
+                    .stream_apply_checkpoint_success_micros,
                 &self
                     .reconciliation_metrics
-                    .stream_apply_commit_success_count,
+                    .stream_apply_checkpoint_success_count,
             )
         } else {
             (
                 &self
                     .reconciliation_metrics
-                    .stream_apply_commit_failure_micros,
+                    .stream_apply_checkpoint_failure_micros,
                 &self
                     .reconciliation_metrics
-                    .stream_apply_commit_failure_count,
+                    .stream_apply_checkpoint_failure_count,
             )
         };
         sum.fetch_add(duration_micros, Ordering::Relaxed);
@@ -581,11 +581,11 @@ impl CacheStateService {
                 "# TYPE sgl_router_cache_state_reconciliation_duration_seconds summary\n",
                 "sgl_router_cache_state_reconciliation_duration_seconds_sum {:.6}\n",
                 "sgl_router_cache_state_reconciliation_duration_seconds_count {}\n",
-                "# TYPE sgl_router_cache_state_stream_apply_commit_duration_seconds summary\n",
-                "sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{{outcome=\"success\"}} {:.6}\n",
-                "sgl_router_cache_state_stream_apply_commit_duration_seconds_count{{outcome=\"success\"}} {}\n",
-                "sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{{outcome=\"failure\"}} {:.6}\n",
-                "sgl_router_cache_state_stream_apply_commit_duration_seconds_count{{outcome=\"failure\"}} {}\n",
+                "# TYPE sgl_router_cache_state_stream_apply_checkpoint_duration_seconds summary\n",
+                "sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_sum{{outcome=\"success\"}} {:.6}\n",
+                "sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_count{{outcome=\"success\"}} {}\n",
+                "sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_sum{{outcome=\"failure\"}} {:.6}\n",
+                "sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_count{{outcome=\"failure\"}} {}\n",
                 "# TYPE sgl_router_cache_state_trusted_worker_ranks gauge\n",
                 "sgl_router_cache_state_trusted_worker_ranks {}\n",
                 "# TYPE sgl_router_cache_state_untrusted_worker_ranks gauge\n",
@@ -606,18 +606,18 @@ impl CacheStateService {
                 .reconciliation_duration_count
                 .load(Ordering::Relaxed),
             metrics
-                .stream_apply_commit_success_micros
+                .stream_apply_checkpoint_success_micros
                 .load(Ordering::Relaxed) as f64
                 / 1_000_000.0,
             metrics
-                .stream_apply_commit_success_count
+                .stream_apply_checkpoint_success_count
                 .load(Ordering::Relaxed),
             metrics
-                .stream_apply_commit_failure_micros
+                .stream_apply_checkpoint_failure_micros
                 .load(Ordering::Relaxed) as f64
                 / 1_000_000.0,
             metrics
-                .stream_apply_commit_failure_count
+                .stream_apply_checkpoint_failure_count
                 .load(Ordering::Relaxed),
             trusted,
             untrusted,
@@ -1510,23 +1510,23 @@ mod tests {
     }
 
     #[test]
-    fn stream_apply_commit_metrics_report_bounded_outcomes() {
+    fn stream_apply_checkpoint_metrics_report_bounded_outcomes() {
         let service = CacheStateService::with_empty_tree();
-        service.record_stream_apply_commit(Duration::from_millis(1500), true);
-        service.record_stream_apply_commit(Duration::from_millis(250), false);
+        service.record_stream_apply_checkpoint(Duration::from_millis(1500), true);
+        service.record_stream_apply_checkpoint(Duration::from_millis(250), false);
 
         let metrics = service.reconciliation_metrics_text();
         assert!(metrics.contains(
-            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{outcome="success"} 1.500000"#
+            r#"sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_sum{outcome="success"} 1.500000"#
         ));
         assert!(metrics.contains(
-            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_count{outcome="success"} 1"#
+            r#"sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_count{outcome="success"} 1"#
         ));
         assert!(metrics.contains(
-            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{outcome="failure"} 0.250000"#
+            r#"sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_sum{outcome="failure"} 0.250000"#
         ));
         assert!(metrics.contains(
-            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_count{outcome="failure"} 1"#
+            r#"sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_count{outcome="failure"} 1"#
         ));
     }
 

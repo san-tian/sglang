@@ -999,6 +999,7 @@ fn spawn_cache_state_kafka_consumer_if_configured(
     else {
         return Ok(None);
     };
+    let auto_commit_interval_ms = config.auto_commit_interval_ms;
     let consumer = Arc::new(sgl_router::cache_event_stream::KafkaKvEventConsumer::new(
         config,
     )?);
@@ -1017,7 +1018,11 @@ fn spawn_cache_state_kafka_consumer_if_configured(
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
     let join = tokio::spawn(async move {
-        tracing::info!(topic = %topic, "cache-state Kafka event-stream consumer starting");
+        tracing::info!(
+            topic = %topic,
+            auto_commit_interval_ms,
+            "cache-state Kafka event-stream consumer starting"
+        );
         loop {
             tokio::select! {
                 _ = task_cancel.cancelled() => break,
@@ -1034,16 +1039,16 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                             for attempt in 1..=max_attempts {
                                 let pending_for_attempt = Arc::clone(&pending);
                                 let service_for_apply = Arc::clone(&service);
-                                let consumer_for_commit = Arc::clone(&consumer);
+                                let consumer_for_checkpoint = Arc::clone(&consumer);
                                 let started_at = std::time::Instant::now();
-                                let result = sgl_router::cache_event_stream::apply_then_commit_blocking(
+                                let result = sgl_router::cache_event_stream::apply_then_checkpoint_blocking(
                                     pending_for_attempt,
                                     move |record| {
                                         service_for_apply
                                             .apply_stream_record(record)
                                             .map_err(|err| anyhow!("cache-state apply failed: {err:?}"))
                                     },
-                                    move |pending| consumer_for_commit.commit(pending),
+                                    move |pending| consumer_for_checkpoint.checkpoint(pending),
                                 )
                                 .await;
                                 let elapsed = started_at.elapsed();
@@ -1052,7 +1057,7 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                                     .as_ref()
                                     .map(|outcome| outcome.record_kind)
                                     .unwrap_or("unknown");
-                                service.record_stream_apply_commit(elapsed, success);
+                                service.record_stream_apply_checkpoint(elapsed, success);
                                 if elapsed >= slow_record_threshold {
                                     tracing::warn!(
                                         worker_url = %worker_url,
@@ -1064,7 +1069,7 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                                         record_kind,
                                         outcome = if success { "success" } else { "failure" },
                                         elapsed_ms = elapsed.as_millis() as u64,
-                                        "slow cache-state Kafka apply-and-commit operation"
+                                        "slow cache-state Kafka apply-and-checkpoint operation"
                                     );
                                 }
                                 match result {
@@ -1079,7 +1084,7 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                                             applied_events = resp.response.applied_events,
                                             attempt,
                                             elapsed_ms = elapsed.as_millis() as u64,
-                                            "applied and committed cache-state Kafka event-stream record"
+                                            "applied and checkpointed cache-state Kafka event-stream record"
                                         );
                                         completed = true;
                                         break;
@@ -1095,7 +1100,7 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                                             max_attempts,
                                             elapsed_ms = elapsed.as_millis() as u64,
                                             error = %err,
-                                            "failed to apply or commit cache-state Kafka event-stream record"
+                                            "failed to apply or checkpoint cache-state Kafka event-stream record"
                                         );
                                         if attempt < max_attempts {
                                             tokio::time::sleep(retry_backoff).await;
@@ -1110,7 +1115,7 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                                     seq,
                                     partition,
                                     offset,
-                                    "stopping Kafka consumer with record offset uncommitted after bounded retries"
+                                    "stopping Kafka consumer with record offset not checkpointed after bounded retries"
                                 );
                                 break;
                             }
