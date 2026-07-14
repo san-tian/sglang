@@ -18,6 +18,7 @@ from sglang.srt.entrypoints.openai.protocol import (
 )
 from sglang.srt.entrypoints.openai.serving_responses import OpenAIServingResponses
 from sglang.srt.function_call.core_types import ToolCallItem
+from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=8, suite="base-a-test-cpu")
@@ -204,6 +205,120 @@ class ChatToolForwardingTestCase(unittest.TestCase):
         )
         result = asyncio.run(serving.create_responses(request, raw_request=None))
         self.assertEqual(getattr(result, "status_code", None), 400)
+
+
+class DisaggregatedBootstrapForwardingTestCase(unittest.TestCase):
+    def test_bootstrap_fields_reach_initial_generate_request(self):
+        serving = make_serving()
+        captured = {}
+        serving._process_messages = Mock(
+            return_value=MessageProcessingResult(
+                prompt="rendered prompt",
+                prompt_ids=[1, 2, 3],
+                image_data=None,
+                audio_data=None,
+                video_data=None,
+                modalities=[],
+                stop=[],
+            )
+        )
+
+        async def fake_generate(
+            request_id,
+            request_prompt,
+            adapted_request,
+            sampling_params,
+            context,
+            **kwargs,
+        ):
+            captured["adapted_request"] = adapted_request
+            context.append_output(
+                {
+                    "text": "done",
+                    "meta_info": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 1,
+                        "cached_tokens": 0,
+                    },
+                }
+            )
+            yield context
+
+        serving._generate_with_builtin_tools = fake_generate
+        request = ResponsesRequest(
+            model="x",
+            input="hello",
+            request_id="resp_pd",
+            bootstrap_host="10.0.0.10",
+            bootstrap_port=8998,
+            bootstrap_room=42,
+            store=False,
+        )
+
+        response = asyncio.run(serving.create_responses(request))
+
+        self.assertEqual(response.status, "completed")
+        adapted_request = captured["adapted_request"]
+        self.assertEqual(adapted_request.bootstrap_host, "10.0.0.10")
+        self.assertEqual(adapted_request.bootstrap_port, 8998)
+        self.assertEqual(adapted_request.bootstrap_room, 42)
+
+    def test_bootstrap_fields_survive_builtin_tool_continuation(self):
+        serving = make_serving()
+        generated_requests = []
+
+        class ToolLoopContext:
+            def __init__(self):
+                self.generation_count = 0
+
+            def append_output(self, output):
+                if isinstance(output, dict):
+                    self.generation_count += 1
+
+            def need_builtin_tool_call(self):
+                return self.generation_count == 1
+
+            async def call_tool(self):
+                return "tool result"
+
+            def render_for_completion(self):
+                return [4, 5, 6]
+
+        def generate_request(adapted_request, raw_request):
+            generated_requests.append(adapted_request)
+
+            async def generate():
+                yield {"text": "round complete"}
+
+            return generate()
+
+        serving.tokenizer_manager.generate_request = generate_request
+        initial_request = GenerateReqInput(
+            text="hello",
+            sampling_params={"max_new_tokens": 32},
+            rid="resp_pd",
+            bootstrap_host="10.0.0.10",
+            bootstrap_port=8998,
+            bootstrap_room=42,
+        )
+
+        async def consume():
+            async for _ in serving._generate_with_builtin_tools(
+                "resp_pd",
+                "hello",
+                initial_request,
+                {"max_new_tokens": 32},
+                ToolLoopContext(),
+            ):
+                pass
+
+        asyncio.run(consume())
+
+        self.assertEqual(len(generated_requests), 2)
+        continued_request = generated_requests[1]
+        self.assertEqual(continued_request.bootstrap_host, "10.0.0.10")
+        self.assertEqual(continued_request.bootstrap_port, 8998)
+        self.assertEqual(continued_request.bootstrap_room, 42)
 
 
 class InputItemNormalizationTestCase(unittest.TestCase):

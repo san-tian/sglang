@@ -1520,6 +1520,11 @@ class ResponsesRequest(BaseModel):
         default=None, description="Cache salt for request caching"
     )
 
+    # Disaggregated Prefill bootstrap fields.
+    bootstrap_host: Optional[str] = None
+    bootstrap_port: Optional[int] = None
+    bootstrap_room: Optional[int] = None
+
     # SGLang sampling extras. ``None`` defers to ``--preferred-sampling-params``.
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
