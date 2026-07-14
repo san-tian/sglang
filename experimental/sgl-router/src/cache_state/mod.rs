@@ -79,6 +79,12 @@ pub struct CacheStateKvEventsResponse {
     pub applied_events: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheStateStreamApplyOutcome {
+    pub response: CacheStateKvEventsResponse,
+    pub record_kind: &'static str,
+}
+
 #[derive(Debug, Clone)]
 pub struct CacheStateService {
     tree: Arc<HashTree>,
@@ -220,6 +226,10 @@ struct ReconciliationMetrics {
     snapshots_failed: AtomicU64,
     reconciliation_duration_micros: AtomicU64,
     reconciliation_duration_count: AtomicU64,
+    stream_apply_commit_success_micros: AtomicU64,
+    stream_apply_commit_success_count: AtomicU64,
+    stream_apply_commit_failure_micros: AtomicU64,
+    stream_apply_commit_failure_count: AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -281,8 +291,31 @@ impl CacheStateService {
         &self,
         req: &CacheStateKvEventsRequest,
     ) -> Result<CacheStateKvEventsResponse, CacheStateError> {
-        let worker = KvWorkerId::new(req.worker_url.clone(), req.dp_rank);
-        let payload = match decode_base64(&req.payload_b64) {
+        self.apply_kv_payload(&req.worker_url, req.dp_rank, req.seq, &req.payload_b64)
+            .map(|outcome| outcome.response)
+    }
+
+    pub fn apply_stream_record(
+        &self,
+        record: &KvEventStreamRecord,
+    ) -> Result<CacheStateStreamApplyOutcome, CacheStateError> {
+        self.apply_kv_payload(
+            &record.worker_url,
+            record.dp_rank,
+            record.seq,
+            &record.payload_b64,
+        )
+    }
+
+    fn apply_kv_payload(
+        &self,
+        worker_url: &str,
+        dp_rank: u32,
+        seq: i64,
+        payload_b64: &str,
+    ) -> Result<CacheStateStreamApplyOutcome, CacheStateError> {
+        let worker = KvWorkerId::new(worker_url.to_string(), dp_rank);
+        let payload = match decode_base64(payload_b64) {
             Ok(payload) => payload,
             Err(err) => {
                 self.mark_worker_untrusted(&worker);
@@ -296,13 +329,19 @@ impl CacheStateService {
                 return Err(CacheStateError::BadMsgpack(err));
             }
         };
-        if self.reconciliation_config.enabled && batch.publisher_epoch.is_some() {
+        let record_kind = cache_state_record_kind(&batch);
+        let response = if self.reconciliation_config.enabled && batch.publisher_epoch.is_some() {
             let payload_hash = sha256_hex(&payload);
-            return self.apply_reconciled_batch(&worker, req.seq, payload_hash, &batch);
-        }
+            self.apply_reconciled_batch(&worker, seq, payload_hash, &batch)?
+        } else {
+            CacheStateKvEventsResponse {
+                applied_events: self.apply_legacy_events(&worker, &batch),
+            }
+        };
 
-        Ok(CacheStateKvEventsResponse {
-            applied_events: self.apply_legacy_events(&worker, &batch),
+        Ok(CacheStateStreamApplyOutcome {
+            response,
+            record_kind,
         })
     }
 
@@ -496,6 +535,31 @@ impl CacheStateService {
         }
     }
 
+    pub fn record_stream_apply_commit(&self, duration: Duration, success: bool) {
+        let duration_micros = duration.as_micros().min(u128::from(u64::MAX)) as u64;
+        let (sum, count) = if success {
+            (
+                &self
+                    .reconciliation_metrics
+                    .stream_apply_commit_success_micros,
+                &self
+                    .reconciliation_metrics
+                    .stream_apply_commit_success_count,
+            )
+        } else {
+            (
+                &self
+                    .reconciliation_metrics
+                    .stream_apply_commit_failure_micros,
+                &self
+                    .reconciliation_metrics
+                    .stream_apply_commit_failure_count,
+            )
+        };
+        sum.fetch_add(duration_micros, Ordering::Relaxed);
+        count.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn reconciliation_metrics_text(&self) -> String {
         let store = self.reconciliation.lock();
         let trusted = store.workers.values().filter(|state| state.trusted).count();
@@ -517,6 +581,11 @@ impl CacheStateService {
                 "# TYPE sgl_router_cache_state_reconciliation_duration_seconds summary\n",
                 "sgl_router_cache_state_reconciliation_duration_seconds_sum {:.6}\n",
                 "sgl_router_cache_state_reconciliation_duration_seconds_count {}\n",
+                "# TYPE sgl_router_cache_state_stream_apply_commit_duration_seconds summary\n",
+                "sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{{outcome=\"success\"}} {:.6}\n",
+                "sgl_router_cache_state_stream_apply_commit_duration_seconds_count{{outcome=\"success\"}} {}\n",
+                "sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{{outcome=\"failure\"}} {:.6}\n",
+                "sgl_router_cache_state_stream_apply_commit_duration_seconds_count{{outcome=\"failure\"}} {}\n",
                 "# TYPE sgl_router_cache_state_trusted_worker_ranks gauge\n",
                 "sgl_router_cache_state_trusted_worker_ranks {}\n",
                 "# TYPE sgl_router_cache_state_untrusted_worker_ranks gauge\n",
@@ -536,6 +605,20 @@ impl CacheStateService {
             metrics
                 .reconciliation_duration_count
                 .load(Ordering::Relaxed),
+            metrics
+                .stream_apply_commit_success_micros
+                .load(Ordering::Relaxed) as f64
+                / 1_000_000.0,
+            metrics
+                .stream_apply_commit_success_count
+                .load(Ordering::Relaxed),
+            metrics
+                .stream_apply_commit_failure_micros
+                .load(Ordering::Relaxed) as f64
+                / 1_000_000.0,
+            metrics
+                .stream_apply_commit_failure_count
+                .load(Ordering::Relaxed),
             trusted,
             untrusted,
         )
@@ -551,14 +634,8 @@ impl CacheStateService {
             if !seen.insert(record.dedupe_key()) {
                 continue;
             }
-            let resp = self.apply_kv_events(&CacheStateKvEventsRequest {
-                model_id: record.model_id.clone(),
-                worker_url: record.worker_url.clone(),
-                dp_rank: record.dp_rank,
-                seq: record.seq,
-                payload_b64: record.payload_b64.clone(),
-            })?;
-            applied_events += resp.applied_events;
+            let outcome = self.apply_stream_record(record)?;
+            applied_events += outcome.response.applied_events;
         }
         Ok(CacheStateKvEventsResponse { applied_events })
     }
@@ -579,6 +656,16 @@ impl CacheStateService {
             .route("/v1/cache_state/insert", post(insert_prefix))
             .route("/v1/cache_state/kv_events", post(kv_events))
             .with_state(state)
+    }
+}
+
+fn cache_state_record_kind(batch: &KvEventBatch) -> &'static str {
+    match batch.reconciliation.as_ref() {
+        Some(CacheStateReconciliationRecord::Digest(_)) => "digest",
+        Some(CacheStateReconciliationRecord::SnapshotStart(_)) => "snapshot_start",
+        Some(CacheStateReconciliationRecord::SnapshotChunk(_)) => "snapshot_chunk",
+        Some(CacheStateReconciliationRecord::SnapshotEnd(_)) => "snapshot_end",
+        None => "mutations",
     }
 }
 
@@ -938,7 +1025,10 @@ async fn kv_events(
     Json(req): Json<CacheStateKvEventsRequest>,
 ) -> Result<Json<CacheStateKvEventsResponse>, CacheStateError> {
     require_auth(&state, &headers)?;
-    state.service.apply_kv_events(&req).map(Json)
+    tokio::task::spawn_blocking(move || state.service.apply_kv_events(&req))
+        .await
+        .map_err(|err| CacheStateError::Internal(format!("KV event apply task failed: {err}")))?
+        .map(Json)
 }
 
 #[derive(Debug)]
@@ -947,6 +1037,7 @@ pub enum CacheStateError {
     BadBase64(String),
     BadMsgpack(DecodeError),
     Reconciliation(String),
+    Internal(String),
 }
 
 impl IntoResponse for CacheStateError {
@@ -965,6 +1056,7 @@ impl IntoResponse for CacheStateError {
                 StatusCode::CONFLICT,
                 format!("cache-state reconciliation rejected record: {err}"),
             ),
+            Self::Internal(err) => (StatusCode::INTERNAL_SERVER_ERROR, err),
         };
         (status, message).into_response()
     }
@@ -1415,6 +1507,27 @@ mod tests {
         assert!(metrics.contains("sgl_router_cache_state_sequence_gaps_total 1"));
         assert!(metrics.contains(r#"sgl_router_cache_state_snapshots_total{outcome="success"} 1"#));
         assert!(metrics.contains("sgl_router_cache_state_trusted_worker_ranks 1"));
+    }
+
+    #[test]
+    fn stream_apply_commit_metrics_report_bounded_outcomes() {
+        let service = CacheStateService::with_empty_tree();
+        service.record_stream_apply_commit(Duration::from_millis(1500), true);
+        service.record_stream_apply_commit(Duration::from_millis(250), false);
+
+        let metrics = service.reconciliation_metrics_text();
+        assert!(metrics.contains(
+            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{outcome="success"} 1.500000"#
+        ));
+        assert!(metrics.contains(
+            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_count{outcome="success"} 1"#
+        ));
+        assert!(metrics.contains(
+            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_sum{outcome="failure"} 0.250000"#
+        ));
+        assert!(metrics.contains(
+            r#"sgl_router_cache_state_stream_apply_commit_duration_seconds_count{outcome="failure"} 1"#
+        ));
     }
 
     #[test]

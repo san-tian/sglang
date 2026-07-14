@@ -40,7 +40,7 @@
 //! can be deep — the recursive form would risk stack-overflow for
 //! pathological inputs).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -806,33 +806,45 @@ impl HashTree {
 
 fn order_snapshot_entries(entries: &[(Option<i64>, i64)]) -> Option<Vec<(Option<i64>, i64)>> {
     let mut unique = HashSet::with_capacity(entries.len());
-    if entries.iter().any(|entry| !unique.insert(*entry)) {
-        return None;
-    }
-
-    let mut pending = entries.to_vec();
-    let mut ordered = Vec::with_capacity(entries.len());
-    let mut resolved_hashes = HashSet::with_capacity(entries.len());
-    while !pending.is_empty() {
-        let before = pending.len();
-        let mut index = 0;
-        while index < pending.len() {
-            let (parent_hash, block_hash) = pending[index];
-            if parent_hash.is_none()
-                || parent_hash.is_some_and(|parent| resolved_hashes.contains(&parent))
-            {
-                ordered.push((parent_hash, block_hash));
-                resolved_hashes.insert(block_hash);
-                pending.swap_remove(index);
-            } else {
-                index += 1;
-            }
-        }
-        if pending.len() == before {
+    let mut roots = Vec::new();
+    let mut children_by_parent: HashMap<i64, Vec<(Option<i64>, i64)>> = HashMap::new();
+    for &(parent_hash, block_hash) in entries {
+        let entry = (parent_hash, block_hash);
+        if !unique.insert(entry) {
             return None;
         }
+        match parent_hash {
+            Some(parent_hash) => children_by_parent
+                .entry(parent_hash)
+                .or_default()
+                .push(entry),
+            None => roots.push(entry),
+        }
     }
-    Some(ordered)
+
+    let mut ordered = Vec::with_capacity(entries.len());
+    let mut resolved_hashes = HashSet::with_capacity(entries.len());
+    let mut ready_hashes = VecDeque::new();
+    for entry @ (_, block_hash) in roots {
+        ordered.push(entry);
+        if resolved_hashes.insert(block_hash) {
+            ready_hashes.push_back(block_hash);
+        }
+    }
+
+    while let Some(parent_hash) = ready_hashes.pop_front() {
+        let Some(children) = children_by_parent.remove(&parent_hash) else {
+            continue;
+        };
+        for entry @ (_, block_hash) in children {
+            ordered.push(entry);
+            if resolved_hashes.insert(block_hash) {
+                ready_hashes.push_back(block_hash);
+            }
+        }
+    }
+
+    (ordered.len() == entries.len()).then_some(ordered)
 }
 
 // ---------------------------------------------------------------------------
@@ -1293,5 +1305,41 @@ mod tests {
         let a = worker("http://a", 0);
         assert!(!tree.replace_worker(&a, &[(None, 1), (None, 1)]));
         assert_eq!(tree.node_count(), 0);
+    }
+
+    #[test]
+    fn reverse_ordered_deep_snapshot_is_resolved_without_repeated_full_scans() {
+        const ENTRY_COUNT: i64 = 20_000;
+        let entries: Vec<_> = (0..ENTRY_COUNT)
+            .rev()
+            .map(|block_hash| {
+                let parent_hash = (block_hash > 0).then_some(block_hash - 1);
+                (parent_hash, block_hash)
+            })
+            .collect();
+
+        let ordered = order_snapshot_entries(&entries).expect("valid chain must resolve");
+        assert_eq!(ordered.len(), entries.len());
+        assert_eq!(ordered.first(), Some(&(None, 0)));
+        assert_eq!(
+            ordered.last(),
+            Some(&(Some(ENTRY_COUNT - 2), ENTRY_COUNT - 1))
+        );
+    }
+
+    #[test]
+    fn snapshot_ordering_keeps_distinct_edges_with_a_shared_block_hash() {
+        let entries = [
+            (Some(7), 8),
+            (Some(1), 7),
+            (None, 2),
+            (Some(2), 7),
+            (None, 1),
+        ];
+        let ordered = order_snapshot_entries(&entries).expect("shared hashes are valid");
+        assert_eq!(ordered.len(), entries.len());
+        for entry in entries {
+            assert!(ordered.contains(&entry));
+        }
     }
 }

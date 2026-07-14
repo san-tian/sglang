@@ -286,6 +286,21 @@ pub fn apply_then_commit<T>(
     Ok(result)
 }
 
+pub async fn apply_then_commit_blocking<T, Apply, Commit>(
+    pending: Arc<PendingKafkaRecord>,
+    apply: Apply,
+    commit: Commit,
+) -> Result<T>
+where
+    T: Send + 'static,
+    Apply: FnOnce(&KvEventStreamRecord) -> Result<T> + Send + 'static,
+    Commit: FnOnce(&PendingKafkaRecord) -> Result<()> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || apply_then_commit(pending.as_ref(), apply, commit))
+        .await
+        .context("join blocking Kafka KV event apply-and-commit task")?
+}
+
 impl LocalKvEventStream {
     pub fn new(config: LocalKvEventStreamConfig) -> Self {
         Self {
@@ -430,7 +445,8 @@ pub fn encode_base64(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn append_and_replay_records() {
@@ -507,6 +523,72 @@ mod tests {
         assert_eq!(commits.load(Ordering::Relaxed), 1);
         assert_eq!(next_kafka_offset(pending.offset).unwrap(), 42);
         assert!(next_kafka_offset(i64::MAX).is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_apply_and_commit_does_not_starve_single_thread_runtime() {
+        let pending = PendingKafkaRecord {
+            record: KvEventStreamRecord::from_payload(
+                "m".into(),
+                "http://worker".into(),
+                0,
+                1,
+                b"payload",
+            ),
+            topic: "events".into(),
+            partition: 2,
+            offset: 41,
+        };
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let commits = Arc::new(AtomicUsize::new(0));
+
+        let watchdog_started = Arc::clone(&started);
+        let watchdog_release = Arc::clone(&release);
+        let watchdog = std::thread::spawn(move || {
+            while !watchdog_started.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            for _ in 0..100 {
+                if watchdog_release.load(Ordering::Acquire) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            watchdog_release.store(true, Ordering::Release);
+        });
+
+        let apply_started = Arc::clone(&started);
+        let apply_release = Arc::clone(&release);
+        let commit_count = Arc::clone(&commits);
+        let operation = tokio::spawn(apply_then_commit_blocking(
+            Arc::new(pending),
+            move |_| {
+                apply_started.store(true, Ordering::Release);
+                while !apply_release.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Ok(7usize)
+            },
+            move |_| {
+                commit_count.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            },
+        ));
+
+        let wait_started = std::time::Instant::now();
+        while !started.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            wait_started.elapsed() < Duration::from_millis(500),
+            "blocking apply ran on and starved the current-thread runtime"
+        );
+        release.store(true, Ordering::Release);
+
+        assert_eq!(operation.await.unwrap().unwrap(), 7);
+        assert_eq!(commits.load(Ordering::Relaxed), 1);
+        watchdog.join().unwrap();
     }
 
     #[test]
