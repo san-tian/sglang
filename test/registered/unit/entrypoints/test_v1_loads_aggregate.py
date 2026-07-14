@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import msgspec.msgpack
 
@@ -65,7 +66,56 @@ class _FakeHttpTokenizerManager:
         return results
 
 
+class _FakeLegacyLoadTokenizerManager:
+    def __init__(self):
+        self.server_args = SimpleNamespace(disaggregation_mode="prefill")
+        self.requested_include = None
+
+    async def get_loads(self, include=None):
+        self.requested_include = include
+        return [
+            SimpleNamespace(
+                dp_rank=0,
+                num_running_reqs=2,
+                num_waiting_reqs=3,
+                num_waiting_uncached_tokens=400,
+                num_total_tokens=1000,
+                num_used_tokens=200,
+                has_prefill_queue=1,
+                prefill_queue_detail_complete=True,
+                prefill_queue_chunked_remaining_uncached_tokens=64,
+                prefill_queue_work_bucket_bounds=(256, 1024),
+                prefill_queue_priority_scheduling_enabled=True,
+                prefill_queue_schedule_low_priority_values_first=False,
+                prefill_queue_priority_values=(0,),
+                prefill_queue_priority_total_uncached_tokens=(400,),
+                prefill_queue_priority_ahead_uncached_tokens=((100, 400),),
+            )
+        ]
+
+
 class TestLoadsResponse(CustomTestCase):
+    def test_legacy_get_load_requests_and_exports_prefill_queue(self):
+        from sglang.srt.entrypoints import http_server
+
+        manager = _FakeLegacyLoadTokenizerManager()
+        with patch.object(
+            http_server,
+            "_global_state",
+            SimpleNamespace(tokenizer_manager=manager),
+        ):
+            response = asyncio.run(http_server.get_load())
+
+        self.assertEqual(manager.requested_include, ["core", "prefill_queue"])
+        self.assertEqual(response[0]["num_reqs"], 5)
+        self.assertEqual(response[0]["num_running_reqs"], 2)
+        self.assertEqual(response[0]["num_waiting_uncached_tokens"], 400)
+        self.assertEqual(response[0]["load_role"], "prefill")
+        self.assertEqual(
+            response[0]["prefill_queue"]["priority_ahead_uncached_tokens"],
+            ((100, 400),),
+        )
+
     def test_response_omits_server_side_aggregate_and_redundant_fields(self):
         manager = _FakeHttpTokenizerManager(
             [
@@ -158,6 +208,15 @@ class TestGetLoads(CustomTestCase):
                     queue_grammar=1,
                     queue_paused=0,
                     queue_retracted=3,
+                    has_prefill_queue=1,
+                    prefill_queue_detail_complete=True,
+                    prefill_queue_chunked_remaining_uncached_tokens=64,
+                    prefill_queue_work_bucket_bounds=(256, 1024),
+                    prefill_queue_priority_scheduling_enabled=True,
+                    prefill_queue_schedule_low_priority_values_first=False,
+                    prefill_queue_priority_values=(0,),
+                    prefill_queue_priority_total_uncached_tokens=(500,),
+                    prefill_queue_priority_ahead_uncached_tokens=((100, 500),),
                 )
             )
 
@@ -175,6 +234,13 @@ class TestGetLoads(CustomTestCase):
             d_all = loads_all[0].to_dict()
             self.assertIn("disaggregation", d_all)
             self.assertIn("queues", d_all)
+            self.assertEqual(
+                d_all["prefill_queue"]["chunked_remaining_uncached_tokens"], 64
+            )
+            self.assertEqual(
+                d_all["prefill_queue"]["priority_ahead_uncached_tokens"],
+                ((100, 500),),
+            )
         finally:
             reader.close()
             writer.close()

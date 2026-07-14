@@ -716,11 +716,20 @@ class ServerArgs:
                 "fcfs",
                 "dfs-weight",
                 "lof",
+                "prefill-length-aware",
                 "priority",
                 "routing-key",
             ],
         ),
     ] = "fcfs"
+    prefill_length_aware_aging_rate: A[
+        float,
+        "Uncached prefill tokens removed from a waiting request's scheduling work score per second when --schedule-policy prefill-length-aware is selected.",
+    ] = 256.0
+    prefill_length_aware_max_wait_seconds: A[
+        float,
+        "Maximum queue wait before a request enters the same-priority FCFS overdue class when --schedule-policy prefill-length-aware is selected.",
+    ] = 30.0
     enable_priority_scheduling: A[
         bool,
         "Enable priority scheduling. Requests with higher priority integer values will be scheduled first by default.",
@@ -2571,6 +2580,7 @@ class ServerArgs:
         self._handle_ssl_validation()
         # Validate transcription/ASR-specific server args (model-independent).
         self._handle_asr_validation()
+        self._validate_prefill_length_aware_args()
 
         # Validate PD disaggregation flags early (before dummy-model short-circuit).
         from sglang.srt.arg_groups.pd_disaggregation_hook import (
@@ -6937,6 +6947,29 @@ class ServerArgs:
             self._mamba_cache_chunk_size = max(chunk_size, self.page_size)
         return self._mamba_cache_chunk_size
 
+    def _validate_prefill_length_aware_args(self) -> None:
+        if (
+            self.schedule_policy == "prefill-length-aware"
+            and self.disaggregation_mode == "decode"
+        ):
+            raise ValueError(
+                "--schedule-policy prefill-length-aware cannot be used by a decode-only worker"
+            )
+        if (
+            not math.isfinite(self.prefill_length_aware_aging_rate)
+            or self.prefill_length_aware_aging_rate < 0
+        ):
+            raise ValueError(
+                "--prefill-length-aware-aging-rate must be finite and non-negative"
+            )
+        if (
+            not math.isfinite(self.prefill_length_aware_max_wait_seconds)
+            or self.prefill_length_aware_max_wait_seconds <= 0
+        ):
+            raise ValueError(
+                "--prefill-length-aware-max-wait-seconds must be finite and greater than 0"
+            )
+
     def check_server_args(self):
         # Check parallel size constraints
         assert (
@@ -7040,7 +7073,8 @@ class ServerArgs:
             assert self.schedule_policy in [
                 "fcfs",
                 "lof",
-            ], f"To use priority scheduling, schedule_policy must be 'fcfs' or 'lof'. '{self.schedule_policy}' is not supported."
+                "prefill-length-aware",
+            ], f"To use priority scheduling, schedule_policy must be 'fcfs', 'lof', or 'prefill-length-aware'. '{self.schedule_policy}' is not supported."
             if self.default_priority_value is None:
                 logger.warning(
                     "--default-priority-value is not set while --enable-priority-scheduling is enabled. "
@@ -7056,6 +7090,8 @@ class ServerArgs:
                 logger.warning(
                     "--default-priority-value has no effect without --enable-priority-scheduling"
                 )
+
+        self._validate_prefill_length_aware_args()
 
         # Check hisparse
         from sglang.srt.arg_groups.hisparse_hook import validate_hisparse

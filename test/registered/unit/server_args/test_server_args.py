@@ -70,6 +70,57 @@ class TestPrepareServerArgs(CustomTestCase):
         finally:
             os.unlink(config_file)
 
+    def test_prefill_length_aware_cli_args(self):
+        server_args = prepare_server_args(
+            [
+                "--model-path",
+                "dummy",
+                "--schedule-policy",
+                "prefill-length-aware",
+                "--prefill-length-aware-aging-rate",
+                "512",
+                "--prefill-length-aware-max-wait-seconds",
+                "45",
+            ]
+        )
+
+        self.assertEqual(server_args.schedule_policy, "prefill-length-aware")
+        self.assertEqual(server_args.prefill_length_aware_aging_rate, 512.0)
+        self.assertEqual(server_args.prefill_length_aware_max_wait_seconds, 45.0)
+
+    def test_prefill_length_aware_args_must_be_finite_and_valid(self):
+        cases = (
+            (
+                {"prefill_length_aware_aging_rate": -1.0},
+                "aging-rate must be finite and non-negative",
+            ),
+            (
+                {"prefill_length_aware_aging_rate": float("inf")},
+                "aging-rate must be finite and non-negative",
+            ),
+            (
+                {"prefill_length_aware_max_wait_seconds": 0.0},
+                "max-wait-seconds must be finite and greater than 0",
+            ),
+            (
+                {"prefill_length_aware_max_wait_seconds": float("nan")},
+                "max-wait-seconds must be finite and greater than 0",
+            ),
+            (
+                {
+                    "schedule_policy": "prefill-length-aware",
+                    "disaggregation_mode": "decode",
+                },
+                "cannot be used by a decode-only worker",
+            ),
+        )
+
+        for kwargs, message in cases:
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
+                ValueError, message
+            ):
+                ServerArgs(model_path="dummy", **kwargs)
+
 
 class TestMambaCacheStochasticRounding(unittest.TestCase):
     def test_rejects_fp32_ssm_cache(self):

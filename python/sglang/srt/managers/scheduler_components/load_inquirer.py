@@ -12,8 +12,14 @@ from sglang.srt.managers.io_struct import (
     GetLoadsReqOutput,
     LoRAMetrics,
     MemoryMetrics,
+    PrefillQueueMetrics,
     QueueMetrics,
     SpeculativeMetrics,
+)
+from sglang.srt.managers.schedule_policy import (
+    PREFILL_QUEUE_PRIORITY_GROUP_LIMIT,
+    PREFILL_WORK_BUCKET_BOUNDS,
+    prefill_length_aware_request_state,
 )
 
 if TYPE_CHECKING:
@@ -28,6 +34,61 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def build_prefill_queue_metrics(
+    waiting_queue,
+    chunked_req,
+    *,
+    now: float,
+    aging_rate: float,
+    max_wait_seconds: float,
+    priority_scheduling_enabled: bool,
+    schedule_low_priority_values_first: bool,
+) -> PrefillQueueMetrics:
+    """Compress waiting work into bounded priority and effective-work buckets."""
+    groups = {}
+    detail_complete = True
+    for req in waiting_queue:
+        priority = (
+            req.priority
+            if priority_scheduling_enabled and req.priority is not None
+            else 0
+        )
+        if priority not in groups:
+            if len(groups) >= PREFILL_QUEUE_PRIORITY_GROUP_LIMIT:
+                detail_complete = False
+                groups.clear()
+                break
+            groups[priority] = [0, [0] * len(PREFILL_WORK_BUCKET_BOUNDS)]
+
+        uncached_tokens, effective_work, overdue = prefill_length_aware_request_state(
+            req, now, aging_rate, max_wait_seconds
+        )
+        group = groups[priority]
+        group[0] += uncached_tokens
+        for index, upper_bound in enumerate(PREFILL_WORK_BUCKET_BOUNDS):
+            if overdue or effective_work <= upper_bound:
+                group[1][index] += uncached_tokens
+
+    priority_values = tuple(sorted(groups)) if detail_complete else ()
+    chunked_remaining = (
+        max(0, chunked_req.seqlen - len(chunked_req.prefix_indices))
+        if chunked_req is not None
+        else 0
+    )
+    return PrefillQueueMetrics(
+        detail_complete=detail_complete,
+        chunked_remaining_uncached_tokens=chunked_remaining,
+        work_bucket_bounds=PREFILL_WORK_BUCKET_BOUNDS,
+        priority_scheduling_enabled=priority_scheduling_enabled,
+        schedule_low_priority_values_first=schedule_low_priority_values_first,
+        priority_values=priority_values,
+        priority_total_uncached_tokens=tuple(groups[p][0] for p in priority_values),
+        priority_ahead_uncached_tokens=tuple(
+            tuple(groups[p][1]) for p in priority_values
+        ),
+    )
 
 
 @dataclass(kw_only=True, slots=True, frozen=True)
@@ -76,10 +137,15 @@ class SchedulerLoadInquirer:
         """Get uncached input tokens waiting for prefill compute."""
         if self.disaggregation_mode == DisaggregationMode.DECODE:
             return 0
+
+        waiting_queues = [self.get_waiting_queue()]
+        if self.disaggregation_mode == DisaggregationMode.PREFILL:
+            waiting_queues.append(self.get_disagg_prefill_bootstrap_queue().queue)
+
         num_tokens = 0
-        for req in self.get_waiting_queue():
-            # if match-in-waiting-queue disabled, this metric returns seq_lens
-            num_tokens += max(0, req.seqlen - req.num_matched_prefix_tokens)
+        for queue in waiting_queues:
+            for req in queue:
+                num_tokens += max(0, req.seqlen - req.num_matched_prefix_tokens)
         cr = self.get_chunked_req()
         if cr is not None:
             num_tokens += max(0, cr.seqlen - len(cr.prefix_indices))
@@ -212,6 +278,24 @@ class SchedulerLoadInquirer:
                 retracted=self.get_stats().num_retracted_reqs,
             )
 
+        prefill_queue = None
+        if (
+            (include_all or "prefill_queue" in include)
+            and self.server_args.schedule_policy == "prefill-length-aware"
+            and self.disaggregation_mode != DisaggregationMode.DECODE
+        ):
+            prefill_queue = build_prefill_queue_metrics(
+                self.get_waiting_queue(),
+                self.get_chunked_req(),
+                now=time.perf_counter(),
+                aging_rate=self.server_args.prefill_length_aware_aging_rate,
+                max_wait_seconds=self.server_args.prefill_length_aware_max_wait_seconds,
+                priority_scheduling_enabled=self.server_args.enable_priority_scheduling,
+                schedule_low_priority_values_first=(
+                    self.server_args.schedule_low_priority_values_first
+                ),
+            )
+
         return GetLoadsReqOutput(
             dp_rank=self.ps.dp_rank,
             timestamp=time.time(),
@@ -231,4 +315,5 @@ class SchedulerLoadInquirer:
             lora=lora,
             disaggregation=disaggregation,
             queues=queues,
+            prefill_queue=prefill_queue,
         )
