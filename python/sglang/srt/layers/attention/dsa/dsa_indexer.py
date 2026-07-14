@@ -23,6 +23,7 @@ from sglang.srt.layers.attention.dsa.utils import (
 from sglang.srt.layers.dp_attention import attn_tp_all_gather_into_tensor
 from sglang.srt.layers.layernorm import LayerNorm
 from sglang.srt.layers.quantization.fp8_kernel import fp8_dtype, is_fp8_fnuz
+from sglang.srt.layers.rotary_embedding.utils import canonicalize_rope_positions
 from sglang.srt.layers.utils import MultiPlatformOp
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
     eager_on_graph,
@@ -562,7 +563,9 @@ class Indexer(MultiPlatformOp):
                 key, [self.rope_head_dim, self.head_dim - self.rope_head_dim], dim=-1
             )
 
-        q_rope, k_rope = self.rotary_emb(positions, q_rope, k_rope)
+        q_rope, k_rope = self.rotary_emb(
+            canonicalize_rope_positions(positions), q_rope, k_rope
+        )
 
         self._update_rope_guarded(query[..., : self.rope_head_dim], q_rope)
         self._update_rope_guarded(key[..., : self.rope_head_dim], k_rope)
@@ -621,7 +624,9 @@ class Indexer(MultiPlatformOp):
             key, [self.rope_head_dim, self.head_dim - self.rope_head_dim], dim=-1
         )
 
-        _, k_rope = self.rotary_emb(positions, k_rope, k_rope)
+        _, k_rope = self.rotary_emb(
+            canonicalize_rope_positions(positions), k_rope, k_rope
+        )
         self._update_rope_guarded(key[..., : self.rope_head_dim], k_rope)
         key = rotate_activation(key)
 
