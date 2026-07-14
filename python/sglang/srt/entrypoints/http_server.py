@@ -104,6 +104,7 @@ from sglang.srt.entrypoints.openai.serving_tokenize import (
 from sglang.srt.entrypoints.openai.serving_transcription import (
     OpenAIServingTranscription,
 )
+from sglang.srt.entrypoints.request_headers import apply_header_overrides
 from sglang.srt.entrypoints.warmup import execute_warmups
 from sglang.srt.environ import envs
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
@@ -410,7 +411,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.middleware("http")
 async def sls_trace_context_middleware(request: Request, call_next):
     """Bind inbound trace identifiers to logs produced by this request."""
@@ -430,6 +430,13 @@ async def sls_trace_context_middleware(request: Request, call_next):
     finally:
         sls_filter.reset_context(context_tokens)
 
+
+if envs.SGLANG_ENABLE_REQUEST_DECOMPRESSION.get():
+    from sglang.srt.entrypoints.http_request_decompression import (
+        RequestDecompressionMiddleware,
+    )
+
+    app.add_middleware(RequestDecompressionMiddleware)
 
 # Include routers
 from sglang.srt.entrypoints.v1_loads import router as v1_loads_router
@@ -837,6 +844,8 @@ if os.environ.get("DUMPER_SERVER_PORT") == "reuse":
 )
 async def generate_request(obj: GenerateReqInput, request: Request):
     """Handle a generate request."""
+    if envs.SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES.get():
+        apply_header_overrides(obj, request.headers)
     if obj.stream:
 
         async def stream_results() -> AsyncIterator[bytes]:
