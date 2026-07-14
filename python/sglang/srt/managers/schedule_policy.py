@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 import os
 import random
+import time
 from collections import Counter, defaultdict
 from contextlib import contextmanager
 from enum import Enum, auto
@@ -147,6 +148,34 @@ class CacheAgnosticPolicy(Enum):
     LOF = "lof"  # longest output first
     RANDOM = "random"
     ROUTING_KEY = "routing-key"  # prioritize by routing key frequency in running batch
+    PREFILL_LENGTH_AWARE = "prefill-length-aware"
+
+
+PREFILL_WORK_BUCKET_BOUNDS = (
+    256,
+    1024,
+    4096,
+    16384,
+    65536,
+    262144,
+    1048576,
+    1 << 60,
+)
+PREFILL_QUEUE_PRIORITY_GROUP_LIMIT = 32
+
+
+def prefill_length_aware_request_state(
+    req: Req,
+    now: float,
+    aging_rate: float,
+    max_wait_seconds: float,
+) -> tuple[int, float, bool]:
+    """Return uncached tokens, aged work, and overdue status for one request."""
+    uncached_tokens = max(0, req.seqlen - req.num_matched_prefix_tokens)
+    entry_time = req.time_stats.wait_queue_entry_time
+    wait_seconds = max(0.0, now - entry_time) if entry_time > 0 else 0.0
+    effective_work = max(0.0, uncached_tokens - aging_rate * wait_seconds)
+    return uncached_tokens, effective_work, wait_seconds >= max_wait_seconds
 
 
 class SchedulePolicy:
@@ -159,6 +188,8 @@ class SchedulePolicy:
         enable_hierarchical_cache: bool,
         enable_priority_scheduling: bool,
         schedule_low_priority_values_first: bool,
+        prefill_length_aware_aging_rate: float = 256.0,
+        prefill_length_aware_max_wait_seconds: float = 30.0,
     ):
         self.policy = self._validate_and_adjust_policy(policy, tree_cache)
         self.tree_cache = tree_cache
@@ -166,6 +197,10 @@ class SchedulePolicy:
         self.enable_priority_scheduling = enable_priority_scheduling
         self.schedule_low_priority_values_first = schedule_low_priority_values_first
         self.priority_sign = 1 if schedule_low_priority_values_first else -1
+        self.prefill_length_aware_aging_rate = prefill_length_aware_aging_rate
+        self.prefill_length_aware_max_wait_seconds = (
+            prefill_length_aware_max_wait_seconds
+        )
 
         # It is used to find the matching prefix for in-batch prefix caching.
         self.waiting_queue_radix_tree = RadixCache.create_simulated()
@@ -177,8 +212,8 @@ class SchedulePolicy:
 
         # Populate req.num_matched_prefix_tokens at schedule time. Cache-aware policies
         # set it in _compute_prefix_matches; do the same full match for
-        # cache-agnostic policies when the radix supports it, so the load
-        # snapshot has it. Skip on decode (never prefills).
+        # cache-agnostic policies when the radix supports it, so load snapshots and
+        # the opt-in length-aware policy both use current uncached work.
         if (
             not isinstance(policy, CacheAwarePolicy)
             and self.tree_cache.supports_fast_match_prefix()
@@ -220,6 +255,8 @@ class SchedulePolicy:
             elif policy == CacheAgnosticPolicy.ROUTING_KEY:
                 if running_batch is not None:
                     SchedulePolicy._sort_by_routing_key(waiting_queue, running_batch)
+            elif policy == CacheAgnosticPolicy.PREFILL_LENGTH_AWARE:
+                self._sort_by_prefill_length_aware(waiting_queue)
             else:
                 raise ValueError(f"Unknown CacheAgnostic Policy: {policy=}")
 
@@ -365,6 +402,28 @@ class SchedulePolicy:
                 x.time_stats.wait_queue_entry_time,
             )
         )
+
+    def _sort_by_prefill_length_aware(self, waiting_queue: List[Req]) -> None:
+        now = time.perf_counter()
+
+        def sort_key(req: Req):
+            _, effective_work, overdue = prefill_length_aware_request_state(
+                req,
+                now,
+                self.prefill_length_aware_aging_rate,
+                self.prefill_length_aware_max_wait_seconds,
+            )
+            priority = (
+                (req.priority if req.priority is not None else 0) * self.priority_sign
+                if self.enable_priority_scheduling
+                else 0
+            )
+            entry_time = req.time_stats.wait_queue_entry_time
+            if overdue:
+                return (priority, 0, entry_time, 0.0)
+            return (priority, 1, effective_work, entry_time)
+
+        waiting_queue.sort(key=sort_key)
 
     @staticmethod
     def _sort_by_routing_key(

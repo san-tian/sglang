@@ -38,6 +38,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Tuple,
     Type,
     Union,
 )
@@ -2025,7 +2026,16 @@ class GetLoadsReqInput(BaseReq, kw_only=True):
     """Request for /v1/loads endpoint."""
 
     VALID_SECTIONS = frozenset(
-        {"core", "memory", "spec", "lora", "disagg", "queues", "all"}
+        {
+            "core",
+            "memory",
+            "spec",
+            "lora",
+            "disagg",
+            "queues",
+            "prefill_queue",
+            "all",
+        }
     )
 
     include: List[str] = msgspec.field(default_factory=lambda: ["all"])
@@ -2040,6 +2050,19 @@ class GetLoadsReqInput(BaseReq, kw_only=True):
                     f"Invalid include sections: {invalid}. "
                     f"Valid options: {sorted(self.VALID_SECTIONS)}"
                 )
+
+
+class PrefillQueueMetrics(msgspec.Struct, array_like=True):
+    """Bounded work-ahead summary for length-aware prefill scheduling."""
+
+    detail_complete: bool
+    chunked_remaining_uncached_tokens: int
+    work_bucket_bounds: Tuple[int, ...]
+    priority_scheduling_enabled: bool
+    schedule_low_priority_values_first: bool
+    priority_values: Tuple[int, ...]
+    priority_total_uncached_tokens: Tuple[int, ...]
+    priority_ahead_uncached_tokens: Tuple[Tuple[int, ...], ...]
 
 
 class GetLoadsReqOutput(BaseReq, kw_only=True):
@@ -2069,6 +2092,7 @@ class GetLoadsReqOutput(BaseReq, kw_only=True):
     lora: Optional[LoRAMetrics] = None
     disaggregation: Optional[DisaggregationMetrics] = None
     queues: Optional[QueueMetrics] = None
+    prefill_queue: Optional[PrefillQueueMetrics] = None
 
 
 class SetInjectDumpMetadataReqInput(BaseReq, kw_only=True):

@@ -1043,6 +1043,8 @@ class Scheduler(
             self.enable_hierarchical_cache,
             self.enable_priority_scheduling,
             self.schedule_low_priority_values_first,
+            self.server_args.prefill_length_aware_aging_rate,
+            self.server_args.prefill_length_aware_max_wait_seconds,
         )
         self.prefill_delayer: Optional[PrefillDelayer] = None
         self.max_prefill_bs: int = 0

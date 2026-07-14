@@ -759,19 +759,47 @@ async def get_load():
         "Endpoint '/get_load' is deprecated and will be removed in a future version. "
         "Please use '/v1/loads' instead."
     )
-    load_results = await _global_state.tokenizer_manager.get_loads(include=["core"])
+    load_results = await _global_state.tokenizer_manager.get_loads(
+        include=["core", "prefill_queue"]
+    )
     ts = time.perf_counter()
-    return [
-        {
+    load_role = _global_state.tokenizer_manager.server_args.disaggregation_mode
+    results = []
+    for r in load_results:
+        entry = {
             "dp_rank": r.dp_rank,
             "num_reqs": r.num_running_reqs + r.num_waiting_reqs,
+            "num_running_reqs": r.num_running_reqs,
             "num_waiting_reqs": r.num_waiting_reqs,
+            "num_waiting_uncached_tokens": r.num_waiting_uncached_tokens,
+            "load_role": load_role,
             "num_tokens": r.num_total_tokens,
             "num_pending_tokens": r.num_total_tokens - r.num_used_tokens,
             "ts_tic": ts,
         }
-        for r in load_results
-    ]
+        if r.has_prefill_queue:
+            entry["prefill_queue"] = {
+                "detail_complete": r.prefill_queue_detail_complete,
+                "chunked_remaining_uncached_tokens": (
+                    r.prefill_queue_chunked_remaining_uncached_tokens
+                ),
+                "work_bucket_bounds": r.prefill_queue_work_bucket_bounds,
+                "priority_scheduling_enabled": (
+                    r.prefill_queue_priority_scheduling_enabled
+                ),
+                "schedule_low_priority_values_first": (
+                    r.prefill_queue_schedule_low_priority_values_first
+                ),
+                "priority_values": r.prefill_queue_priority_values,
+                "priority_total_uncached_tokens": (
+                    r.prefill_queue_priority_total_uncached_tokens
+                ),
+                "priority_ahead_uncached_tokens": (
+                    r.prefill_queue_priority_ahead_uncached_tokens
+                ),
+            }
+        results.append(entry)
+    return results
 
 
 # example usage:
