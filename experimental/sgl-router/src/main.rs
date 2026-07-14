@@ -999,13 +999,20 @@ fn spawn_cache_state_kafka_consumer_if_configured(
     else {
         return Ok(None);
     };
-    let consumer = sgl_router::cache_event_stream::KafkaKvEventConsumer::new(config)?;
+    let consumer = Arc::new(sgl_router::cache_event_stream::KafkaKvEventConsumer::new(
+        config,
+    )?);
     let topic = consumer.topic().to_string();
     let max_attempts = env_u64("CACHE_STATE_KAFKA_APPLY_MAX_ATTEMPTS")?
         .unwrap_or(3)
         .max(1);
     let retry_backoff = std::time::Duration::from_millis(
         env_u64("CACHE_STATE_KAFKA_APPLY_RETRY_BACKOFF_MS")?.unwrap_or(250),
+    );
+    let slow_record_threshold = std::time::Duration::from_millis(
+        env_u64("CACHE_STATE_KAFKA_SLOW_RECORD_MS")?
+            .unwrap_or(1000)
+            .max(1),
     );
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
@@ -1017,26 +1024,61 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                 recv = consumer.recv() => {
                     match recv {
                         Ok(pending) => {
-                            let record = &pending.record;
+                            let pending = Arc::new(pending);
+                            let worker_url = pending.record.worker_url.clone();
+                            let dp_rank = pending.record.dp_rank;
+                            let seq = pending.record.seq;
+                            let partition = pending.partition;
+                            let offset = pending.offset;
                             let mut completed = false;
                             for attempt in 1..=max_attempts {
-                                let result = sgl_router::cache_event_stream::apply_then_commit(
-                                    &pending,
-                                    |record| {
-                                        service
-                                            .apply_stream_records(std::slice::from_ref(record))
+                                let pending_for_attempt = Arc::clone(&pending);
+                                let service_for_apply = Arc::clone(&service);
+                                let consumer_for_commit = Arc::clone(&consumer);
+                                let started_at = std::time::Instant::now();
+                                let result = sgl_router::cache_event_stream::apply_then_commit_blocking(
+                                    pending_for_attempt,
+                                    move |record| {
+                                        service_for_apply
+                                            .apply_stream_record(record)
                                             .map_err(|err| anyhow!("cache-state apply failed: {err:?}"))
                                     },
-                                    |pending| consumer.commit(pending),
-                                );
+                                    move |pending| consumer_for_commit.commit(pending),
+                                )
+                                .await;
+                                let elapsed = started_at.elapsed();
+                                let success = result.is_ok();
+                                let record_kind = result
+                                    .as_ref()
+                                    .map(|outcome| outcome.record_kind)
+                                    .unwrap_or("unknown");
+                                service.record_stream_apply_commit(elapsed, success);
+                                if elapsed >= slow_record_threshold {
+                                    tracing::warn!(
+                                        worker_url = %worker_url,
+                                        dp_rank,
+                                        seq,
+                                        partition,
+                                        offset,
+                                        attempt,
+                                        record_kind,
+                                        outcome = if success { "success" } else { "failure" },
+                                        elapsed_ms = elapsed.as_millis() as u64,
+                                        "slow cache-state Kafka apply-and-commit operation"
+                                    );
+                                }
                                 match result {
                                     Ok(resp) => {
                                         tracing::debug!(
-                                            worker_url = %record.worker_url,
-                                            dp_rank = record.dp_rank,
-                                            seq = record.seq,
-                                            applied_events = resp.applied_events,
+                                            worker_url = %worker_url,
+                                            dp_rank,
+                                            seq,
+                                            partition,
+                                            offset,
+                                            record_kind = resp.record_kind,
+                                            applied_events = resp.response.applied_events,
                                             attempt,
+                                            elapsed_ms = elapsed.as_millis() as u64,
                                             "applied and committed cache-state Kafka event-stream record"
                                         );
                                         completed = true;
@@ -1044,11 +1086,14 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                                     }
                                     Err(err) => {
                                         tracing::warn!(
-                                            worker_url = %record.worker_url,
-                                            dp_rank = record.dp_rank,
-                                            seq = record.seq,
+                                            worker_url = %worker_url,
+                                            dp_rank,
+                                            seq,
+                                            partition,
+                                            offset,
                                             attempt,
                                             max_attempts,
+                                            elapsed_ms = elapsed.as_millis() as u64,
                                             error = %err,
                                             "failed to apply or commit cache-state Kafka event-stream record"
                                         );
@@ -1060,9 +1105,11 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                             }
                             if !completed {
                                 tracing::error!(
-                                    worker_url = %record.worker_url,
-                                    dp_rank = record.dp_rank,
-                                    seq = record.seq,
+                                    worker_url = %worker_url,
+                                    dp_rank,
+                                    seq,
+                                    partition,
+                                    offset,
                                     "stopping Kafka consumer with record offset uncommitted after bounded retries"
                                 );
                                 break;
