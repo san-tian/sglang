@@ -1,16 +1,24 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use axum::extract::State;
+use axum::routing::get;
+use axum::Router;
 use clap::Parser;
 use reqwest::Client;
 use sgl_router::cache_event_stream::{
-    encode_base64, KafkaKvEventProducer, KafkaKvEventStreamConfig, KvEventStreamRecord,
-    LocalKvEventStream, LocalKvEventStreamConfig,
+    KafkaKvEventProducer, KafkaKvEventStreamConfig, KvEventStreamRecord, LocalKvEventStream,
+    LocalKvEventStreamConfig,
 };
 use sgl_router::cache_state::CacheStateKvEventsRequest;
 use sgl_router::policies::kv_events::tree::KvWorkerId;
 use sgl_router::policies::kv_events::wire::decode_event_batch;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use zeromq::{Socket, SocketRecv, SubSocket};
@@ -80,6 +88,44 @@ struct Args {
     )]
     post_timeout_ms: u64,
 
+    #[arg(
+        long,
+        env = "CACHE_EVENT_AGENT_SINK_QUEUE_CAPACITY",
+        default_value_t = 4096
+    )]
+    sink_queue_capacity: usize,
+
+    #[arg(long, env = "CACHE_EVENT_AGENT_SINK_MAX_ATTEMPTS", default_value_t = 3)]
+    sink_max_attempts: u32,
+
+    #[arg(
+        long,
+        env = "CACHE_EVENT_AGENT_SINK_RETRY_BACKOFF_MS",
+        default_value_t = 100
+    )]
+    sink_retry_backoff_ms: u64,
+
+    #[arg(
+        long,
+        env = "CACHE_EVENT_AGENT_SINK_DELIVERY_TIMEOUT_MS",
+        default_value_t = 10_000
+    )]
+    sink_delivery_timeout_ms: u64,
+
+    #[arg(
+        long,
+        env = "CACHE_EVENT_AGENT_MAX_SINK_PAYLOAD_BYTES",
+        default_value_t = 1024 * 1024
+    )]
+    max_sink_payload_bytes: usize,
+
+    #[arg(
+        long,
+        env = "CACHE_EVENT_AGENT_METRICS_BIND",
+        default_value = "127.0.0.1:9898"
+    )]
+    metrics_bind: SocketAddr,
+
     #[arg(long, env = "CACHE_EVENT_AGENT_LOG_LEVEL", default_value = "info")]
     log_level: String,
 }
@@ -99,6 +145,15 @@ async fn main() -> Result<()> {
     if args.dp_size == 0 {
         return Err(anyhow!("--dp-size must be greater than 0"));
     }
+    if args.sink_queue_capacity == 0
+        || args.sink_max_attempts == 0
+        || args.sink_delivery_timeout_ms == 0
+        || args.max_sink_payload_bytes == 0
+    {
+        return Err(anyhow!(
+            "sink queue, attempts, delivery timeout, and payload limit must be greater than zero"
+        ));
+    }
     let sinks = build_event_sinks(&args)?;
     let client = Client::builder()
         .timeout(Duration::from_millis(args.post_timeout_ms))
@@ -109,6 +164,15 @@ async fn main() -> Result<()> {
         .filter(|s| !s.is_empty());
     let cancel = CancellationToken::new();
     install_signal_handlers(cancel.clone())?;
+    let metrics = Arc::new(AgentMetrics::default());
+    let metrics_handle =
+        spawn_metrics_server(args.metrics_bind, Arc::clone(&metrics), cancel.clone()).await?;
+    let delivery_config = DeliveryConfig {
+        queue_capacity: args.sink_queue_capacity,
+        max_attempts: args.sink_max_attempts,
+        retry_backoff: Duration::from_millis(args.sink_retry_backoff_ms),
+        delivery_timeout: Duration::from_millis(args.sink_delivery_timeout_ms),
+    };
 
     info!(
         worker_url = %args.worker_url,
@@ -117,6 +181,10 @@ async fn main() -> Result<()> {
         port_base = args.port_base,
         dp_size = args.dp_size,
         sinks = %sinks.iter().map(EventSink::name).collect::<Vec<_>>().join(","),
+        metrics_bind = %args.metrics_bind,
+        sink_queue_capacity = args.sink_queue_capacity,
+        sink_max_attempts = args.sink_max_attempts,
+        max_sink_payload_bytes = args.max_sink_payload_bytes,
         "cache-event-agent starting",
     );
 
@@ -143,14 +211,21 @@ async fn main() -> Result<()> {
             topic: args.topic.clone(),
             dp_rank,
             cache_state_api_token: cache_state_api_token.clone(),
+            delivery_config,
+            max_sink_payload_bytes: args.max_sink_payload_bytes,
+            metrics: Arc::clone(&metrics),
             cancel: cancel.clone(),
         };
         handles.push(tokio::spawn(task.run()));
     }
 
     if handles.is_empty() {
+        cancel.cancel();
+        let _ = metrics_handle.await;
         return Err(anyhow!("no subscriber tasks were started"));
     }
+    cancel.cancel();
+    let _ = metrics_handle.await;
     for handle in handles {
         if let Err(err) = handle.await {
             error!(error = %err, "subscriber task panicked");
@@ -158,6 +233,143 @@ async fn main() -> Result<()> {
     }
     info!("cache-event-agent stopped");
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct AgentMetrics {
+    publisher_sequence_gaps: AtomicU64,
+    oversized_payloads: AtomicU64,
+    queue_drops_http: AtomicU64,
+    queue_drops_stream: AtomicU64,
+    queue_drops_kafka: AtomicU64,
+    delivery_failures_http: AtomicU64,
+    delivery_failures_stream: AtomicU64,
+    delivery_failures_kafka: AtomicU64,
+    deliveries_http: AtomicU64,
+    deliveries_stream: AtomicU64,
+    deliveries_kafka: AtomicU64,
+}
+
+impl AgentMetrics {
+    fn queue_drop(&self, kind: SinkKind) {
+        self.counter(kind, MetricKind::QueueDrop)
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn delivery_failure(&self, kind: SinkKind) {
+        self.counter(kind, MetricKind::DeliveryFailure)
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn delivery_success(&self, kind: SinkKind) {
+        self.counter(kind, MetricKind::DeliverySuccess)
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn counter(&self, kind: SinkKind, metric: MetricKind) -> &AtomicU64 {
+        match (kind, metric) {
+            (SinkKind::Http, MetricKind::QueueDrop) => &self.queue_drops_http,
+            (SinkKind::Stream, MetricKind::QueueDrop) => &self.queue_drops_stream,
+            (SinkKind::Kafka, MetricKind::QueueDrop) => &self.queue_drops_kafka,
+            (SinkKind::Http, MetricKind::DeliveryFailure) => &self.delivery_failures_http,
+            (SinkKind::Stream, MetricKind::DeliveryFailure) => &self.delivery_failures_stream,
+            (SinkKind::Kafka, MetricKind::DeliveryFailure) => &self.delivery_failures_kafka,
+            (SinkKind::Http, MetricKind::DeliverySuccess) => &self.deliveries_http,
+            (SinkKind::Stream, MetricKind::DeliverySuccess) => &self.deliveries_stream,
+            (SinkKind::Kafka, MetricKind::DeliverySuccess) => &self.deliveries_kafka,
+        }
+    }
+
+    fn render(&self) -> String {
+        format!(
+            concat!(
+                "# TYPE sgl_router_cache_event_agent_publisher_sequence_gaps_total counter\n",
+                "sgl_router_cache_event_agent_publisher_sequence_gaps_total {}\n",
+                "# TYPE sgl_router_cache_event_agent_oversized_payloads_total counter\n",
+                "sgl_router_cache_event_agent_oversized_payloads_total {}\n",
+                "# TYPE sgl_router_cache_event_agent_sink_queue_drops_total counter\n",
+                "sgl_router_cache_event_agent_sink_queue_drops_total{{sink=\"http\"}} {}\n",
+                "sgl_router_cache_event_agent_sink_queue_drops_total{{sink=\"stream\"}} {}\n",
+                "sgl_router_cache_event_agent_sink_queue_drops_total{{sink=\"kafka\"}} {}\n",
+                "# TYPE sgl_router_cache_event_agent_sink_delivery_failures_total counter\n",
+                "sgl_router_cache_event_agent_sink_delivery_failures_total{{sink=\"http\"}} {}\n",
+                "sgl_router_cache_event_agent_sink_delivery_failures_total{{sink=\"stream\"}} {}\n",
+                "sgl_router_cache_event_agent_sink_delivery_failures_total{{sink=\"kafka\"}} {}\n",
+                "# TYPE sgl_router_cache_event_agent_sink_deliveries_total counter\n",
+                "sgl_router_cache_event_agent_sink_deliveries_total{{sink=\"http\"}} {}\n",
+                "sgl_router_cache_event_agent_sink_deliveries_total{{sink=\"stream\"}} {}\n",
+                "sgl_router_cache_event_agent_sink_deliveries_total{{sink=\"kafka\"}} {}\n",
+            ),
+            self.publisher_sequence_gaps.load(Ordering::Relaxed),
+            self.oversized_payloads.load(Ordering::Relaxed),
+            self.queue_drops_http.load(Ordering::Relaxed),
+            self.queue_drops_stream.load(Ordering::Relaxed),
+            self.queue_drops_kafka.load(Ordering::Relaxed),
+            self.delivery_failures_http.load(Ordering::Relaxed),
+            self.delivery_failures_stream.load(Ordering::Relaxed),
+            self.delivery_failures_kafka.load(Ordering::Relaxed),
+            self.deliveries_http.load(Ordering::Relaxed),
+            self.deliveries_stream.load(Ordering::Relaxed),
+            self.deliveries_kafka.load(Ordering::Relaxed),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MetricKind {
+    QueueDrop,
+    DeliveryFailure,
+    DeliverySuccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SinkKind {
+    Http,
+    Stream,
+    Kafka,
+}
+
+impl SinkKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Stream => "stream",
+            Self::Kafka => "kafka",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DeliveryConfig {
+    queue_capacity: usize,
+    max_attempts: u32,
+    retry_backoff: Duration,
+    delivery_timeout: Duration,
+}
+
+async fn spawn_metrics_server(
+    bind: SocketAddr,
+    metrics: Arc<AgentMetrics>,
+    cancel: CancellationToken,
+) -> Result<JoinHandle<()>> {
+    let listener = tokio::net::TcpListener::bind(bind)
+        .await
+        .with_context(|| format!("bind cache-event-agent metrics at {bind}"))?;
+    let app = Router::new()
+        .route("/metrics", get(agent_metrics))
+        .with_state(metrics);
+    Ok(tokio::spawn(async move {
+        if let Err(err) = axum::serve(listener, app)
+            .with_graceful_shutdown(cancel.cancelled_owned())
+            .await
+        {
+            error!(error = %err, "cache-event-agent metrics server stopped with error");
+        }
+    }))
+}
+
+async fn agent_metrics(State(metrics): State<Arc<AgentMetrics>>) -> String {
+    metrics.render()
 }
 
 #[derive(Clone)]
@@ -168,6 +380,13 @@ enum EventSink {
     },
     Stream(LocalKvEventStream),
     Kafka(KafkaKvEventProducer),
+    #[cfg(test)]
+    Test {
+        name: &'static str,
+        kind: SinkKind,
+        delay: Duration,
+        delivered: Arc<AtomicU64>,
+    },
 }
 
 impl EventSink {
@@ -176,6 +395,18 @@ impl EventSink {
             Self::Http { display_url, .. } => display_url,
             Self::Stream(_) => "local-event-stream",
             Self::Kafka(producer) => producer.topic(),
+            #[cfg(test)]
+            Self::Test { name, .. } => name,
+        }
+    }
+
+    fn kind(&self) -> SinkKind {
+        match self {
+            Self::Http { .. } => SinkKind::Http,
+            Self::Stream(_) => SinkKind::Stream,
+            Self::Kafka(_) => SinkKind::Kafka,
+            #[cfg(test)]
+            Self::Test { kind, .. } => *kind,
         }
     }
 }
@@ -235,6 +466,215 @@ fn build_event_sinks(args: &Args) -> Result<Vec<EventSink>> {
     Ok(sinks)
 }
 
+#[derive(Clone)]
+struct SinkDelivery {
+    record: Arc<KvEventStreamRecord>,
+    n_events: usize,
+}
+
+#[derive(Clone)]
+struct SinkDispatcher {
+    kind: SinkKind,
+    name: String,
+    tx: mpsc::Sender<SinkDelivery>,
+    metrics: Arc<AgentMetrics>,
+}
+
+impl SinkDispatcher {
+    fn try_send(&self, delivery: SinkDelivery) {
+        match self.tx.try_send(delivery) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(delivery)) => {
+                self.metrics.queue_drop(self.kind);
+                warn!(
+                    sink = %self.name,
+                    sink_kind = self.kind.label(),
+                    dp_rank = delivery.record.dp_rank,
+                    seq = delivery.record.seq,
+                    "sink queue full; dropping KV event record"
+                );
+            }
+            Err(mpsc::error::TrySendError::Closed(delivery)) => {
+                self.metrics.delivery_failure(self.kind);
+                warn!(
+                    sink = %self.name,
+                    sink_kind = self.kind.label(),
+                    dp_rank = delivery.record.dp_rank,
+                    seq = delivery.record.seq,
+                    "sink worker closed; dropping KV event record"
+                );
+            }
+        }
+    }
+}
+
+fn spawn_sink_worker(
+    sink: EventSink,
+    client: Client,
+    cache_state_api_token: Option<String>,
+    config: DeliveryConfig,
+    metrics: Arc<AgentMetrics>,
+    cancel: CancellationToken,
+) -> (SinkDispatcher, JoinHandle<()>) {
+    let kind = sink.kind();
+    let name = sink.name().to_string();
+    let (tx, rx) = mpsc::channel(config.queue_capacity);
+    let dispatcher = SinkDispatcher {
+        kind,
+        name: name.clone(),
+        tx,
+        metrics: Arc::clone(&metrics),
+    };
+    let handle = tokio::spawn(run_sink_worker(
+        sink,
+        client,
+        cache_state_api_token,
+        config,
+        metrics,
+        cancel,
+        rx,
+    ));
+    (dispatcher, handle)
+}
+
+async fn run_sink_worker(
+    sink: EventSink,
+    client: Client,
+    cache_state_api_token: Option<String>,
+    config: DeliveryConfig,
+    metrics: Arc<AgentMetrics>,
+    cancel: CancellationToken,
+    mut rx: mpsc::Receiver<SinkDelivery>,
+) {
+    let kind = sink.kind();
+    let name = sink.name().to_string();
+    loop {
+        let delivery = tokio::select! {
+            _ = cancel.cancelled() => return,
+            delivery = rx.recv() => match delivery {
+                Some(delivery) => delivery,
+                None => return,
+            },
+        };
+        let mut delivered = false;
+        for attempt in 1..=config.max_attempts {
+            let result = tokio::time::timeout(
+                config.delivery_timeout,
+                deliver_once(&sink, &client, cache_state_api_token.as_deref(), &delivery),
+            )
+            .await;
+            match result {
+                Ok(Ok(())) => {
+                    metrics.delivery_success(kind);
+                    debug!(
+                        sink = %name,
+                        sink_kind = kind.label(),
+                        dp_rank = delivery.record.dp_rank,
+                        seq = delivery.record.seq,
+                        n_events = delivery.n_events,
+                        attempt,
+                        "delivered KV event record"
+                    );
+                    delivered = true;
+                    break;
+                }
+                Ok(Err(err)) => {
+                    warn!(
+                        sink = %name,
+                        sink_kind = kind.label(),
+                        dp_rank = delivery.record.dp_rank,
+                        seq = delivery.record.seq,
+                        attempt,
+                        max_attempts = config.max_attempts,
+                        error = %err,
+                        "sink delivery attempt failed"
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        sink = %name,
+                        sink_kind = kind.label(),
+                        dp_rank = delivery.record.dp_rank,
+                        seq = delivery.record.seq,
+                        attempt,
+                        max_attempts = config.max_attempts,
+                        timeout_ms = config.delivery_timeout.as_millis(),
+                        "sink delivery attempt timed out"
+                    );
+                }
+            }
+            if attempt < config.max_attempts {
+                let multiplier = 1u32 << attempt.saturating_sub(1).min(10);
+                let delay = config.retry_backoff.saturating_mul(multiplier);
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = tokio::time::sleep(delay) => {}
+                }
+            }
+        }
+        if !delivered {
+            metrics.delivery_failure(kind);
+            error!(
+                sink = %name,
+                sink_kind = kind.label(),
+                dp_rank = delivery.record.dp_rank,
+                seq = delivery.record.seq,
+                "dropping KV event record after bounded sink retries"
+            );
+        }
+    }
+}
+
+async fn deliver_once(
+    sink: &EventSink,
+    client: &Client,
+    cache_state_api_token: Option<&str>,
+    delivery: &SinkDelivery,
+) -> Result<()> {
+    match sink {
+        EventSink::Http { ingest_url, .. } => {
+            let record = &delivery.record;
+            let req = CacheStateKvEventsRequest {
+                model_id: record.model_id.clone(),
+                worker_url: record.worker_url.clone(),
+                dp_rank: record.dp_rank,
+                seq: record.seq,
+                payload_b64: record.payload_b64.clone(),
+            };
+            let mut post = client.post(ingest_url);
+            if let Some(token) = cache_state_api_token {
+                post = post.bearer_auth(token);
+            }
+            let response = post.json(&req).send().await?;
+            if !response.status().is_success() {
+                return Err(anyhow!(
+                    "cache-state returned HTTP status {}",
+                    response.status()
+                ));
+            }
+            Ok(())
+        }
+        EventSink::Stream(stream) => {
+            let stats = stream.append(&delivery.record)?;
+            debug!(
+                stream_records = stats.records_after_compaction,
+                stream_bytes = stats.bytes_after_compaction,
+                "appended KV event record to local stream"
+            );
+            Ok(())
+        }
+        EventSink::Kafka(producer) => producer.send(&delivery.record).await,
+        #[cfg(test)]
+        EventSink::Test {
+            delay, delivered, ..
+        } => {
+            tokio::time::sleep(*delay).await;
+            delivered.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+}
+
 struct AgentTask {
     client: Client,
     sinks: Vec<EventSink>,
@@ -244,24 +684,49 @@ struct AgentTask {
     topic: String,
     dp_rank: u32,
     cache_state_api_token: Option<String>,
+    delivery_config: DeliveryConfig,
+    max_sink_payload_bytes: usize,
+    metrics: Arc<AgentMetrics>,
     cancel: CancellationToken,
 }
 
 impl AgentTask {
     async fn run(self) {
         let worker = KvWorkerId::new(self.worker_url.clone(), self.dp_rank);
+        let mut dispatchers = Vec::with_capacity(self.sinks.len());
+        let mut sink_handles = Vec::with_capacity(self.sinks.len());
+        for sink in self.sinks.iter().cloned() {
+            let (dispatcher, handle) = spawn_sink_worker(
+                sink,
+                self.client.clone(),
+                self.cache_state_api_token.clone(),
+                self.delivery_config,
+                Arc::clone(&self.metrics),
+                self.cancel.clone(),
+            );
+            dispatchers.push(dispatcher);
+            sink_handles.push(handle);
+        }
+        let mut cursor = PublisherCursor::default();
         loop {
             if self.cancel.is_cancelled() {
-                return;
+                break;
             }
             match self.connect().await {
-                Some(mut sub) => self.recv_loop(&worker, &mut sub).await,
-                None => return,
+                Some(mut sub) => {
+                    self.recv_loop(&worker, &mut sub, &dispatchers, &mut cursor)
+                        .await
+                }
+                None => break,
             }
             tokio::select! {
-                _ = self.cancel.cancelled() => return,
+                _ = self.cancel.cancelled() => break,
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
             }
+        }
+        drop(dispatchers);
+        for handle in sink_handles {
+            let _ = handle.await;
         }
     }
 
@@ -306,7 +771,13 @@ impl AgentTask {
         }
     }
 
-    async fn recv_loop(&self, worker: &KvWorkerId, sub: &mut SubSocket) {
+    async fn recv_loop(
+        &self,
+        worker: &KvWorkerId,
+        sub: &mut SubSocket,
+        dispatchers: &[SinkDispatcher],
+        cursor: &mut PublisherCursor,
+    ) {
         loop {
             let msg = tokio::select! {
                 _ = self.cancel.cancelled() => return,
@@ -332,6 +803,19 @@ impl AgentTask {
                 );
                 continue;
             }
+            if payload.len() > self.max_sink_payload_bytes {
+                self.metrics
+                    .oversized_payloads
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!(
+                    dp_rank = self.dp_rank,
+                    seq,
+                    payload_bytes = payload.len(),
+                    max_sink_payload_bytes = self.max_sink_payload_bytes,
+                    "dropping KV event payload that exceeds the configured sink limit"
+                );
+                continue;
+            }
             let batch = match decode_event_batch(payload) {
                 Ok(batch) => batch,
                 Err(err) => {
@@ -344,110 +828,61 @@ impl AgentTask {
                     continue;
                 }
             };
+            cursor.observe(
+                batch.publisher_epoch.as_deref(),
+                seq,
+                self.dp_rank,
+                &self.metrics,
+            );
             let n_events = batch.events.len();
-            for sink in &self.sinks {
-                match sink {
-                    EventSink::Http { ingest_url, .. } => {
-                        let req = CacheStateKvEventsRequest {
-                            model_id: self.model_id.clone(),
-                            worker_url: worker.url.clone(),
-                            dp_rank: worker.dp_rank,
-                            seq,
-                            payload_b64: encode_base64(payload),
-                        };
-                        let mut post = self.client.post(ingest_url);
-                        if let Some(token) = self.cache_state_api_token.as_ref() {
-                            post = post.bearer_auth(token);
-                        }
-                        match post.json(&req).send().await {
-                            Ok(resp) if resp.status().is_success() => {
-                                debug!(
-                                    dp_rank = self.dp_rank,
-                                    seq, n_events, "forwarded KV event batch"
-                                );
-                            }
-                            Ok(resp) => {
-                                warn!(
-                                    dp_rank = self.dp_rank,
-                                    seq,
-                                    n_events,
-                                    status = %resp.status(),
-                                    "cache-state rejected KV event batch"
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    dp_rank = self.dp_rank,
-                                    seq,
-                                    n_events,
-                                    error = %err,
-                                    "failed to forward KV event batch"
-                                );
-                            }
-                        }
-                    }
-                    EventSink::Stream(stream) => {
-                        let record = KvEventStreamRecord::from_payload(
-                            self.model_id.clone(),
-                            worker.url.clone(),
-                            worker.dp_rank,
-                            seq,
-                            payload,
-                        );
-                        match stream.append(&record) {
-                            Ok(stats) => {
-                                debug!(
-                                    dp_rank = self.dp_rank,
-                                    seq,
-                                    n_events,
-                                    stream_records = stats.records_after_compaction,
-                                    stream_bytes = stats.bytes_after_compaction,
-                                    "appended KV event batch to stream"
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    dp_rank = self.dp_rank,
-                                    seq,
-                                    n_events,
-                                    error = %err,
-                                    "failed to append KV event batch to stream"
-                                );
-                            }
-                        }
-                    }
-                    EventSink::Kafka(producer) => {
-                        let record = KvEventStreamRecord::from_payload(
-                            self.model_id.clone(),
-                            worker.url.clone(),
-                            worker.dp_rank,
-                            seq,
-                            payload,
-                        );
-                        match producer.send(&record).await {
-                            Ok(()) => {
-                                debug!(
-                                    dp_rank = self.dp_rank,
-                                    seq,
-                                    n_events,
-                                    topic = producer.topic(),
-                                    "published KV event batch to Kafka stream"
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    dp_rank = self.dp_rank,
-                                    seq,
-                                    n_events,
-                                    topic = producer.topic(),
-                                    error = %err,
-                                    "failed to publish KV event batch to Kafka stream"
-                                );
-                            }
-                        }
-                    }
-                }
+            let record = Arc::new(KvEventStreamRecord::from_payload(
+                self.model_id.clone(),
+                worker.url.clone(),
+                worker.dp_rank,
+                seq,
+                payload,
+            ));
+            let delivery = SinkDelivery { record, n_events };
+            for dispatcher in dispatchers {
+                dispatcher.try_send(delivery.clone());
             }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct PublisherCursor {
+    initialized: bool,
+    epoch: Option<String>,
+    last_seq: i64,
+}
+
+impl PublisherCursor {
+    fn observe(&mut self, epoch: Option<&str>, seq: i64, dp_rank: u32, metrics: &AgentMetrics) {
+        if !self.initialized || self.epoch.as_deref() != epoch {
+            self.initialized = true;
+            self.epoch = epoch.map(str::to_owned);
+            self.last_seq = seq;
+            return;
+        }
+        if seq > self.last_seq.saturating_add(1) {
+            metrics
+                .publisher_sequence_gaps
+                .fetch_add(1, Ordering::Relaxed);
+            warn!(
+                dp_rank,
+                publisher_epoch = epoch.unwrap_or("legacy"),
+                expected_seq = self.last_seq.saturating_add(1),
+                observed_seq = seq,
+                "detected publisher sequence gap"
+            );
+        }
+        if epoch.is_none() && seq <= self.last_seq {
+            // Legacy payloads have no generation identity. A sequence reset
+            // is the only observable restart signal.
+            self.last_seq = seq;
+        } else if seq > self.last_seq {
+            self.last_seq = seq;
         }
     }
 }
@@ -490,4 +925,122 @@ fn install_signal_handlers(cancel: CancellationToken) -> Result<()> {
         cancel.cancel();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_delivery(seq: i64) -> SinkDelivery {
+        SinkDelivery {
+            record: Arc::new(KvEventStreamRecord::from_payload(
+                "m".into(),
+                "http://worker:30000".into(),
+                0,
+                seq,
+                b"payload",
+            )),
+            n_events: 1,
+        }
+    }
+
+    fn delivery_config(queue_capacity: usize) -> DeliveryConfig {
+        DeliveryConfig {
+            queue_capacity,
+            max_attempts: 1,
+            retry_backoff: Duration::from_millis(1),
+            delivery_timeout: Duration::from_secs(2),
+        }
+    }
+
+    #[tokio::test]
+    async fn slow_sink_does_not_block_fast_sink() {
+        let metrics = Arc::new(AgentMetrics::default());
+        let cancel = CancellationToken::new();
+        let slow_delivered = Arc::new(AtomicU64::new(0));
+        let fast_delivered = Arc::new(AtomicU64::new(0));
+        let client = Client::new();
+        let (slow, slow_handle) = spawn_sink_worker(
+            EventSink::Test {
+                name: "slow",
+                kind: SinkKind::Kafka,
+                delay: Duration::from_millis(200),
+                delivered: Arc::clone(&slow_delivered),
+            },
+            client.clone(),
+            None,
+            delivery_config(4),
+            Arc::clone(&metrics),
+            cancel.clone(),
+        );
+        let (fast, fast_handle) = spawn_sink_worker(
+            EventSink::Test {
+                name: "fast",
+                kind: SinkKind::Http,
+                delay: Duration::ZERO,
+                delivered: Arc::clone(&fast_delivered),
+            },
+            client,
+            None,
+            delivery_config(4),
+            Arc::clone(&metrics),
+            cancel.clone(),
+        );
+
+        let delivery = test_delivery(1);
+        slow.try_send(delivery.clone());
+        fast.try_send(delivery);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(fast_delivered.load(Ordering::Relaxed), 1);
+        assert_eq!(slow_delivered.load(Ordering::Relaxed), 0);
+        tokio::time::sleep(Duration::from_millis(220)).await;
+        assert_eq!(slow_delivered.load(Ordering::Relaxed), 1);
+
+        cancel.cancel();
+        let _ = slow_handle.await;
+        let _ = fast_handle.await;
+    }
+
+    #[tokio::test]
+    async fn full_sink_queue_records_bounded_drop_metric() {
+        let metrics = Arc::new(AgentMetrics::default());
+        let cancel = CancellationToken::new();
+        let delivered = Arc::new(AtomicU64::new(0));
+        let (dispatcher, handle) = spawn_sink_worker(
+            EventSink::Test {
+                name: "slow",
+                kind: SinkKind::Kafka,
+                delay: Duration::from_secs(1),
+                delivered,
+            },
+            Client::new(),
+            None,
+            delivery_config(1),
+            Arc::clone(&metrics),
+            cancel.clone(),
+        );
+        for seq in 0..20 {
+            dispatcher.try_send(test_delivery(seq));
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(metrics.queue_drops_kafka.load(Ordering::Relaxed) > 0);
+        let rendered = metrics.render();
+        assert!(rendered
+            .contains("sgl_router_cache_event_agent_sink_queue_drops_total{sink=\"kafka\"}"));
+        assert!(!rendered.contains("http://worker:30000"));
+
+        cancel.cancel();
+        let _ = handle.await;
+    }
+
+    #[test]
+    fn publisher_cursor_counts_only_same_epoch_forward_gaps() {
+        let metrics = AgentMetrics::default();
+        let mut cursor = PublisherCursor::default();
+        cursor.observe(Some("epoch-a"), 0, 0, &metrics);
+        cursor.observe(Some("epoch-a"), 2, 0, &metrics);
+        cursor.observe(Some("epoch-b"), 0, 0, &metrics);
+        cursor.observe(Some("epoch-b"), 1, 0, &metrics);
+        assert_eq!(metrics.publisher_sequence_gaps.load(Ordering::Relaxed), 1);
+    }
 }

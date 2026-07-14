@@ -408,9 +408,18 @@ impl CacheAwareZmqPolicy {
             };
             match client.match_prefix(&req) {
                 Some(resp) => {
+                    let authoritative = resp.authoritative;
                     let remote_match = CacheMatch::from_remote(resp);
                     if remote_match.is_useful() {
                         self.record_remote_cache_state_query(RemoteCacheStateQueryOutcome::Hit);
+                        return remote_match;
+                    }
+                    if authoritative {
+                        self.record_remote_cache_state_query(RemoteCacheStateQueryOutcome::Miss);
+                        tracing::debug!(
+                            model = %model,
+                            "cache-aware-zmq: authoritative remote cache-state returned no useful match",
+                        );
                         return remote_match;
                     }
                     let local_match =
@@ -2744,6 +2753,49 @@ mod tests {
             ),
             "fallback-local-hit must be counted for empty remote response; got:\n{rendered}",
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn authoritative_remote_miss_skips_stale_local_tree() {
+        let service = Arc::new(
+            crate::cache_state::CacheStateService::new_with_reconciliation(
+                Arc::new(HashTree::new()),
+                crate::cache_state::CacheStateReconciliationConfig {
+                    enabled: true,
+                    ..crate::cache_state::CacheStateReconciliationConfig::default()
+                },
+            ),
+        );
+        let (base_url, server) = start_cache_state_service(service).await;
+        let registry = tokenizer_registry_with_tiny();
+        let text = "hello world hello world hello world";
+        let (ids, hashes) = tiny_ids_and_hashes(&registry, text);
+        let local_tree = Arc::new(HashTree::new());
+        local_tree.insert(&KvWorkerId::new("http://w0:30000".into(), 0), None, &hashes);
+        let client = Arc::new(RemoteCacheStateClient::new(
+            base_url,
+            std::time::Duration::from_millis(500),
+        ));
+        let metrics = MetricsRegistry::new();
+        let policy = ttft_remote_policy(registry, local_tree, client, Arc::clone(&metrics));
+        let w0 = worker("http://w0:30000", "tiny");
+        let w1 = worker("http://w1:30000", "tiny");
+        w0.set_reported_load(100);
+        w1.set_reported_load(0);
+        let workers = vec![Arc::clone(&w0), Arc::clone(&w1)];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&workers, &ctx).expect("must pick");
+
+        server.abort();
+        assert_eq!(
+            chosen.url, "http://w1:30000",
+            "an authoritative miss must use load routing, not stale local history",
+        );
+        assert!(metrics
+            .render()
+            .contains(r#"sgl_router_remote_cache_state_query_total{outcome="miss"} 1"#));
     }
 
     /// Route-history mode: the tree starts EMPTY (no ZMQ feed). The first
