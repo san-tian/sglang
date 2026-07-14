@@ -123,11 +123,7 @@ impl TraceContext {
         stream: bool,
         request_body: Bytes,
     ) -> Self {
-        let trace_id = trace_id_from_headers(headers)
-            .unwrap_or_else(|| format!("trace_{}", Uuid::new_v4().simple()));
-        if let Ok(value) = HeaderValue::from_str(&trace_id) {
-            headers.insert(X_TRACE_ID, value);
-        }
+        let trace_id = ensure_trace_id(headers);
         Self {
             trace_id,
             method,
@@ -140,9 +136,20 @@ impl TraceContext {
     }
 
     pub fn add_response_header(&self, response: &mut Response<Body>) {
-        if let Ok(value) = HeaderValue::from_str(&self.trace_id) {
-            response.headers_mut().insert(X_TRACE_ID, value);
-        }
+        insert_trace_id_header(response.headers_mut(), &self.trace_id);
+    }
+}
+
+pub fn ensure_trace_id(headers: &mut HeaderMap) -> String {
+    let trace_id = trace_id_from_headers(headers)
+        .unwrap_or_else(|| format!("trace_{}", Uuid::new_v4().simple()));
+    insert_trace_id_header(headers, &trace_id);
+    trace_id
+}
+
+pub fn insert_trace_id_header(headers: &mut HeaderMap, trace_id: &str) {
+    if let Ok(value) = HeaderValue::from_str(trace_id) {
+        headers.insert(X_TRACE_ID, value);
     }
 }
 

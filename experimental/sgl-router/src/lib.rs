@@ -14,6 +14,7 @@ pub mod cache_state;
 pub mod config;
 pub mod discovery;
 pub mod health;
+pub mod observability;
 pub mod policies;
 pub mod proxy;
 pub mod router_state;

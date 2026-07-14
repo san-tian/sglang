@@ -17,6 +17,7 @@ classifiers = [
 # Please keep dependency lists in this file sorted alphabetically by package name.
 dependencies = [
   "aiohttp",
+  "aliyun-log-python-sdk==0.9.11",
   "anthropic>=0.20.0",
   "apache-tvm-ffi==0.1.9",
   "av ; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'armv7l')",

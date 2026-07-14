@@ -104,7 +104,31 @@ impl AppContext {
         router_state_client: Option<Arc<dyn RouterStateClient>>,
         router_state_overlay: Option<Arc<RouterStateLoadOverlay>>,
     ) -> Self {
-        let metrics = MetricsRegistry::new();
+        Self::with_active_load_router_state_and_metrics(
+            config,
+            tokenizers,
+            proxy,
+            registry,
+            policies,
+            active_load,
+            router_state_client,
+            router_state_overlay,
+            MetricsRegistry::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_active_load_router_state_and_metrics(
+        config: Config,
+        tokenizers: Arc<TokenizerRegistry>,
+        proxy: Arc<Proxy>,
+        registry: Arc<WorkerRegistry>,
+        policies: Arc<PolicyRegistry>,
+        active_load: Arc<ActiveLoadRegistry>,
+        router_state_client: Option<Arc<dyn RouterStateClient>>,
+        router_state_overlay: Option<Arc<RouterStateLoadOverlay>>,
+        metrics: Arc<MetricsRegistry>,
+    ) -> Self {
         // Wire the per-worker active-load gauge so `sgl_router_active_load`
         // mirrors the live counter on every register / drop / sweep.
         // Without this, the metric is permanently 0 in production even
