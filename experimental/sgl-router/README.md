@@ -77,8 +77,13 @@ PD_PROXY_API_KEY=... \
 WORKER_INTROSPECT_KEY=... \
 WORKER_BEARER_KEY=... \
 LOAD_POLL_INTERVAL_SECS=1 \
+WORKER_PROBE_TIMEOUT_SECS=3 \
 sgl-router
 ```
+
+`WORKER_PROBE_TIMEOUT_SECS` bounds each `/get_load` and `/health` request. It
+defaults to 3 seconds; raise it only when a deployment's expected network or
+worker response latency can legitimately exceed that budget.
 
 The mode exposes Chat generation only; Completions, Messages, Responses, and
 cache-flush routes are not registered. It also exposes a keyed, SGLang-compatible

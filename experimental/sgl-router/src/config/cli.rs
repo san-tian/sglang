@@ -11,12 +11,12 @@ use std::num::NonZeroU32;
 
 use crate::config::{
     default_cb_cool_down, default_proxy_request_timeout_secs, default_stale_request_timeout_secs,
-    default_trace_body_max_bytes, resolve_mode, ActiveLoadConfig, AliasFallbackConfig,
-    CacheAwareConfig, CacheTreeSource, CircuitBreakerConfig, Config, DiscoveryBackend,
-    ExternalModelConfig, ExternalQueueAdmissionConfig, K8sDiscoveryConfig, LogFormat, ModelConfig,
-    ObservabilityConfig, PolicyKind, PriorityOverrideConfig, ProxyConfig, RuntimeMode,
-    ServerConfig, StaticUrlsDiscoveryConfig, StickyConfig, TieredSpilloverConfig, TraceConfig,
-    TtftScoreMode, WorkerBearerKeyConfig,
+    default_trace_body_max_bytes, default_worker_probe_timeout_secs, resolve_mode,
+    ActiveLoadConfig, AliasFallbackConfig, CacheAwareConfig, CacheTreeSource, CircuitBreakerConfig,
+    Config, DiscoveryBackend, ExternalModelConfig, ExternalQueueAdmissionConfig,
+    K8sDiscoveryConfig, LogFormat, ModelConfig, ObservabilityConfig, PolicyKind,
+    PriorityOverrideConfig, ProxyConfig, RuntimeMode, ServerConfig, StaticUrlsDiscoveryConfig,
+    StickyConfig, TieredSpilloverConfig, TraceConfig, TtftScoreMode, WorkerBearerKeyConfig,
 };
 use crate::discovery::WorkerTier;
 
@@ -261,6 +261,9 @@ pub struct Cli {
     /// Per-request upstream timeout in seconds.
     #[arg(long, default_value_t = default_proxy_request_timeout_secs())]
     pub request_timeout_secs: u64,
+    /// Per-request timeout for worker `/get_load` and `/health` probes.
+    #[arg(long, default_value_t = default_worker_probe_timeout_secs())]
+    pub worker_probe_timeout_secs: u64,
     /// Max lifetime of an in-flight request entry before the janitor
     /// reaps it (returns 504 `stale_request_expired`).
     #[arg(long, default_value_t = default_stale_request_timeout_secs())]
@@ -595,6 +598,9 @@ impl Cli {
                 ));
             }
         }
+        if self.worker_probe_timeout_secs == 0 {
+            return Err(anyhow!("--worker-probe-timeout-secs must be >= 1"));
+        }
         let use_reported_load = self.load_poll_interval_secs.is_some();
         let ttft_score_mode = self.ttft_score_mode.unwrap_or_default();
         if ttft_score_mode != TtftScoreMode::Additive {
@@ -814,6 +820,7 @@ impl Cli {
             discovery,
             proxy: ProxyConfig {
                 request_timeout_secs: self.request_timeout_secs,
+                worker_probe_timeout_secs: self.worker_probe_timeout_secs,
                 external_queue_admission: ExternalQueueAdmissionConfig {
                     enabled: self.external_queue_admission_enabled,
                     queue_threshold: self.external_queue_admission_threshold,
@@ -1504,6 +1511,35 @@ mod tests {
         let cb = c.model.circuit_breaker.expect("cb enabled");
         assert_eq!(cb.threshold.get(), 5);
         assert_eq!(cb.cool_down_secs, 30);
+    }
+
+    #[test]
+    fn worker_probe_timeout_defaults_to_three_seconds_and_accepts_override() {
+        let default_config =
+            into_config_owned(with_model(&["--worker-urls", "http://x:30000"])).unwrap();
+        assert_eq!(default_config.proxy.worker_probe_timeout_secs, 3);
+
+        let overridden = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--worker-probe-timeout-secs",
+            "5",
+        ]))
+        .unwrap();
+        assert_eq!(overridden.proxy.worker_probe_timeout_secs, 5);
+    }
+
+    #[test]
+    fn rejects_zero_worker_probe_timeout() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--worker-probe-timeout-secs",
+            "0",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("--worker-probe-timeout-secs must be >= 1"));
     }
 
     #[test]
