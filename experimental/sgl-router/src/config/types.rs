@@ -386,6 +386,8 @@ pub enum TtftScoreMode {
     Additive,
     #[value(name = "prefill-work-only")]
     PrefillWorkOnly,
+    #[value(name = "prefill-work-normalized")]
+    PrefillWorkNormalized,
     #[value(name = "lmetric")]
     Lmetric,
     #[value(name = "lmetric-candidate-aware")]

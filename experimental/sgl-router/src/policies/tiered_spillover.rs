@@ -151,6 +151,7 @@ mod tests {
             backend: Default::default(),
             tier,
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
     }
 

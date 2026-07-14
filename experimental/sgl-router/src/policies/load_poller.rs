@@ -523,6 +523,7 @@ mod tests {
                 backend: WorkerBackend::Vllm,
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -558,6 +559,7 @@ mod tests {
                 backend: WorkerBackend::Sglang,
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -615,6 +617,7 @@ mod tests {
                 backend: WorkerBackend::SglangProxy,
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -663,6 +666,7 @@ mod tests {
                 backend: WorkerBackend::Sglang,
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -718,6 +722,7 @@ mod tests {
                 backend: WorkerBackend::Sglang,
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();

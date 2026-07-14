@@ -300,6 +300,7 @@ mod tests {
                     backend: Default::default(),
                     tier: Default::default(),
                     routes: crate::discovery::WorkerRouteSet::all(),
+                    prefill_capacity_milli: 1000,
                 })
                 .expect("worker accepted");
         }
@@ -321,6 +322,7 @@ mod tests {
                 backend: Default::default(),
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .expect("worker accepted");
         Arc::new(ctx)
@@ -454,6 +456,7 @@ mod tests {
                 backend: Default::default(),
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .expect("prefill accepted");
         ctx.registry
@@ -469,6 +472,7 @@ mod tests {
                 backend: Default::default(),
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .expect("decode accepted");
 

@@ -136,6 +136,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }));
         w.set_reported_load(reported_load);
         for _ in 0..pending {

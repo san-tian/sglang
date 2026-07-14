@@ -116,6 +116,7 @@ async fn pd_mode_decode_only_returns_no_prefill_workers_available() {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 
@@ -175,6 +176,7 @@ async fn pd_mode_chat_dispatch_fans_to_both_prefill_and_decode() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -188,6 +190,7 @@ async fn pd_mode_chat_dispatch_fans_to_both_prefill_and_decode() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
@@ -272,6 +275,7 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("p2".into()),
@@ -285,6 +289,7 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -298,6 +303,7 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d2".into()),
@@ -311,6 +317,7 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
@@ -367,6 +374,7 @@ async fn plain_mode_chat_dispatch_omits_decode_affinity_header() {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 
@@ -399,6 +407,7 @@ async fn pd_mode_prefill_only_returns_no_decode_workers_available() {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 
@@ -433,6 +442,7 @@ async fn pd_mode_chat_response_carries_decode_affinity_header() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -446,6 +456,7 @@ async fn pd_mode_chat_response_carries_decode_affinity_header() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d2".into()),
@@ -459,6 +470,7 @@ async fn pd_mode_chat_response_carries_decode_affinity_header() {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
@@ -503,6 +515,7 @@ async fn plain_mode_chat_response_omits_decode_affinity_header() {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 

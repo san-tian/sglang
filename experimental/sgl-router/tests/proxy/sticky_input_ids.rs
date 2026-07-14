@@ -112,6 +112,7 @@ fn build_ctx(worker_urls: &[String]) -> Arc<AppContext> {
             backend: Default::default(),
             tier: Default::default(),
             routes: Default::default(),
+            prefill_capacity_milli: 1000,
         });
     }
     // Sticky needs no cache-aware deps, so the defaults registry is fine — the

@@ -354,12 +354,13 @@ fn reconcile_unresolved_workers(
         // `register_one` re-resolves them from `/server_info`; current
         // mode + bootstrap_port as the seed (`register_one` re-applies
         // any `/server_info` override). `min_priority`, `max_context_tokens`,
-        // backend, and tier are config-time facts that `/server_info` never
-        // carries, so they MUST be carried over from the live worker. Dropping
-        // min_priority here would
+        // backend, tier, and capacity are config-time facts that `/server_info`
+        // never carries, so they MUST be carried over from the live worker.
+        // Dropping min_priority here would
         // let a priority-gated worker silently start accepting priority-0
         // traffic; dropping backend would make a vLLM worker retry through
-        // SGLang-only endpoints; dropping tier would break tiered spillover.
+        // SGLang-only endpoints; dropping tier would break tiered spillover;
+        // dropping capacity would erase heterogenous routing normalization.
         let spec = WorkerSpec {
             id: id.clone(),
             url: worker.url.clone(),
@@ -372,6 +373,7 @@ fn reconcile_unresolved_workers(
             backend: worker.backend(),
             tier: worker.tier(),
             routes: worker.routes(),
+            prefill_capacity_milli: worker.prefill_capacity_milli(),
         };
         // `debug!` not `info!`: this fires every interval for each
         // still-unresolved worker, so info-level would spam for a worker
@@ -563,6 +565,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
         };
         let cb = cb_config_for_spec(&spec, &cfg).expect("model has cb config");
         assert_eq!(cb.threshold.get(), 5);
@@ -658,6 +661,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -707,6 +711,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -764,6 +769,7 @@ mod tests {
             backend: WorkerBackend::Vllm,
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -825,6 +831,7 @@ mod tests {
             backend: WorkerBackend::SglangProxy,
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -884,6 +891,7 @@ mod tests {
             backend: WorkerBackend::Vllm,
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -938,6 +946,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -993,6 +1002,7 @@ mod tests {
                 backend: Default::default(),
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             };
             tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
             let registered = tokio::time::timeout(Duration::from_secs(2), async {
@@ -1069,6 +1079,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait until the manager has both registered the worker AND
@@ -1176,6 +1187,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait for the manager to land the registry write so the
@@ -1262,6 +1274,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -1371,6 +1384,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
 
@@ -1459,6 +1473,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
         };
         tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
 
@@ -1485,6 +1500,11 @@ mod tests {
             Some(500_000),
             "context limit must be present on initial registration",
         );
+        assert_eq!(
+            registry.get(&id).unwrap().prefill_capacity_milli(),
+            500,
+            "prefill capacity must be present on initial registration",
+        );
 
         // /server_info recovers; reconcile re-introspects and resolves models.
         ready.store(true, Ordering::SeqCst);
@@ -1509,6 +1529,11 @@ mod tests {
             registry.get(&id).unwrap().max_context_tokens(),
             Some(500_000),
             "max_context_tokens must survive reconcile re-introspection",
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().prefill_capacity_milli(),
+            500,
+            "prefill capacity must survive reconcile re-introspection",
         );
 
         drop(tx);
@@ -1589,6 +1614,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
         .await
         .unwrap();
@@ -1722,6 +1748,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
         .await
         .unwrap();
@@ -1799,6 +1826,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
         .await
         .unwrap();

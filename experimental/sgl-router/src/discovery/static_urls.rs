@@ -23,7 +23,8 @@
 
 use crate::config::StaticUrlsDiscoveryConfig;
 use crate::discovery::{
-    DiscoveryEvent, WorkerBackend, WorkerId, WorkerMode, WorkerRouteSet, WorkerSpec, WorkerTier,
+    default_prefill_capacity_milli, DiscoveryEvent, WorkerBackend, WorkerId, WorkerMode,
+    WorkerRouteSet, WorkerSpec, WorkerTier,
 };
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -38,6 +39,8 @@ const MAX_CONTEXT_TOKENS_TOKEN: &str = "@max_context_tokens=";
 const BACKEND_TOKEN: &str = "@backend=";
 const TIER_TOKEN: &str = "@tier=";
 const ROUTES_TOKEN: &str = "@routes=";
+const PREFILL_CAPACITY_TOKEN: &str = "@prefill_capacity=";
+const PREFILL_PROFILE_TOKEN: &str = "@prefill_profile=";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WorkerCapabilities {
@@ -46,6 +49,7 @@ pub(crate) struct WorkerCapabilities {
     pub backend: WorkerBackend,
     pub tier: WorkerTier,
     pub routes: WorkerRouteSet,
+    pub prefill_capacity_milli: usize,
 }
 
 impl Default for WorkerCapabilities {
@@ -56,6 +60,7 @@ impl Default for WorkerCapabilities {
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: default_prefill_capacity_milli(),
         }
     }
 }
@@ -79,6 +84,8 @@ impl Default for WorkerCapabilities {
 pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilities)> {
     let mut base = entry;
     let mut caps = WorkerCapabilities::default();
+    let mut saw_prefill_capacity = false;
+    let mut saw_prefill_profile = false;
     loop {
         let Some((pos, token)) = [
             MIN_PRIORITY_TOKEN,
@@ -86,6 +93,8 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
             BACKEND_TOKEN,
             TIER_TOKEN,
             ROUTES_TOKEN,
+            PREFILL_CAPACITY_TOKEN,
+            PREFILL_PROFILE_TOKEN,
         ]
         .into_iter()
         .filter_map(|token| base.rfind(token).map(|pos| (pos, token)))
@@ -140,11 +149,90 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
                     ));
                 }
             };
-        } else {
+        } else if token == ROUTES_TOKEN {
             caps.routes = parse_routes(value.trim(), entry)?;
+        } else if token == PREFILL_CAPACITY_TOKEN {
+            if saw_prefill_profile {
+                return Err(anyhow::anyhow!(
+                    "invalid worker URL entry {entry:?}: \
+                     prefill_capacity and prefill_profile are mutually exclusive"
+                ));
+            }
+            saw_prefill_capacity = true;
+            caps.prefill_capacity_milli = parse_prefill_capacity_milli(value.trim(), entry)?;
+        } else {
+            if saw_prefill_capacity {
+                return Err(anyhow::anyhow!(
+                    "invalid worker URL entry {entry:?}: \
+                     prefill_capacity and prefill_profile are mutually exclusive"
+                ));
+            }
+            saw_prefill_profile = true;
+            caps.prefill_capacity_milli = prefill_profile_capacity_milli(value.trim(), entry)?;
         }
     }
     Ok((base.to_string(), caps))
+}
+
+fn prefill_profile_capacity_milli(value: &str, entry: &str) -> Result<usize> {
+    match value {
+        // Baseline profiles: user convention is to treat B200, B300, HK,
+        // NVFP4, and NVR-P4 shapes as equivalent prefill capacity.
+        "baseline"
+        | "b200"
+        | "b300"
+        | "nvr-p4"
+        | "nvfp4"
+        | "b200-fp8"
+        | "b300-fp8"
+        | "b200-nvfp4"
+        | "b300-nvfp4"
+        | "alibaba-b300"
+        | "hk-l20d"
+        | "hk-l20d-standalone"
+        | "hk-l20d-1p1d"
+        | "fp8-mtp-dp1-tp8"
+        | "fp8-mtp-dp1-tp8-alibaba-b300"
+        | "fp8-mtp-dp1-tp8-l20d"
+        | "nvfp4-mtp-dp1-tp4"
+        | "nvfp4-nomtp-dp1-tp4-b300" => Ok(1000),
+
+        // MI300X convention: one 2P2D logical worker counts as 0.5x
+        // baseline prefill capacity.
+        "mi300x" | "mi300x-2p2d" | "mi300x-rdma-2p2d" | "mi300x-rdma02-2p2d"
+        | "mi300x-rdma03-2p2d" | "mi300x-rdma04-2p2d" | "mi300x-rdma05-2p2d" => Ok(500),
+
+        // France 20P10D is estimated as ten MI300X 2P2D groups.
+        "france-20p10d" | "mi300x-france-20p10d" => Ok(5000),
+
+        other => Err(anyhow::anyhow!(
+            "invalid prefill_profile in worker URL entry {entry:?}: \
+             {other:?} is not one of the known profiles"
+        )),
+    }
+}
+
+fn parse_prefill_capacity_milli(value: &str, entry: &str) -> Result<usize> {
+    let capacity = value.parse::<f64>().map_err(|_| {
+        anyhow::anyhow!(
+            "invalid prefill_capacity in worker URL entry {entry:?}: \
+             {value:?} is not a positive number"
+        )
+    })?;
+    if !capacity.is_finite() || capacity <= 0.0 {
+        return Err(anyhow::anyhow!(
+            "invalid prefill_capacity in worker URL entry {entry:?}: \
+             value must be finite and greater than zero"
+        ));
+    }
+    let milli = (capacity * 1000.0).round();
+    if !(1.0..=(usize::MAX as f64)).contains(&milli) {
+        return Err(anyhow::anyhow!(
+            "invalid prefill_capacity in worker URL entry {entry:?}: \
+             value is outside the supported range"
+        ));
+    }
+    Ok(milli as usize)
 }
 
 fn parse_routes(value: &str, entry: &str) -> Result<WorkerRouteSet> {
@@ -237,6 +325,7 @@ pub(crate) fn build_worker_specs(cfg: &StaticUrlsDiscoveryConfig) -> Result<Vec<
                 backend: caps.backend,
                 tier: caps.tier,
                 routes: caps.routes,
+                prefill_capacity_milli: caps.prefill_capacity_milli,
             })
         })
         .collect()
@@ -298,6 +387,7 @@ mod tests {
         assert_eq!(caps.max_context_tokens, None);
         assert_eq!(caps.backend, WorkerBackend::Sglang);
         assert_eq!(caps.tier, WorkerTier::Default);
+        assert_eq!(caps.prefill_capacity_milli, 1000);
     }
 
     #[test]
@@ -316,6 +406,65 @@ mod tests {
         assert_eq!(url, "http://amd-01:30000");
         assert_eq!(caps.max_context_tokens, Some(500_000));
         assert_eq!(caps.min_priority, None);
+    }
+
+    #[test]
+    fn parse_entry_extracts_prefill_capacity_suffix() {
+        let (url, caps) = parse_worker_entry("http://mi300x:30000@prefill_capacity=0.5").unwrap();
+        assert_eq!(url, "http://mi300x:30000");
+        assert_eq!(caps.prefill_capacity_milli, 500);
+
+        let (url, caps) = parse_worker_entry(
+            "http://france:30000@backend=sglang_proxy@routes=chat@prefill_capacity=5.0",
+        )
+        .unwrap();
+        assert_eq!(url, "http://france:30000");
+        assert_eq!(caps.backend, WorkerBackend::SglangProxy);
+        assert!(caps.routes.chat);
+        assert_eq!(caps.prefill_capacity_milli, 5000);
+    }
+
+    #[test]
+    fn parse_entry_extracts_prefill_profile_suffix() {
+        for profile in [
+            "baseline",
+            "b200",
+            "b300",
+            "nvr-p4",
+            "nvfp4",
+            "fp8-mtp-dp1-tp8",
+            "fp8-mtp-dp1-tp8-alibaba-b300",
+            "fp8-mtp-dp1-tp8-l20d",
+            "nvfp4-mtp-dp1-tp4",
+            "nvfp4-nomtp-dp1-tp4-b300",
+            "hk-l20d-1p1d",
+        ] {
+            let (_url, caps) =
+                parse_worker_entry(&format!("http://worker:30000@prefill_profile={profile}"))
+                    .unwrap();
+            assert_eq!(caps.prefill_capacity_milli, 1000, "profile={profile}");
+        }
+
+        for profile in [
+            "mi300x",
+            "mi300x-2p2d",
+            "mi300x-rdma02-2p2d",
+            "mi300x-rdma03-2p2d",
+            "mi300x-rdma04-2p2d",
+            "mi300x-rdma05-2p2d",
+        ] {
+            let (_url, caps) = parse_worker_entry(&format!(
+                "http://mi300x:30000@backend=sglang_proxy@routes=chat@prefill_profile={profile}"
+            ))
+            .unwrap();
+            assert_eq!(caps.prefill_capacity_milli, 500, "profile={profile}");
+            assert_eq!(caps.backend, WorkerBackend::SglangProxy);
+            assert!(caps.routes.chat);
+        }
+
+        let (_url, caps) =
+            parse_worker_entry("http://france:30000@prefill_profile=mi300x-france-20p10d").unwrap();
+        assert_eq!(caps.prefill_capacity_milli, 5000);
     }
 
     #[test]
@@ -430,6 +579,35 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(err.contains("max_context_tokens"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn parse_entry_rejects_invalid_prefill_capacity() {
+        for value in ["0", "-1", "nan", "inf", "many", ""] {
+            let err = parse_worker_entry(&format!("http://w:30000@prefill_capacity={value}"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("prefill_capacity"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn parse_entry_rejects_invalid_prefill_profile() {
+        let err = parse_worker_entry("http://w:30000@prefill_profile=h20-unknown")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("prefill_profile"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_entry_rejects_mixed_prefill_capacity_and_profile() {
+        for entry in [
+            "http://w:30000@prefill_profile=mi300x@prefill_capacity=0.5",
+            "http://w:30000@prefill_capacity=0.5@prefill_profile=mi300x",
+        ] {
+            let err = parse_worker_entry(entry).unwrap_err().to_string();
+            assert!(err.contains("mutually exclusive"), "got: {err}");
         }
     }
 

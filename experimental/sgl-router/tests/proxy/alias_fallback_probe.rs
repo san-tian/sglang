@@ -81,6 +81,7 @@ fn build_alias_ctx(primary_url: &str, fallback_url: &str) -> Arc<AppContext> {
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(Duration::from_secs(5)).unwrap());

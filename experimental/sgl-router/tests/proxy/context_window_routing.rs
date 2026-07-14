@@ -85,6 +85,7 @@ fn worker_spec_for_model(
         backend: Default::default(),
         tier: Default::default(),
         routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }
 }
 

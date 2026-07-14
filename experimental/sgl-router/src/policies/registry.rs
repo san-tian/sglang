@@ -548,6 +548,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }
     }
 
@@ -574,6 +575,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
     }
 
@@ -590,6 +592,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes,
+            prefill_capacity_milli: 1000,
         }))
     }
 
@@ -704,6 +707,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
     }
 
@@ -939,6 +943,7 @@ mod tests {
             backend: Default::default(),
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }
     }
 
