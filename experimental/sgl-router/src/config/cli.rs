@@ -16,7 +16,7 @@ use crate::config::{
     ExternalModelConfig, ExternalQueueAdmissionConfig, K8sDiscoveryConfig, LogFormat, ModelConfig,
     ObservabilityConfig, PolicyKind, PriorityOverrideConfig, ProxyConfig, RuntimeMode,
     ServerConfig, StaticUrlsDiscoveryConfig, StickyConfig, TieredSpilloverConfig, TraceConfig,
-    WorkerBearerKeyConfig,
+    TtftScoreMode, WorkerBearerKeyConfig,
 };
 use crate::discovery::WorkerTier;
 
@@ -122,6 +122,10 @@ pub struct Cli {
     /// configured score band. Only meaningful with cache-aware policies.
     #[arg(long)]
     pub ttft_first_routing: bool,
+    /// TTFT score formula. `additive` preserves the existing behavior;
+    /// token-work modes require TTFT-first routing and worker load polling.
+    #[arg(long, value_enum)]
+    pub ttft_score_mode: Option<TtftScoreMode>,
     /// In TTFT-first mode, choose from the least-pressured workers first and
     /// use cache overlap only as a tie-breaker inside that idle set.
     #[arg(long)]
@@ -415,6 +419,7 @@ impl Cli {
             || self.cache_tree_bigram
             || self.cache_tree_max_nodes.is_some()
             || self.ttft_first_routing
+            || self.ttft_score_mode.is_some()
             || self.ttft_idle_first_routing
             || self.ttft_token_scale.is_some()
             || self.ttft_cache_score_margin.is_some()
@@ -431,7 +436,7 @@ impl Cli {
                 "--cache-threshold / --balance-abs-threshold / --balance-rel-threshold \
                  / --hit-load-abs-threshold / --hit-load-rel-threshold \
                  / --cache-tree-source / --cache-tree-page-size / --cache-tree-bigram \
-                 / --cache-tree-max-nodes / --ttft-first-routing / --ttft-token-scale \
+                 / --cache-tree-max-nodes / --ttft-first-routing / --ttft-score-mode / --ttft-token-scale \
                  / --ttft-cache-score-margin / --cache-state-url / --cache-state-timeout-ms \
                  require --policy cache_aware_zmq or --policy cache_aware_spillover"
             ));
@@ -591,6 +596,24 @@ impl Cli {
             }
         }
         let use_reported_load = self.load_poll_interval_secs.is_some();
+        let ttft_score_mode = self.ttft_score_mode.unwrap_or_default();
+        if ttft_score_mode != TtftScoreMode::Additive {
+            if !self.ttft_first_routing {
+                return Err(anyhow!(
+                    "non-additive --ttft-score-mode requires --ttft-first-routing"
+                ));
+            }
+            if !use_reported_load {
+                return Err(anyhow!(
+                    "non-additive --ttft-score-mode requires --load-poll-interval-secs"
+                ));
+            }
+            if self.ttft_idle_first_routing {
+                return Err(anyhow!(
+                    "non-additive --ttft-score-mode cannot be combined with --ttft-idle-first-routing"
+                ));
+            }
+        }
         if self.trace_capture_bodies && self.trace_sink_url.is_none() {
             return Err(anyhow!(
                 "--trace-capture-bodies requires --trace-sink-url (otherwise captured bodies have nowhere to go)"
@@ -678,6 +701,7 @@ impl Cli {
                 use_reported_load,
                 tree_source,
                 ttft_first_routing: self.ttft_first_routing,
+                ttft_score_mode,
                 ttft_idle_first_routing: self.ttft_idle_first_routing,
                 ttft_token_scale: self.ttft_token_scale.unwrap_or(d.ttft_token_scale),
                 ttft_cache_score_margin: self
@@ -1661,8 +1685,104 @@ mod tests {
         .unwrap();
         let ca = c.model.cache_aware.expect("cache_aware set");
         assert!(ca.ttft_first_routing);
+        assert_eq!(ca.ttft_score_mode, TtftScoreMode::Additive);
         assert_eq!(ca.ttft_token_scale, 128);
         assert_eq!(ca.ttft_cache_score_margin, 2);
+    }
+
+    #[test]
+    fn lmetric_score_mode_builds_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "lmetric-candidate-aware",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.model.cache_aware.unwrap().ttft_score_mode,
+            TtftScoreMode::LmetricCandidateAware
+        );
+    }
+
+    #[test]
+    fn prefill_work_only_score_mode_builds_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "prefill-work-only",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.model.cache_aware.unwrap().ttft_score_mode,
+            TtftScoreMode::PrefillWorkOnly
+        );
+    }
+
+    #[test]
+    fn rejects_lmetric_without_ttft_first() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-score-mode",
+            "lmetric",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("requires --ttft-first-routing"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_lmetric_without_load_poller() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "lmetric",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("requires --load-poll-interval-secs"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_lmetric_with_idle_first_prefilter() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-idle-first-routing",
+            "--ttft-score-mode",
+            "lmetric",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("cannot be combined"), "got: {err}");
     }
 
     #[test]

@@ -39,17 +39,19 @@ use crate::cache_state::{
     CacheStateInsertRequest, CacheStateMatchRequest, CacheStateMatchResponse,
     RemoteCacheStateClient,
 };
-use crate::config::{CacheAwareConfig, CacheTreeSource};
+use crate::config::{CacheAwareConfig, CacheTreeSource, TtftScoreMode};
+use crate::discovery::{WorkerBackend, WorkerMode};
 
 use crate::policies::kv_events::tree::KvWorkerId;
 use crate::policies::kv_events::{
     compute_block_hashes, compute_block_hashes_bigram, BlockSizeOracle, HashTree,
 };
-use crate::policies::{request_tokens_for, Policy, SelectionContext};
+use crate::policies::{effective_priority, request_tokens_for, Policy, SelectionContext};
 use crate::server::metrics::{
     MetricsRegistry, RemoteCacheStateFeedOutcome, RemoteCacheStateQueryOutcome,
 };
 use crate::tokenizer::TokenizerRegistry;
+use crate::workers::worker::PrefillLoadRole;
 use crate::workers::Worker;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -290,6 +292,7 @@ impl CacheAwareZmqPolicy {
         abs_diff > self.config.balance_abs_threshold && max_load > rel_threshold
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn select_ttft_first(
         &self,
         workers: &[Arc<Worker>],
@@ -297,11 +300,9 @@ impl CacheAwareZmqPolicy {
         block_hashes: &[i64],
         matched_blocks: usize,
         matched_urls: &HashSet<&str>,
+        candidate_tokens: usize,
+        block_size: usize,
     ) -> Option<Arc<Worker>> {
-        if block_hashes.is_empty() {
-            return self.pick_min_ttft_load(workers);
-        }
-
         let idle_candidates;
         let score_workers: &[Arc<Worker>] = if self.config.ttft_idle_first_routing {
             let min_load = workers
@@ -327,15 +328,32 @@ impl CacheAwareZmqPolicy {
         } else {
             workers
         };
+        let score_mode = self.compatible_score_mode(score_workers);
+        if block_hashes.is_empty() && score_mode == TtftScoreMode::Additive {
+            return self.pick_min_ttft_load(workers);
+        }
+        let candidate_priority = if score_mode == TtftScoreMode::LmetricCandidateAware {
+            ctx.request_body()
+                .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
+                .as_ref()
+                .map(effective_priority)
+                .unwrap_or(0)
+        } else {
+            0
+        };
 
         let total_blocks = block_hashes.len();
         let best_score = score_workers
             .iter()
             .map(|w| {
-                self.ttft_score(
+                self.ttft_score_with_mode(
                     w,
                     total_blocks,
                     matched_blocks_for_worker(w, matched_blocks, matched_urls),
+                    candidate_tokens,
+                    block_size,
+                    candidate_priority,
+                    score_mode,
                 )
             })
             .min()
@@ -346,7 +364,15 @@ impl CacheAwareZmqPolicy {
             .iter()
             .filter_map(|w| {
                 let worker_matched = matched_blocks_for_worker(w, matched_blocks, matched_urls);
-                let score = self.ttft_score(w, total_blocks, worker_matched);
+                let score = self.ttft_score_with_mode(
+                    w,
+                    total_blocks,
+                    worker_matched,
+                    candidate_tokens,
+                    block_size,
+                    candidate_priority,
+                    score_mode,
+                );
                 if score <= score_limit {
                     Some((Arc::clone(w), score, worker_matched))
                 } else {
@@ -383,6 +409,7 @@ impl CacheAwareZmqPolicy {
                     ttft_score = score,
                     best_ttft_score = best_score,
                     cache_score_margin = self.config.ttft_cache_score_margin,
+                    ttft_score_mode = ?score_mode,
                     "cache-aware-zmq: ttft-first selected worker",
                 );
                 w
@@ -393,11 +420,157 @@ impl CacheAwareZmqPolicy {
             .or_else(|| self.pick_min_ttft_load(workers))
     }
 
-    fn ttft_score(&self, worker: &Worker, total_blocks: usize, matched_blocks: usize) -> usize {
+    #[cfg(test)]
+    fn ttft_score(
+        &self,
+        worker: &Worker,
+        total_blocks: usize,
+        matched_blocks: usize,
+        candidate_tokens: usize,
+        block_size: usize,
+        candidate_priority: i64,
+    ) -> usize {
+        let score_mode = self.compatible_score_mode_for_worker(worker);
+        self.ttft_score_with_mode(
+            worker,
+            total_blocks,
+            matched_blocks,
+            candidate_tokens,
+            block_size,
+            candidate_priority,
+            score_mode,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ttft_score_with_mode(
+        &self,
+        worker: &Worker,
+        total_blocks: usize,
+        matched_blocks: usize,
+        candidate_tokens: usize,
+        block_size: usize,
+        candidate_priority: i64,
+        score_mode: TtftScoreMode,
+    ) -> usize {
+        if score_mode != TtftScoreMode::Additive {
+            if let Some(score) = self.token_work_score(
+                worker,
+                matched_blocks,
+                candidate_tokens,
+                block_size,
+                candidate_priority,
+                score_mode,
+            ) {
+                return score;
+            }
+        }
         let pressure =
             worker.effective_ttft_load(self.config.use_reported_load, self.config.ttft_token_scale);
         let uncached_blocks = total_blocks.saturating_sub(matched_blocks);
         pressure.saturating_add(uncached_blocks)
+    }
+
+    fn token_work_score(
+        &self,
+        worker: &Worker,
+        matched_blocks: usize,
+        candidate_tokens: usize,
+        block_size: usize,
+        candidate_priority: i64,
+        score_mode: TtftScoreMode,
+    ) -> Option<usize> {
+        let snapshot = worker.reported_prefill_load()?;
+        let candidate_uncached =
+            candidate_tokens.saturating_sub(matched_blocks.saturating_mul(block_size));
+        let existing_work = match score_mode {
+            TtftScoreMode::Additive => return None,
+            TtftScoreMode::PrefillWorkOnly | TtftScoreMode::Lmetric => {
+                snapshot.total_waiting_uncached_tokens
+            }
+            TtftScoreMode::LmetricCandidateAware => snapshot
+                .candidate
+                .as_ref()
+                .and_then(|candidate| {
+                    candidate.work_ahead_tokens(candidate_priority, candidate_uncached)
+                })
+                .unwrap_or(snapshot.total_waiting_uncached_tokens),
+        };
+        let reserved_tokens = worker
+            .pending_token_load()
+            .saturating_add(worker.global_pending_token_load());
+        let reserved_requests = worker
+            .pending_load()
+            .saturating_add(worker.global_pending_load());
+        let prefill_factor = candidate_uncached
+            .saturating_add(existing_work)
+            .saturating_add(reserved_tokens);
+        if score_mode == TtftScoreMode::PrefillWorkOnly {
+            return Some(prefill_factor);
+        }
+        let batch_factor = 1usize
+            .saturating_add(snapshot.running_requests)
+            .saturating_add(reserved_requests);
+        Some(prefill_factor.saturating_mul(batch_factor))
+    }
+
+    fn compatible_score_mode(&self, workers: &[Arc<Worker>]) -> TtftScoreMode {
+        if self.config.ttft_score_mode == TtftScoreMode::Additive
+            || !workers
+                .iter()
+                .all(|worker| self.supports_token_score(worker, self.config.ttft_score_mode))
+        {
+            return TtftScoreMode::Additive;
+        }
+        if self.config.ttft_score_mode == TtftScoreMode::LmetricCandidateAware
+            && !workers.iter().all(|worker| {
+                worker
+                    .reported_prefill_load()
+                    .and_then(|snapshot| snapshot.candidate)
+                    .is_some()
+            })
+        {
+            return TtftScoreMode::Lmetric;
+        }
+        self.config.ttft_score_mode
+    }
+
+    #[cfg(test)]
+    fn compatible_score_mode_for_worker(&self, worker: &Worker) -> TtftScoreMode {
+        if self.config.ttft_score_mode == TtftScoreMode::Additive
+            || !self.supports_token_score(worker, self.config.ttft_score_mode)
+        {
+            return TtftScoreMode::Additive;
+        }
+        let snapshot = worker
+            .reported_prefill_load()
+            .expect("compatible token score requires a Prefill snapshot");
+        if self.config.ttft_score_mode == TtftScoreMode::LmetricCandidateAware
+            && snapshot.candidate.is_none()
+        {
+            return TtftScoreMode::Lmetric;
+        }
+        self.config.ttft_score_mode
+    }
+
+    fn supports_token_score(&self, worker: &Worker, score_mode: TtftScoreMode) -> bool {
+        if worker.backend() != WorkerBackend::Sglang {
+            return false;
+        }
+        let Some(snapshot) = worker.reported_prefill_load() else {
+            return false;
+        };
+        match score_mode {
+            TtftScoreMode::Additive => true,
+            TtftScoreMode::PrefillWorkOnly => matches!(
+                (worker.mode(), snapshot.role),
+                (WorkerMode::Plain, PrefillLoadRole::Integrated)
+                    | (WorkerMode::Prefill, PrefillLoadRole::Prefill)
+            ),
+            TtftScoreMode::Lmetric | TtftScoreMode::LmetricCandidateAware => {
+                worker.mode() == WorkerMode::Plain && snapshot.role == PrefillLoadRole::Integrated
+            }
+        }
     }
 
     fn match_prefix(&self, model: &crate::discovery::ModelId, block_hashes: &[i64]) -> CacheMatch {
@@ -583,7 +756,11 @@ impl CacheAwareZmqPolicy {
                 model = %ctx.model(),
                 "cache-aware-zmq: block size unknown (no worker page_size yet), falling back to min-load",
             );
-            return if self.config.ttft_first_routing {
+            return if self.config.ttft_first_routing
+                && self.config.ttft_score_mode != TtftScoreMode::Additive
+            {
+                self.select_ttft_first(workers, ctx, &[], 0, &HashSet::new(), tokens.len(), 1)
+            } else if self.config.ttft_first_routing {
                 self.pick_min_ttft_load(workers)
             } else {
                 self.pick_min_load_fair(workers, self.config.use_reported_load)
@@ -600,7 +777,19 @@ impl CacheAwareZmqPolicy {
             compute_block_hashes(tokens, block_size as usize)
         };
         if block_hashes.is_empty() {
-            return if self.config.ttft_first_routing {
+            return if self.config.ttft_first_routing
+                && self.config.ttft_score_mode != TtftScoreMode::Additive
+            {
+                self.select_ttft_first(
+                    workers,
+                    ctx,
+                    &block_hashes,
+                    0,
+                    &HashSet::new(),
+                    tokens.len(),
+                    block_size as usize,
+                )
+            } else if self.config.ttft_first_routing {
                 self.pick_min_ttft_load(workers)
             } else {
                 self.pick_min_load_fair(workers, self.config.use_reported_load)
@@ -642,6 +831,8 @@ impl CacheAwareZmqPolicy {
                 &block_hashes,
                 ttft_matched_blocks,
                 &matched_urls,
+                tokens.len(),
+                block_size as usize,
             );
             self.feed_route_history(ctx.model(), &chosen, &block_hashes);
             return chosen;
@@ -753,13 +944,16 @@ mod tests {
         CacheStateInsertRequest, CacheStateMatchRequest, CacheStateWorkerMatch,
     };
     use crate::config::CacheAwareConfig;
-    use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
+    use crate::discovery::{ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerSpec};
     use crate::policies::kv_events::tree::KvWorkerId;
     use crate::policies::kv_events::HashTree;
     use crate::router_state::{
         RouterStateLoadOverlay, RouterStateSnapshotResponse, RouterStateWorkerLoad,
     };
     use crate::tokenizer::adapter;
+    use crate::workers::worker::{
+        CandidatePrefillLoad, PrefillLoadRole, PrefillLoadSnapshot, PrefillPriorityLoad,
+    };
 
     async fn start_cache_state_service(
         service: Arc<crate::cache_state::CacheStateService>,
@@ -797,6 +991,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: 0,
@@ -830,6 +1025,7 @@ mod tests {
             use_reported_load: false,
             tree_source: CacheTreeSource::Zmq,
             ttft_first_routing: false,
+            ttft_score_mode: Default::default(),
             ttft_idle_first_routing: false,
             ttft_token_scale: 64,
             ttft_cache_score_margin: 0,
@@ -847,6 +1043,10 @@ mod tests {
     }
 
     fn worker(url: &str, model_id: &str) -> Arc<Worker> {
+        worker_with_backend(url, model_id, WorkerBackend::Sglang)
+    }
+
+    fn worker_with_backend(url: &str, model_id: &str, backend: WorkerBackend) -> Arc<Worker> {
         Arc::new(Worker::new(WorkerSpec {
             id: WorkerId(url.into()),
             url: url.into(),
@@ -856,7 +1056,7 @@ mod tests {
             min_priority: None,
             max_context_tokens: None,
             bearer_token: None,
-            backend: Default::default(),
+            backend,
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
         }))
@@ -2160,6 +2360,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: cache_score_margin,
@@ -2169,6 +2370,249 @@ mod tests {
             oracle_for_tests(4),
         );
         (policy, ids)
+    }
+
+    fn lmetric_policy(mode: TtftScoreMode) -> CacheAwareZmqPolicy {
+        CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                hit_load_abs_threshold: 0,
+                hit_load_rel_threshold: f32::INFINITY,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Zmq,
+                ttft_first_routing: true,
+                ttft_score_mode: mode,
+                ttft_idle_first_routing: false,
+                ttft_token_scale: 4,
+                ttft_cache_score_margin: 0,
+            },
+            Arc::new(HashTree::new()),
+            tokenizer_registry_with_tiny(),
+            oracle_for_tests(4),
+        )
+    }
+
+    fn prefill_snapshot(
+        running_requests: usize,
+        total_waiting_uncached_tokens: usize,
+        candidate: Option<CandidatePrefillLoad>,
+    ) -> PrefillLoadSnapshot {
+        PrefillLoadSnapshot {
+            role: PrefillLoadRole::Integrated,
+            running_requests,
+            total_waiting_uncached_tokens,
+            candidate,
+        }
+    }
+
+    fn native_prefill_snapshot(
+        running_requests: usize,
+        total_waiting_uncached_tokens: usize,
+    ) -> PrefillLoadSnapshot {
+        PrefillLoadSnapshot {
+            role: PrefillLoadRole::Prefill,
+            running_requests,
+            total_waiting_uncached_tokens,
+            candidate: None,
+        }
+    }
+
+    #[test]
+    fn conservative_lmetric_multiplies_prefill_and_batch_factors() {
+        let policy = lmetric_policy(TtftScoreMode::Lmetric);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_prefill_load(Some(prefill_snapshot(3, 1000, None)));
+        let _reservation = w.pending_guard_with_tokens(50);
+
+        let score = policy.ttft_score(&w, 25, 0, 100, 4, 0);
+
+        assert_eq!(score, (100 + 1000 + 50) * (1 + 3 + 1));
+    }
+
+    #[test]
+    fn candidate_aware_lmetric_counts_overdue_bucket_and_better_priority_only() {
+        let policy = lmetric_policy(TtftScoreMode::LmetricCandidateAware);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_prefill_load(Some(prefill_snapshot(
+            0,
+            10_500,
+            Some(CandidatePrefillLoad {
+                chunked_remaining_uncached_tokens: 50,
+                work_bucket_bounds: vec![256, 1024],
+                priority_scheduling_enabled: true,
+                schedule_low_priority_values_first: false,
+                priorities: vec![
+                    PrefillPriorityLoad {
+                        priority: 0,
+                        total_uncached_tokens: 10_000,
+                        ahead_uncached_tokens: vec![100, 10_000],
+                    },
+                    PrefillPriorityLoad {
+                        priority: 10,
+                        total_uncached_tokens: 500,
+                        ahead_uncached_tokens: vec![50, 500],
+                    },
+                ],
+            }),
+        )));
+
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 750);
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 10), 200);
+    }
+
+    #[test]
+    fn candidate_aware_lmetric_falls_back_to_conservative_total() {
+        let policy = lmetric_policy(TtftScoreMode::LmetricCandidateAware);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_prefill_load(Some(prefill_snapshot(0, 900, None)));
+
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 1000);
+    }
+
+    #[test]
+    fn lmetric_without_token_snapshot_falls_back_to_additive_score() {
+        let policy = lmetric_policy(TtftScoreMode::Lmetric);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_load(2);
+
+        assert_eq!(policy.ttft_score(&w, 10, 2, 100, 4, 0), 10);
+    }
+
+    #[test]
+    fn mixed_snapshot_pool_falls_back_to_one_additive_unit_system() {
+        let policy = lmetric_policy(TtftScoreMode::Lmetric);
+        let w0 = worker("http://w0:30000", "tiny");
+        let w1 = worker("http://w1:30000", "tiny");
+        w0.set_reported_prefill_load(Some(prefill_snapshot(0, 100, None)));
+        let workers = vec![w0, w1];
+
+        assert_eq!(
+            policy.compatible_score_mode(&workers),
+            TtftScoreMode::Additive
+        );
+    }
+
+    #[test]
+    fn native_pd_prefill_still_falls_back_for_multiplicative_mode() {
+        let policy = lmetric_policy(TtftScoreMode::Lmetric);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_mode(WorkerMode::Prefill);
+        w.set_reported_load(2);
+        w.set_reported_prefill_load(Some(native_prefill_snapshot(3, 1000)));
+
+        assert_eq!(
+            policy.compatible_score_mode_for_worker(&w),
+            TtftScoreMode::Additive
+        );
+        assert_eq!(policy.ttft_score(&w, 10, 2, 100, 4, 0), 10);
+    }
+
+    #[test]
+    fn native_pd_prefill_work_only_ignores_running_and_request_reservations() {
+        let policy = lmetric_policy(TtftScoreMode::PrefillWorkOnly);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_mode(WorkerMode::Prefill);
+        w.set_reported_prefill_load(Some(native_prefill_snapshot(99, 1000)));
+        let _reservation = w.pending_guard_with_tokens(50);
+
+        assert_eq!(
+            policy.compatible_score_mode_for_worker(&w),
+            TtftScoreMode::PrefillWorkOnly
+        );
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 1150);
+    }
+
+    #[test]
+    fn prefill_work_only_rejects_role_mismatch() {
+        let policy = lmetric_policy(TtftScoreMode::PrefillWorkOnly);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_mode(WorkerMode::Prefill);
+        w.set_reported_prefill_load(Some(prefill_snapshot(0, 1000, None)));
+
+        assert_eq!(
+            policy.compatible_score_mode_for_worker(&w),
+            TtftScoreMode::Additive
+        );
+    }
+
+    #[test]
+    fn prefill_work_only_rejects_logical_pd_proxy_snapshot() {
+        let policy = lmetric_policy(TtftScoreMode::PrefillWorkOnly);
+        let w = worker_with_backend("http://w0:30000", "tiny", WorkerBackend::SglangProxy);
+        w.set_reported_prefill_load(Some(prefill_snapshot(0, 1000, None)));
+
+        assert_eq!(
+            policy.compatible_score_mode_for_worker(&w),
+            TtftScoreMode::Additive
+        );
+    }
+
+    #[test]
+    fn prefill_work_only_pool_falls_back_if_any_prefill_lacks_snapshot() {
+        let policy = lmetric_policy(TtftScoreMode::PrefillWorkOnly);
+        let w0 = worker("http://w0:30000", "tiny");
+        let w1 = worker("http://w1:30000", "tiny");
+        for worker in [&w0, &w1] {
+            worker.set_mode(WorkerMode::Prefill);
+        }
+        w0.set_reported_prefill_load(Some(native_prefill_snapshot(0, 1000)));
+        let workers = vec![w0, w1];
+
+        assert_eq!(
+            policy.compatible_score_mode(&workers),
+            TtftScoreMode::Additive
+        );
+    }
+
+    #[test]
+    fn native_pd_prefill_work_only_selects_lower_token_backlog() {
+        let policy = lmetric_policy(TtftScoreMode::PrefillWorkOnly);
+        let w0 = worker("http://w0:30000", "tiny");
+        let w1 = worker("http://w1:30000", "tiny");
+        for worker in [&w0, &w1] {
+            worker.set_mode(WorkerMode::Prefill);
+        }
+        w0.set_reported_prefill_load(Some(native_prefill_snapshot(10, 10_000)));
+        w1.set_reported_prefill_load(Some(native_prefill_snapshot(1, 500)));
+        let workers = vec![Arc::clone(&w0), Arc::clone(&w1)];
+        let model = ModelId("tiny".into());
+        let ids = vec![7u32; 100];
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&workers, &ctx).expect("must pick");
+
+        assert_eq!(chosen.url, w1.url);
+    }
+
+    #[test]
+    fn candidate_aware_selection_does_not_count_bypassable_long_work() {
+        let policy = lmetric_policy(TtftScoreMode::LmetricCandidateAware);
+        let w0 = worker("http://w0:30000", "tiny");
+        let w1 = worker("http://w1:30000", "tiny");
+        let detail = |total, ahead| CandidatePrefillLoad {
+            chunked_remaining_uncached_tokens: 0,
+            work_bucket_bounds: vec![256, 1024],
+            priority_scheduling_enabled: true,
+            schedule_low_priority_values_first: false,
+            priorities: vec![PrefillPriorityLoad {
+                priority: 0,
+                total_uncached_tokens: total,
+                ahead_uncached_tokens: vec![ahead, total],
+            }],
+        };
+        w0.set_reported_prefill_load(Some(prefill_snapshot(0, 10_000, Some(detail(10_000, 100)))));
+        w1.set_reported_prefill_load(Some(prefill_snapshot(0, 500, Some(detail(500, 500)))));
+        let workers = vec![Arc::clone(&w0), Arc::clone(&w1)];
+        let model = ModelId("tiny".into());
+        let body = serde_json::to_vec(&serde_json::json!({"priority": 0})).unwrap();
+        let ids = vec![7u32; 100];
+        let ctx = SelectionContext::new(&model, Some(&body)).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&workers, &ctx).expect("must pick");
+
+        assert_eq!(chosen.url, w0.url);
     }
 
     #[test]
@@ -2186,6 +2630,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: 0,
@@ -2243,6 +2688,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: usize::MAX,
@@ -2298,6 +2744,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: true,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: usize::MAX,
@@ -2534,6 +2981,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: usize::MAX,
@@ -2605,6 +3053,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::RouteHistory,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: usize::MAX,
@@ -2658,6 +3107,7 @@ mod tests {
                 use_reported_load: true,
                 tree_source: CacheTreeSource::Zmq,
                 ttft_first_routing: true,
+                ttft_score_mode: Default::default(),
                 ttft_idle_first_routing: false,
                 ttft_token_scale: 4,
                 ttft_cache_score_margin: 0,

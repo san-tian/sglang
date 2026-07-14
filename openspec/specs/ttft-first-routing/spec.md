@@ -4,15 +4,19 @@
 Define TTFT-first cache-aware routing semantics, including token-weighted local reservations and optional distributed cache-state matches.
 ## Requirements
 ### Requirement: TTFT pressure takes priority over cache affinity
-When TTFT-first routing is enabled for cache-aware routing, the router SHALL select workers by predicted first-token pressure before considering cache affinity.
+When TTFT-first routing is enabled for cache-aware routing, the router SHALL select workers by the configured predicted first-token score mode before considering cache affinity. The default score mode SHALL retain the existing additive behavior; multiplicative score modes SHALL remain explicitly opt-in.
 
 #### Scenario: Cache hit loses to lower predicted TTFT pressure
-- **WHEN** a request has a prefix-cache hit on one worker and another healthy worker has lower predicted first-token pressure outside the configured cache band
-- **THEN** the router SHALL select the lower-pressure worker even though it has a weaker or missing cache hit
+- **WHEN** a request has a prefix-cache hit on one worker and another healthy worker has a lower predicted first-token score outside the configured cache band
+- **THEN** the router SHALL select the lower-score worker even though it has a weaker or missing cache hit
 
 #### Scenario: Cache hit wins inside the TTFT pressure band
-- **WHEN** multiple healthy workers have predicted first-token pressure within the configured cache band
+- **WHEN** multiple healthy workers have predicted first-token scores within the configured cache band
 - **THEN** the router SHALL prefer the worker with the strongest prefix-cache match among those in-band workers
+
+#### Scenario: Additive mode remains the default
+- **WHEN** TTFT-first routing is enabled without an explicit score mode
+- **THEN** the router SHALL use the existing additive request-pressure plus uncached-block score
 
 ### Requirement: Local reservations are token weighted
 The router SHALL make local pending-load reservations proportional to the routed prompt token count for requests with derived routing tokens.
@@ -46,3 +50,79 @@ When TTFT-first routing is enabled with a remote cache-state service, the router
 #### Scenario: Remote cache miss falls back to load pressure
 - **WHEN** the remote cache-state query returns no matched workers
 - **THEN** TTFT-first routing SHALL rank workers by load and pending pressure without cache affinity
+
+### Requirement: Conservative LMetric multiplies prefill and batch pressure
+In conservative LMetric mode, the router SHALL score a worker as the saturating product of candidate uncached tokens plus reported total waiting uncached tokens plus outstanding router-reserved prompt tokens, and one plus reported running requests plus outstanding router-reserved request count.
+
+#### Scenario: Queued long prefill suppresses assignment
+- **WHEN** two otherwise equivalent workers have different total waiting uncached token counts
+- **THEN** conservative LMetric SHALL assign the lower score to the worker with less waiting uncached work
+
+#### Scenario: Active batch amplifies prefill work
+- **WHEN** two workers have equal prefill factors but different running-request counts
+- **THEN** conservative LMetric SHALL assign the lower score to the worker with the smaller batch factor
+
+### Requirement: Candidate-aware LMetric counts only work ahead
+In candidate-aware LMetric mode, the router SHALL replace total waiting uncached work with chunked-prefill remainder, work at strictly better business priorities, and same-priority cumulative work in the candidate's uncached-length bucket.
+
+#### Scenario: Bypassable long request does not suppress short candidate
+- **WHEN** a queued long request is non-overdue and the worker summary indicates that a new same-priority short candidate would precede it
+- **THEN** that long request's tokens SHALL not be included in the candidate's work-ahead factor
+
+#### Scenario: Overdue request suppresses assignment
+- **WHEN** a queued request is overdue and therefore precedes a new same-priority candidate
+- **THEN** its uncached tokens SHALL be included in candidate work-ahead
+
+#### Scenario: Better business priority suppresses assignment
+- **WHEN** queued work has a strictly better business priority than the candidate
+- **THEN** its uncached tokens SHALL be included regardless of length bucket
+
+### Requirement: Multiplicative modes fail back compatibly
+Multiplicative TTFT modes SHALL require TTFT-first routing and worker load polling. Every candidate in one selection SHALL be compared using the same score mode. Missing optional token data SHALL produce a deterministic pool-wide fallback, while an explicit load-probe failure SHALL retain existing unroutable or high-load handling.
+
+#### Scenario: Candidate detail is incomplete
+- **WHEN** candidate-aware mode receives conservative token totals for every candidate but any candidate lacks complete priority/bucket detail
+- **THEN** the candidate set SHALL fall back together to conservative LMetric
+
+#### Scenario: Old worker has no token fields
+- **WHEN** any candidate's successful load response lacks the new prefill token fields
+- **THEN** the candidate set SHALL fall back together to the existing additive TTFT score
+
+#### Scenario: Native P/D candidates retain cache-aware routing
+- **WHEN** a model is served by separately registered Prefill and Decode workers
+- **THEN** the router SHALL continue applying prefix cache-aware selection to the Prefill candidate set but SHALL use additive scoring until paired Decode batch pressure is part of the score input
+
+#### Scenario: Logical P/D proxy lacks comparable prefill state
+- **WHEN** a logical proxy does not expose an explicit comparable Prefill queue snapshot and logical KV identity
+- **THEN** the candidate set SHALL use existing additive cache-aware behavior rather than multiplicative scoring
+
+#### Scenario: Load probe fails
+- **WHEN** a worker load poll fails
+- **THEN** the router SHALL preserve its existing failed-probe high-load or unroutable behavior
+
+#### Scenario: Invalid flag combination
+- **WHEN** an operator selects a multiplicative mode without TTFT-first routing or load polling, or combines it with idle-first prefiltering
+- **THEN** router configuration validation SHALL fail at startup
+
+### Requirement: Prefill-work-only mode separates PD phase scheduling
+When Prefill-work-only mode is explicitly configured, the router SHALL score every compatible Prefill candidate as candidate uncached tokens plus reported total waiting uncached Prefill tokens plus outstanding Router-reserved prompt tokens, without multiplying by reported running requests or request-count reservations. Decode selection SHALL remain a separate downstream decision.
+
+#### Scenario: Native PD Prefill uses token work
+- **WHEN** every native Prefill candidate reports a compatible role-labelled Prefill token snapshot
+- **THEN** the router SHALL compare those candidates using cache-adjusted Prefill token work and SHALL subsequently select Decode with the existing affinity and load policy
+
+#### Scenario: Decode pressure is a constant for Prefill comparison
+- **WHEN** native PD Prefill candidates report different running-request counts
+- **THEN** Prefill-work-only scoring SHALL not use those counts as a Decode batch factor
+
+#### Scenario: Router reservations prevent a stale Prefill hotspot
+- **WHEN** a request has been assigned to a Prefill worker but its prompt tokens are not yet reflected by the next load poll
+- **THEN** those reserved prompt tokens SHALL increase that worker's Prefill-work-only score
+
+#### Scenario: Native PD snapshot is unavailable
+- **WHEN** any Prefill candidate lacks compatible role-labelled Prefill token totals
+- **THEN** the complete Prefill candidate set SHALL fall back to the existing additive TTFT score
+
+#### Scenario: Logical PD proxy is not comparable
+- **WHEN** a candidate is a logical PD proxy without guaranteed Prefill cache identity and Prefill token ownership
+- **THEN** the candidate set SHALL use existing additive scoring rather than Prefill-work-only scoring

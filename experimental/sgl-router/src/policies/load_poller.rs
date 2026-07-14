@@ -25,6 +25,7 @@
 //! sufficient liveness check: the HTTP process can still return cached load
 //! while the scheduler health endpoint is wedged.
 
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,7 +33,10 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::policies::active_load::JanitorHandle;
-use crate::workers::worker::{REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET};
+use crate::workers::worker::{
+    CandidatePrefillLoad, PrefillLoadRole, PrefillLoadSnapshot, PrefillPriorityLoad,
+    REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET,
+};
 use crate::workers::WorkerRegistry;
 
 /// Per-`dp_rank` entry from a worker's `/get_load` response, e.g.
@@ -44,6 +48,40 @@ struct GetLoadEntry {
     num_reqs: i64,
     #[serde(default)]
     num_waiting_reqs: i64,
+    #[serde(default)]
+    num_running_reqs: Option<i64>,
+    #[serde(default)]
+    num_waiting_uncached_tokens: Option<i64>,
+    #[serde(default)]
+    load_role: Option<String>,
+    #[serde(default)]
+    prefill_queue: Option<PrefillQueueEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrefillQueueEntry {
+    #[serde(default)]
+    detail_complete: bool,
+    #[serde(default)]
+    chunked_remaining_uncached_tokens: i64,
+    #[serde(default)]
+    work_bucket_bounds: Vec<i64>,
+    #[serde(default)]
+    priority_scheduling_enabled: bool,
+    #[serde(default)]
+    schedule_low_priority_values_first: bool,
+    #[serde(default)]
+    priority_values: Vec<i64>,
+    #[serde(default)]
+    priority_total_uncached_tokens: Vec<i64>,
+    #[serde(default)]
+    priority_ahead_uncached_tokens: Vec<Vec<i64>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedWorkerLoad {
+    request_pressure: i64,
+    prefill: Option<PrefillLoadSnapshot>,
 }
 
 /// Per-request timeout for worker introspection GETs. Small: both responses
@@ -56,14 +94,144 @@ const WORKER_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// requests as busy, not only queued requests. Counting both fields keeps
 /// idle-borrow routing conservative.
 /// Returns `None` if the body does not parse as the expected array.
+#[cfg(test)]
 fn parse_total_request_pressure(body: &str) -> Option<i64> {
+    parse_worker_load(body).map(|load| load.request_pressure)
+}
+
+fn parse_worker_load(body: &str) -> Option<ParsedWorkerLoad> {
     let entries: Vec<GetLoadEntry> = serde_json::from_str(body).ok()?;
-    Some(
-        entries
+    let request_pressure = entries.iter().fold(0i64, |total, entry| {
+        total.saturating_add(
+            entry
+                .num_reqs
+                .max(0)
+                .saturating_add(entry.num_waiting_reqs.max(0)),
+        )
+    });
+    let prefill_role = entries
+        .first()
+        .and_then(|entry| normalize_prefill_load_role(entry.load_role.as_deref()))
+        .filter(|role| {
+            entries.iter().all(|entry| {
+                entry.num_running_reqs.is_some()
+                    && entry.num_waiting_uncached_tokens.is_some()
+                    && normalize_prefill_load_role(entry.load_role.as_deref()) == Some(*role)
+            })
+        });
+    let prefill = prefill_role.map(|role| PrefillLoadSnapshot {
+        role,
+        running_requests: entries
             .iter()
-            .map(|e| e.num_reqs.max(0).saturating_add(e.num_waiting_reqs.max(0)))
-            .sum(),
-    )
+            .map(|entry| entry.num_running_reqs.unwrap_or_default().max(0) as usize)
+            .fold(0usize, usize::saturating_add),
+        total_waiting_uncached_tokens: entries
+            .iter()
+            .map(|entry| entry.num_waiting_uncached_tokens.unwrap_or_default().max(0) as usize)
+            .fold(0usize, usize::saturating_add),
+        candidate: aggregate_candidate_prefill(&entries),
+    });
+    Some(ParsedWorkerLoad {
+        request_pressure,
+        prefill,
+    })
+}
+
+fn normalize_prefill_load_role(role: Option<&str>) -> Option<PrefillLoadRole> {
+    match role {
+        Some("null" | "plain") => Some(PrefillLoadRole::Integrated),
+        Some("prefill") => Some(PrefillLoadRole::Prefill),
+        _ => None,
+    }
+}
+
+fn aggregate_candidate_prefill(entries: &[GetLoadEntry]) -> Option<CandidatePrefillLoad> {
+    let first = entries.first()?.prefill_queue.as_ref()?;
+    if !first.detail_complete
+        || first.work_bucket_bounds.is_empty()
+        || first.work_bucket_bounds.len() > 32
+        || first.work_bucket_bounds.iter().any(|value| *value < 0)
+        || first
+            .work_bucket_bounds
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+    {
+        return None;
+    }
+
+    let bucket_bounds = first
+        .work_bucket_bounds
+        .iter()
+        .map(|value| *value as usize)
+        .collect::<Vec<_>>();
+    let mut groups: BTreeMap<i64, (usize, Vec<usize>)> = BTreeMap::new();
+    let mut chunked_remaining = 0usize;
+    for entry in entries {
+        let queue = entry.prefill_queue.as_ref()?;
+        if !queue.detail_complete
+            || queue.priority_scheduling_enabled != first.priority_scheduling_enabled
+            || queue.schedule_low_priority_values_first != first.schedule_low_priority_values_first
+            || queue.work_bucket_bounds != first.work_bucket_bounds
+            || queue.priority_values.len() != queue.priority_total_uncached_tokens.len()
+            || queue.priority_values.len() != queue.priority_ahead_uncached_tokens.len()
+            || queue.priority_values.len() > 32
+            || queue.chunked_remaining_uncached_tokens < 0
+        {
+            return None;
+        }
+        chunked_remaining =
+            chunked_remaining.saturating_add(queue.chunked_remaining_uncached_tokens as usize);
+        let mut seen = HashSet::new();
+        for ((priority, total), ahead) in queue
+            .priority_values
+            .iter()
+            .zip(&queue.priority_total_uncached_tokens)
+            .zip(&queue.priority_ahead_uncached_tokens)
+        {
+            if !seen.insert(*priority)
+                || *total < 0
+                || ahead.len() != bucket_bounds.len()
+                || ahead.iter().any(|value| *value < 0)
+                || ahead.iter().any(|value| *value > *total)
+                || ahead.windows(2).any(|pair| pair[0] > pair[1])
+            {
+                return None;
+            }
+            let group = groups
+                .entry(*priority)
+                .or_insert_with(|| (0, vec![0; bucket_bounds.len()]));
+            group.0 = group.0.saturating_add(*total as usize);
+            for (aggregate, value) in group.1.iter_mut().zip(ahead) {
+                *aggregate = aggregate.saturating_add(*value as usize);
+            }
+        }
+        let detailed_total = queue
+            .priority_total_uncached_tokens
+            .iter()
+            .fold(queue.chunked_remaining_uncached_tokens, |total, value| {
+                total.saturating_add(*value)
+            });
+        if detailed_total != entry.num_waiting_uncached_tokens?.max(0) {
+            return None;
+        }
+    }
+
+    Some(CandidatePrefillLoad {
+        chunked_remaining_uncached_tokens: chunked_remaining,
+        work_bucket_bounds: bucket_bounds,
+        priority_scheduling_enabled: first.priority_scheduling_enabled,
+        schedule_low_priority_values_first: first.schedule_low_priority_values_first,
+        priorities: groups
+            .into_iter()
+            .map(
+                |(priority, (total_uncached_tokens, ahead_uncached_tokens))| PrefillPriorityLoad {
+                    priority,
+                    total_uncached_tokens,
+                    ahead_uncached_tokens,
+                },
+            )
+            .collect(),
+    })
 }
 
 fn worker_get(
@@ -86,6 +254,7 @@ fn worker_get(
 async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker::Worker>) {
     if !worker.backend().supports_sglang_load() {
         worker.set_reported_load(REPORTED_LOAD_UNSET);
+        worker.set_reported_prefill_load(None);
         tracing::debug!(
             worker_url = %worker.url,
             backend = ?worker.backend(),
@@ -102,7 +271,7 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
             return None;
         }
         let body = resp.text().await.ok()?;
-        parse_total_request_pressure(&body)
+        parse_worker_load(&body)
     };
     let health_probe = async {
         let resp = match worker_get(client, worker, &health_url).send().await {
@@ -113,9 +282,13 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
     };
     let (load, health_ok) = tokio::join!(load_probe, health_probe);
     match (load, health_ok) {
-        (Some(waiting), true) => worker.set_reported_load(waiting),
+        (Some(load), true) => {
+            worker.set_reported_load(load.request_pressure);
+            worker.set_reported_prefill_load(load.prefill);
+        }
         (load, health_ok) => {
             worker.set_reported_load(REPORTED_LOAD_FAILED);
+            worker.set_reported_prefill_load(None);
             tracing::debug!(
                 worker_url = %worker.url,
                 load_ok = load.is_some(),
@@ -217,6 +390,121 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_aggregates_prefill_snapshot_across_dp_ranks() {
+        let body = r#"[
+          {
+            "num_reqs":3,"num_waiting_reqs":2,"num_running_reqs":1,"load_role":"null",
+            "num_waiting_uncached_tokens":1000,
+            "prefill_queue":{
+              "detail_complete":true,"chunked_remaining_uncached_tokens":50,
+              "work_bucket_bounds":[256,1024],"priority_scheduling_enabled":true,
+              "schedule_low_priority_values_first":false,
+              "priority_values":[0,10],"priority_total_uncached_tokens":[650,300],
+              "priority_ahead_uncached_tokens":[[100,650],[50,300]]
+            }
+          },
+          {
+            "num_reqs":4,"num_waiting_reqs":1,"num_running_reqs":2,"load_role":"null",
+            "num_waiting_uncached_tokens":2000,
+            "prefill_queue":{
+              "detail_complete":true,"chunked_remaining_uncached_tokens":75,
+              "work_bucket_bounds":[256,1024],"priority_scheduling_enabled":true,
+              "schedule_low_priority_values_first":false,
+              "priority_values":[0,10],"priority_total_uncached_tokens":[1725,200],
+              "priority_ahead_uncached_tokens":[[200,1725],[50,200]]
+            }
+          }
+        ]"#;
+
+        let parsed = parse_worker_load(body).expect("valid load");
+        let prefill = parsed.prefill.expect("token totals available");
+        assert_eq!(prefill.role, PrefillLoadRole::Integrated);
+        assert_eq!(prefill.running_requests, 3);
+        assert_eq!(prefill.total_waiting_uncached_tokens, 3000);
+        let candidate = prefill.candidate.expect("candidate detail available");
+        assert_eq!(candidate.chunked_remaining_uncached_tokens, 125);
+        assert_eq!(candidate.priorities[0].total_uncached_tokens, 2375);
+        assert_eq!(
+            candidate.priorities[0].ahead_uncached_tokens,
+            vec![300, 2375]
+        );
+        assert_eq!(candidate.work_ahead_tokens(0, 100), Some(925));
+        assert_eq!(candidate.work_ahead_tokens(10, 100), Some(225));
+    }
+
+    #[test]
+    fn parse_old_worker_has_no_prefill_snapshot() {
+        let parsed =
+            parse_worker_load(r#"[{"dp_rank":0,"num_reqs":2,"num_waiting_reqs":1}]"#).unwrap();
+        assert_eq!(parsed.request_pressure, 3);
+        assert_eq!(parsed.prefill, None);
+    }
+
+    #[test]
+    fn incomplete_candidate_detail_keeps_conservative_totals() {
+        let parsed = parse_worker_load(
+            r#"[{
+              "num_reqs":2,"num_waiting_reqs":1,"num_running_reqs":1,"load_role":"null",
+              "num_waiting_uncached_tokens":900,
+              "prefill_queue":{"detail_complete":false}
+            }]"#,
+        )
+        .unwrap();
+        let prefill = parsed.prefill.unwrap();
+        assert_eq!(prefill.running_requests, 1);
+        assert_eq!(prefill.total_waiting_uncached_tokens, 900);
+        assert_eq!(prefill.candidate, None);
+    }
+
+    #[test]
+    fn decode_role_is_not_treated_as_prefill_work() {
+        let parsed = parse_worker_load(
+            r#"[{
+              "num_reqs":2,"num_waiting_reqs":1,"num_running_reqs":2,
+              "num_waiting_uncached_tokens":900,"load_role":"decode"
+            }]"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.request_pressure, 3);
+        assert_eq!(parsed.prefill, None);
+    }
+
+    #[test]
+    fn native_prefill_role_is_retained_as_prefill_only_work() {
+        let parsed = parse_worker_load(
+            r#"[{
+              "num_reqs":2,"num_waiting_reqs":1,"num_running_reqs":1,
+              "num_waiting_uncached_tokens":900,"load_role":"prefill"
+            }]"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.request_pressure, 3);
+        let prefill = parsed.prefill.expect("native Prefill work is available");
+        assert_eq!(prefill.role, PrefillLoadRole::Prefill);
+        assert_eq!(prefill.running_requests, 1);
+        assert_eq!(prefill.total_waiting_uncached_tokens, 900);
+    }
+
+    #[test]
+    fn mixed_integrated_and_prefill_roles_reject_token_snapshot() {
+        let parsed = parse_worker_load(
+            r#"[
+              {
+                "num_reqs":1,"num_waiting_reqs":0,"num_running_reqs":1,
+                "num_waiting_uncached_tokens":100,"load_role":"null"
+              },
+              {
+                "num_reqs":1,"num_waiting_reqs":0,"num_running_reqs":1,
+                "num_waiting_uncached_tokens":200,"load_role":"prefill"
+              }
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.request_pressure, 2);
+        assert_eq!(parsed.prefill, None);
+    }
+
     #[tokio::test]
     async fn poll_round_skips_vllm_worker_without_get_load() {
         let registry = Arc::new(WorkerRegistry::default());
@@ -238,11 +526,18 @@ mod tests {
             .unwrap();
         let worker = registry.get(&id).unwrap();
         worker.set_reported_load(REPORTED_LOAD_FAILED);
+        worker.set_reported_prefill_load(Some(PrefillLoadSnapshot {
+            role: PrefillLoadRole::Integrated,
+            running_requests: 1,
+            total_waiting_uncached_tokens: 1,
+            candidate: None,
+        }));
         let client = reqwest::Client::new();
 
         poll_round(&client, &registry).await;
 
         assert_eq!(worker.reported_load(), REPORTED_LOAD_UNSET);
+        assert_eq!(worker.reported_prefill_load(), None);
     }
 
     #[tokio::test]
@@ -270,6 +565,7 @@ mod tests {
         poll_round(&client, &registry).await;
 
         assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
+        assert_eq!(worker.reported_prefill_load(), None);
     }
 
     #[tokio::test]
@@ -282,8 +578,22 @@ mod tests {
                 "/get_load",
                 get(|| async {
                     Json(json!([
-                        {"dp_rank": 0, "num_reqs": 3, "num_waiting_reqs": 2},
-                        {"dp_rank": 1, "num_reqs": 1, "num_waiting_reqs": 5}
+                        {
+                            "dp_rank": 0,
+                            "num_reqs": 3,
+                            "num_waiting_reqs": 2,
+                            "num_running_reqs": 1,
+                            "num_waiting_uncached_tokens": 700,
+                            "load_role": "null"
+                        },
+                        {
+                            "dp_rank": 1,
+                            "num_reqs": 1,
+                            "num_waiting_reqs": 5,
+                            "num_running_reqs": 2,
+                            "num_waiting_uncached_tokens": 900,
+                            "load_role": "null"
+                        }
                     ]))
                 }),
             );
@@ -312,6 +622,12 @@ mod tests {
         poll_round(&client, &registry).await;
 
         assert_eq!(worker.reported_load(), 11);
+        let snapshot = worker
+            .reported_prefill_load()
+            .expect("successful load and health probes store the Prefill snapshot");
+        assert_eq!(snapshot.role, PrefillLoadRole::Integrated);
+        assert_eq!(snapshot.running_requests, 3);
+        assert_eq!(snapshot.total_waiting_uncached_tokens, 1600);
         server.abort();
     }
 
@@ -349,10 +665,17 @@ mod tests {
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
+        worker.set_reported_prefill_load(Some(PrefillLoadSnapshot {
+            role: PrefillLoadRole::Prefill,
+            running_requests: 1,
+            total_waiting_uncached_tokens: 512,
+            candidate: None,
+        }));
 
         poll_round(&reqwest::Client::new(), &registry).await;
 
         assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
+        assert_eq!(worker.reported_prefill_load(), None);
         assert!(!worker.introspection_probe_allows_routing());
         server.abort();
     }
