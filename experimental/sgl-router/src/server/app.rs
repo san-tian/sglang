@@ -7,6 +7,7 @@ use crate::server::routes::chat::MAX_CHAT_BODY_BYTES;
 use crate::server::routes::messages::MAX_MESSAGES_BODY_BYTES;
 use crate::server::routes::passthrough::MAX_PASSTHROUGH_BODY_BYTES;
 use crate::server::routes::responses::MAX_RESPONSES_BODY_BYTES;
+use crate::server::trace::{ensure_trace_id, insert_trace_id_header};
 use axum::extract::{DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
@@ -14,6 +15,31 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
+use tracing::Instrument;
+
+async fn attach_trace_context(mut req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let request_id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-")
+        .to_owned();
+    let trace_id = ensure_trace_id(req.headers_mut());
+    let span = tracing::info_span!(
+        "http_request",
+        trace_id = %trace_id,
+        request_id = %request_id,
+        method = %method,
+        path = %path,
+    );
+    let mut response = next.run(req).instrument(span).await;
+    insert_trace_id_header(response.headers_mut(), &trace_id);
+    response
+}
 
 /// Edge counters: `requests_total{route,method}` at entry (true intake, incl.
 /// requests parked/shed/cancelled before dispatch), `responses_total{...,
@@ -130,6 +156,7 @@ pub fn build_router_with_gateway_keyring(
         .merge(protected_routes)
         // After routing, so MatchedPath is set for every route.
         .layer(middleware::from_fn_with_state(ctx.clone(), count_requests))
+        .layer(middleware::from_fn(attach_trace_context))
         .with_state(ctx)
 }
 
@@ -177,5 +204,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn trace_context_is_reused_or_generated_and_echoed() {
+        let app = build_router(Arc::new(AppContext::stub()));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .header("x-trace-id", "trace-provided")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["x-trace-id"], "trace-provided");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.headers()["x-trace-id"]
+            .to_str()
+            .unwrap()
+            .starts_with("trace_"));
     }
 }

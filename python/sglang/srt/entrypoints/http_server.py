@@ -269,6 +269,13 @@ async def lifespan(fast_api_app: FastAPI):
         warmup_thread_kwargs = dict(server_args=server_args)
         thread_label = f"MultiTokenizer-{_global_state.tokenizer_manager.worker_id}"
 
+    # Lifespan runs inside the process that actually serves requests. This is
+    # important for multi-tokenizer mode, where uvicorn starts child workers
+    # after the parent has prepared the application.
+    from sglang.srt.utils.log_utils import configure_sls_logging
+
+    configure_sls_logging(service_name="sglang-worker")
+
     # Add prometheus middleware
     if server_args.enable_metrics:
         add_prometheus_middleware(app)
@@ -402,6 +409,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def sls_trace_context_middleware(request: Request, call_next):
+    """Bind inbound trace identifiers to logs produced by this request."""
+    from sglang.srt.utils.log_utils import get_sls_log_filter
+
+    trace_id = request.headers.get("x-trace-id") or f"trace_{uuid.uuid4().hex}"
+    request_id = request.headers.get("x-request-id", "")
+    sls_filter = get_sls_log_filter()
+    context_tokens = sls_filter.set_context(
+        trace_id=trace_id or None,
+        request_id=request_id or None,
+    )
+    try:
+        response = await call_next(request)
+        response.headers["x-trace-id"] = trace_id
+        return response
+    finally:
+        sls_filter.reset_context(context_tokens)
+
 
 # Include routers
 from sglang.srt.entrypoints.v1_loads import router as v1_loads_router

@@ -44,6 +44,10 @@
 //! | `sgl_router_remote_cache_state_query_total` | Counter | `outcome` |
 //! | `sgl_router_remote_cache_state_feed_total` | Counter | `outcome` |
 //! | `sgl_router_sse_client_disconnects_total` | Counter | `phase` |
+//! | `sgl_router_sls_log_batches_total` | Counter | `result` |
+//! | `sgl_router_sls_log_entries_sent_total` | Counter | none |
+//! | `sgl_router_sls_log_entries_dropped_total` | Counter | `reason` |
+//! | `sgl_router_sls_log_queue_depth` | Gauge | none |
 //!
 //! The `sgl_router_worker*` gauges and `sgl_router_workers` are sampled
 //! at scrape time from the live [`crate::workers::WorkerRegistry`] (passed to
@@ -327,6 +331,20 @@ impl ActiveLoadKind {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum SlsBatchResult {
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SlsDropReason {
+    QueueFull,
+    WorkerStopped,
+    SendError,
+    ShutdownLimit,
+}
+
 /// The shared metrics registry, held on `AppContext`. Cheap to clone — all
 /// internal state is `Arc`/`Atomic`/`Mutex`-protected.
 #[derive(Debug, Default)]
@@ -361,6 +379,14 @@ pub struct MetricsRegistry {
     remote_cache_state_query_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     remote_cache_state_feed_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     sse_client_disconnects_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    sls_log_batches_success: AtomicU64,
+    sls_log_batches_error: AtomicU64,
+    sls_log_entries_sent: AtomicU64,
+    sls_log_entries_dropped_queue_full: AtomicU64,
+    sls_log_entries_dropped_worker_stopped: AtomicU64,
+    sls_log_entries_dropped_send_error: AtomicU64,
+    sls_log_entries_dropped_shutdown_limit: AtomicU64,
+    sls_log_queue_depth: AtomicI64,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
@@ -794,6 +820,33 @@ impl MetricsRegistry {
             .clone();
         drop(guard);
         counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_sls_batch(&self, result: SlsBatchResult) {
+        let counter = match result {
+            SlsBatchResult::Success => &self.sls_log_batches_success,
+            SlsBatchResult::Error => &self.sls_log_batches_error,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_sls_entries_sent(&self, count: u64) {
+        self.sls_log_entries_sent
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn record_sls_drop(&self, reason: SlsDropReason, count: u64) {
+        let counter = match reason {
+            SlsDropReason::QueueFull => &self.sls_log_entries_dropped_queue_full,
+            SlsDropReason::WorkerStopped => &self.sls_log_entries_dropped_worker_stopped,
+            SlsDropReason::SendError => &self.sls_log_entries_dropped_send_error,
+            SlsDropReason::ShutdownLimit => &self.sls_log_entries_dropped_shutdown_limit,
+        };
+        counter.fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn adjust_sls_queue_depth(&self, delta: i64) {
+        self.sls_log_queue_depth.fetch_add(delta, Ordering::Relaxed);
     }
 
     /// Render the registry as a Prometheus 0.0.4 exposition-format string
@@ -1320,6 +1373,68 @@ impl MetricsRegistry {
             ));
         }
         drop(guard);
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_batches_total SLS log batches completed by result.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_batches_total counter\n");
+        out.push_str(&format!(
+            "sgl_router_sls_log_batches_total{{result=\"success\"}} {}\n",
+            self.sls_log_batches_success.load(Ordering::Relaxed),
+        ));
+        out.push_str(&format!(
+            "sgl_router_sls_log_batches_total{{result=\"error\"}} {}\n",
+            self.sls_log_batches_error.load(Ordering::Relaxed),
+        ));
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_entries_sent_total SLS log entries successfully sent.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_entries_sent_total counter\n");
+        out.push_str(&format!(
+            "sgl_router_sls_log_entries_sent_total {}\n",
+            self.sls_log_entries_sent.load(Ordering::Relaxed),
+        ));
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_entries_dropped_total SLS log entries dropped without retry, by reason.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_entries_dropped_total counter\n");
+        for (reason, value) in [
+            (
+                "queue_full",
+                self.sls_log_entries_dropped_queue_full
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "worker_stopped",
+                self.sls_log_entries_dropped_worker_stopped
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "send_error",
+                self.sls_log_entries_dropped_send_error
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "shutdown_limit",
+                self.sls_log_entries_dropped_shutdown_limit
+                    .load(Ordering::Relaxed),
+            ),
+        ] {
+            out.push_str(&format!(
+                "sgl_router_sls_log_entries_dropped_total{{reason=\"{reason}\"}} {value}\n",
+            ));
+        }
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_queue_depth Entries waiting in the bounded SLS log queue.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_queue_depth gauge\n");
+        out.push_str(&format!(
+            "sgl_router_sls_log_queue_depth {}\n",
+            self.sls_log_queue_depth.load(Ordering::Relaxed),
+        ));
 
         out
     }

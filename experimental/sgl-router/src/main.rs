@@ -4,13 +4,16 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use sgl_router::config::{Cli, LogFormat, RuntimeMode};
+use sgl_router::observability::sls_log_layer::{SlsLayerConfig, SlsLogLayer, SlsWorkerGuard};
 use sgl_router::server::entry_auth::GatewayKeyring;
+use sgl_router::server::metrics::MetricsRegistry;
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal::unix::{signal, Signal, SignalKind};
 use tokio_util::sync::CancellationToken;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Install the global tracing subscriber.
 ///
@@ -58,13 +61,42 @@ fn init_tracing(default_level: &str, format: LogFormat) -> Result<()> {
 /// The bootstrap subscriber respects `RUST_LOG` so an operator can
 /// debug startup with `RUST_LOG=debug` even when configuration resolution
 /// fails.
-fn install_bootstrap_subscriber() {
+fn install_bootstrap_subscriber(metrics: Arc<MetricsRegistry>) -> Option<SlsWorkerGuard> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
+    let (sls_layer, sls_guard) = match SlsLayerConfig::from_env("sglang-router") {
+        Ok(Some(config)) => match SlsLogLayer::new(config, metrics) {
+            Ok((layer, guard)) => (Some(layer), Some(guard)),
+            Err(error) => {
+                eprintln!("[sls-log-layer] initialization failed; using stdout only: {error}");
+                (None, None)
+            }
+        },
+        Ok(None) => (None, None),
+        Err(error) => {
+            eprintln!("[sls-log-layer] invalid configuration; using stdout only: {error}");
+            (None, None)
+        }
+    };
+    let sls_enabled = sls_guard.is_some();
+    let install_result = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_target(true))
+        .with(sls_layer)
         .try_init();
+    if let Err(error) = install_result {
+        eprintln!("tracing subscriber already installed; continuing: {error}");
+        return None;
+    }
+    if sls_enabled {
+        tracing::info!(
+            batch_size = 200,
+            queue_capacity = 10_000,
+            flush_interval_ms = 1_000,
+            "SLS direct-push logging enabled"
+        );
+    }
+    sls_guard
 }
 
 /// Install SIGTERM and SIGINT handlers up front so a failure here surfaces
@@ -418,7 +450,8 @@ async fn main() -> Result<()> {
     // Bootstrap subscriber so a config-resolution error has structured
     // output. The configured-format subscriber installs after this and
     // becomes a no-op via try_init's idempotency.
-    install_bootstrap_subscriber();
+    let metrics = MetricsRegistry::new();
+    let _sls_guard = install_bootstrap_subscriber(Arc::clone(&metrics));
     let startup = cli_from_args_or_env().await?;
     let cfg = startup
         .cli
@@ -703,7 +736,7 @@ async fn main() -> Result<()> {
     );
 
     let ctx = Arc::new(
-        sgl_router::server::app_context::AppContext::with_active_load_and_router_state(
+        sgl_router::server::app_context::AppContext::with_active_load_router_state_and_metrics(
             cfg.clone(),
             tokenizers,
             proxy,
@@ -712,6 +745,7 @@ async fn main() -> Result<()> {
             active_load,
             router_state_client,
             router_state_overlay,
+            metrics,
         ),
     );
     ctx.mark_ready();
