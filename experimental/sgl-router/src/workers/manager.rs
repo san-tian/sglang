@@ -360,7 +360,7 @@ fn reconcile_unresolved_workers(
         // let a priority-gated worker silently start accepting priority-0
         // traffic; dropping backend would make a vLLM worker retry through
         // SGLang-only endpoints; dropping tier would break tiered spillover;
-        // dropping capacity would erase heterogenous routing normalization.
+        // dropping capacity would erase heterogeneous routing normalization.
         let spec = WorkerSpec {
             id: id.clone(),
             url: worker.url.clone(),

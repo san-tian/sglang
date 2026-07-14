@@ -411,6 +411,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.middleware("http")
 async def sls_trace_context_middleware(request: Request, call_next):
     """Bind inbound trace identifiers to logs produced by this request."""
