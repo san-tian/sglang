@@ -1658,27 +1658,58 @@ class MoriKVReceiver(CommonKVReceiver):
             self.kv_mgr.kv_args.state_dim_per_tensor, "I"
         )
 
-        for bootstrap_info in self.bootstrap_infos:
-            if not self._send_request_multipart_to_bootstrap(
+        for bootstrap_info in list(self.bootstrap_infos):
+            if not self._register_kv_args_to_bootstrap_info(
                 bootstrap_info,
-                [
-                    MORI_GUARD,
-                    "None".encode("ascii"),
-                    self.kv_mgr.local_ip.encode("ascii"),
-                    str(self.kv_mgr.rank_port).encode("ascii"),
-                    engine_desc_blob,
-                    packed_kv_descs,
-                    packed_aux_descs,
-                    packed_state_descs,
-                    gpu_id,
-                    decode_tp_size,
-                    decode_tp_rank,
-                    kv_item_len,
-                    packed_state_item_lens,
-                    packed_state_dim_per_tensor,
-                ],
+                engine_desc_blob,
+                packed_kv_descs,
+                packed_aux_descs,
+                packed_state_descs,
+                gpu_id,
+                decode_tp_size,
+                decode_tp_rank,
+                kv_item_len,
+                packed_state_item_lens,
+                packed_state_dim_per_tensor,
             ):
                 return
+
+    def _register_kv_args_to_bootstrap_info(
+        self,
+        bootstrap_info: dict,
+        engine_desc_blob: bytes,
+        packed_kv_descs: bytes,
+        packed_aux_descs: bytes,
+        packed_state_descs: bytes,
+        gpu_id: bytes,
+        decode_tp_size: bytes,
+        decode_tp_rank: bytes,
+        kv_item_len: bytes,
+        packed_state_item_lens: bytes,
+        packed_state_dim_per_tensor: bytes,
+    ) -> bool:
+        return self._send_request_multipart_to_bootstrap(
+            bootstrap_info,
+            [
+                MORI_GUARD,
+                "None".encode("ascii"),
+                self.kv_mgr.local_ip.encode("ascii"),
+                str(self.kv_mgr.rank_port).encode("ascii"),
+                engine_desc_blob,
+                packed_kv_descs,
+                packed_aux_descs,
+                packed_state_descs,
+                gpu_id,
+                decode_tp_size,
+                decode_tp_rank,
+                kv_item_len,
+                packed_state_item_lens,
+                packed_state_dim_per_tensor,
+            ],
+        )
+
+    def _ensure_kv_args_registered(self):
+        self._register_kv_args()
 
     def send_metadata(
         self,
@@ -1688,6 +1719,10 @@ class MoriKVReceiver(CommonKVReceiver):
         decode_prefix_len: Optional[int] = None,
     ):
         if self.bootstrap_infos is None or self.bootstrap_room is None:
+            return
+
+        self._ensure_kv_args_registered()
+        if self.conclude_state == KVPoll.Failed:
             return
 
         kv_indices_bytes = (
@@ -1702,7 +1737,7 @@ class MoriKVReceiver(CommonKVReceiver):
             else b""
         )
 
-        for bootstrap_info in self.bootstrap_infos:
+        for bootstrap_info in list(self.bootstrap_infos):
             is_dummy = bootstrap_info.get("is_dummy", False)
             if not is_dummy and normalized_state is not None:
                 state_bytes = _pack_state_indices(normalized_state)

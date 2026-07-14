@@ -1,6 +1,7 @@
 """Unit tests for disaggregation bootstrap metadata send retry."""
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import zmq
@@ -16,6 +17,7 @@ class _FakeKVManager:
     def __init__(self):
         self.connection_pool = {}
         self.connection_lock = threading.Lock()
+        self.is_mla_backend = False
         self.failures = []
         self.status_updates = []
 
@@ -44,6 +46,7 @@ def _bootstrap_info(rank_port):
         "_prefill_cp_rank": 0,
         "_target_tp_rank": 0,
         "_target_pp_rank": 0,
+        "_bootstrap_key": "10.60.0.8:8998_0_0_0",
     }
 
 
@@ -52,6 +55,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         receiver = _make_receiver()
         old_info = _bootstrap_info(38931)
         receiver.bootstrap_infos = [old_info]
+        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [old_info]
         refreshed_info = _bootstrap_info(30100)
 
         with (
@@ -74,6 +78,10 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         self.assertIs(mock_send.call_args_list[1].args[0], refreshed_info)
         mock_route.assert_called_once_with(0, 0, 0, 0)
         self.assertIs(receiver.bootstrap_infos[0], refreshed_info)
+        self.assertIs(
+            receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"][0],
+            refreshed_info,
+        )
         self.assertEqual(receiver.kv_mgr.failures, [])
 
     def test_retry_failure_records_both_endpoints(self):
@@ -101,6 +109,57 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         _, reason = receiver.kv_mgr.failures[0]
         self.assertIn("tcp://10.60.0.8:38931", reason)
         self.assertIn("tcp://10.60.0.8:37251", reason)
+
+    def test_cached_bootstrap_infos_still_registers_kv_args(self):
+        receiver = _make_receiver()
+        cached_info = _bootstrap_info(30100)
+        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [cached_info]
+        receiver.prefill_dp_rank = 0
+        receiver.target_cp_ranks = [0]
+        receiver.target_tp_rank = 0
+        receiver.target_tp_ranks = [0]
+        receiver.target_pp_ranks = [0]
+
+        with patch.object(receiver, "_register_kv_args") as mock_register:
+            receiver._setup_bootstrap_infos()
+
+        mock_register.assert_called_once_with()
+        self.assertEqual(receiver.bootstrap_infos, [cached_info])
+
+    def test_get_bootstrap_info_retries_transient_route_failure(self):
+        receiver = _make_receiver()
+        response = SimpleNamespace(status_code=200, json=lambda: {"rank_ip": "x"})
+
+        with (
+            patch(
+                "sglang.srt.disaggregation.common.conn.requests.get",
+                side_effect=[ConnectionRefusedError("refused"), response],
+            ) as mock_get,
+            patch("sglang.srt.disaggregation.common.conn.time.sleep") as mock_sleep,
+        ):
+            info = receiver._get_bootstrap_info_from_server(0, 0, 0, 0)
+
+        self.assertEqual(info, {"rank_ip": "x"})
+        self.assertEqual(mock_get.call_count, 2)
+        mock_sleep.assert_called_once()
+
+    def test_get_bootstrap_info_retries_transient_http_status(self):
+        receiver = _make_receiver()
+        busy = SimpleNamespace(status_code=503, text="busy")
+        ok = SimpleNamespace(status_code=200, json=lambda: {"rank_ip": "x"})
+
+        with (
+            patch(
+                "sglang.srt.disaggregation.common.conn.requests.get",
+                side_effect=[busy, ok],
+            ) as mock_get,
+            patch("sglang.srt.disaggregation.common.conn.time.sleep") as mock_sleep,
+        ):
+            info = receiver._get_bootstrap_info_from_server(0, 0, 0, 0)
+
+        self.assertEqual(info, {"rank_ip": "x"})
+        self.assertEqual(mock_get.call_count, 2)
+        mock_sleep.assert_called_once()
 
 
 if __name__ == "__main__":
