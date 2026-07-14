@@ -39,6 +39,7 @@ use crate::server::routes::context_window::{
 };
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
+use crate::server::routes::reasoning_compat::{normalize_reasoning_request, ReasoningEndpoint};
 use crate::server::routes::tool_schema::normalize_tool_schema;
 use crate::server::trace::TraceContext;
 use crate::workers::LoadGuard;
@@ -403,6 +404,7 @@ pub async fn responses(
     {
         return Ok(response);
     }
+    let body = normalize_reasoning_request(&ctx, ReasoningEndpoint::Responses, body)?;
     let probe = parse_probe(&body)?;
     let model_str = probe
         .model

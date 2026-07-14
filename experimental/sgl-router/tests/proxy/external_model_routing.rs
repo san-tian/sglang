@@ -5,7 +5,7 @@
 //! production gateway to keep `macaron-a2ui-tall` outside the local pool.
 
 use axum::body::Body;
-use axum::http::Request;
+use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sgl_router::config::{
@@ -27,6 +27,7 @@ use tower::ServiceExt;
 
 const EXTERNAL_MODEL: &str = "macaron-a2ui-tall";
 const PROVIDER_TOKEN: &str = "provider-secret";
+const LOCAL_GLM_MODEL: &str = "zai-org/GLM-5.2-FP8";
 
 fn base_config(external_url: String) -> Config {
     Config {
@@ -209,6 +210,76 @@ async fn external_model_uses_fixed_upstream_for_all_supported_paths() {
         local.captured.lock().unwrap().last_body.is_none(),
         "external requests must not enter the local worker pool",
     );
+}
+
+#[tokio::test]
+async fn external_model_reasoning_dialect_is_forwarded_without_glm_normalization() {
+    let external = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let local = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let mut cfg = base_config(external.url.clone());
+    // Make the local side GLM-5.2 so this test proves the external-route
+    // ordering, rather than passing merely because compatibility is disabled.
+    cfg.model.id = LOCAL_GLM_MODEL.into();
+    let app = build_test_app(cfg, local.url.clone());
+
+    let cases = [
+        (
+            "/v1/chat/completions",
+            json!({
+                "model":EXTERNAL_MODEL,
+                "messages":[{"role":"user","content":"hi"}],
+                "reasoning_effort":"minimal"
+            }),
+            json!("minimal"),
+        ),
+        (
+            "/v1/responses",
+            json!({
+                "model":EXTERNAL_MODEL,
+                "input":"hi",
+                "reasoning":{"effort":"max"}
+            }),
+            json!("max"),
+        ),
+        (
+            "/v1/messages",
+            json!({
+                "model":EXTERNAL_MODEL,
+                "messages":[{"role":"user","content":"hi"}],
+                "output_config":{"effort":"low"}
+            }),
+            json!("low"),
+        ),
+    ];
+
+    for (path, body, expected_effort) in cases {
+        let response = app
+            .clone()
+            .oneshot(external_request(path, body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let forwarded: Value = serde_json::from_slice(
+            external
+                .captured
+                .lock()
+                .unwrap()
+                .last_body
+                .as_ref()
+                .unwrap(),
+        )
+        .unwrap();
+        let actual = match path {
+            "/v1/chat/completions" => &forwarded["reasoning_effort"],
+            "/v1/responses" => &forwarded["reasoning"]["effort"],
+            "/v1/messages" => &forwarded["output_config"]["effort"],
+            _ => unreachable!(),
+        };
+        assert_eq!(actual, &expected_effort, "{path}");
+        assert!(forwarded.get("thinking").is_none(), "{path}");
+    }
+
+    assert!(local.captured.lock().unwrap().last_body.is_none());
 }
 
 #[tokio::test]

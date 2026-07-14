@@ -36,6 +36,7 @@
 //! | `sgl_router_decode_affinity_total` | Counter | `outcome` |
 //! | `sgl_router_sticky_total` | Counter | `outcome` |
 //! | `sgl_router_ingress_tokenize_errors_total` | Counter | `model_id` |
+//! | `sgl_router_reasoning_effort_normalized_total` | Counter | `route`, `requested_class`, `effective` |
 //! | `sgl_router_priority_filtered_total` | Counter | `reason` |
 //! | `sgl_router_context_filtered_total` | Counter | `reason` |
 //! | `sgl_router_external_queue_admission_total` | Counter | `outcome` |
@@ -351,6 +352,8 @@ pub struct MetricsRegistry {
     decode_affinity_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     sticky_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     ingress_tokenize_errors_total: Mutex<HashMap<String, Arc<AtomicU64>>>,
+    reasoning_effort_normalized_total:
+        Mutex<HashMap<ReasoningEffortNormalizationKey, Arc<AtomicU64>>>,
     priority_filtered_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     context_filtered_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     external_queue_admission_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
@@ -373,6 +376,13 @@ struct AliasRouteKey {
     alias_model_id: String,
     route: &'static str,
     reason: &'static str,
+}
+
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+struct ReasoningEffortNormalizationKey {
+    route: &'static str,
+    requested_class: &'static str,
+    effective: &'static str,
 }
 
 /// Labels for the edge `requests_total` (intake) counter. `route` is the matched
@@ -661,6 +671,29 @@ impl MetricsRegistry {
         let mut guard = self.ingress_tokenize_errors_total.lock();
         let counter = guard
             .entry(model_id.to_owned())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump the bounded reasoning compatibility counter. All three labels are
+    /// supplied by enums in `reasoning_compat`; raw client values never become
+    /// metric labels, so future effort strings cannot create unbounded series.
+    pub fn record_reasoning_effort_normalized(
+        &self,
+        route: &'static str,
+        requested_class: &'static str,
+        effective: &'static str,
+    ) {
+        let key = ReasoningEffortNormalizationKey {
+            route,
+            requested_class,
+            effective,
+        };
+        let mut guard = self.reasoning_effort_normalized_total.lock();
+        let counter = guard
+            .entry(key)
             .or_insert_with(|| Arc::new(AtomicU64::new(0)))
             .clone();
         drop(guard);
@@ -1123,6 +1156,30 @@ impl MetricsRegistry {
         }
         drop(guard);
 
+        // reasoning_effort_normalized_total
+        out.push_str(
+            "# HELP sgl_router_reasoning_effort_normalized_total Gateway reasoning-effort compatibility decisions; unknown raw values are grouped into requested_class=unknown.\n",
+        );
+        out.push_str("# TYPE sgl_router_reasoning_effort_normalized_total counter\n");
+        let guard = self.reasoning_effort_normalized_total.lock();
+        let mut entries: Vec<(&ReasoningEffortNormalizationKey, u64)> = guard
+            .iter()
+            .map(|(key, value)| (key, value.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by(|a, b| {
+            a.0.route
+                .cmp(b.0.route)
+                .then(a.0.requested_class.cmp(b.0.requested_class))
+                .then(a.0.effective.cmp(b.0.effective))
+        });
+        for (key, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_reasoning_effort_normalized_total{{route=\"{}\",requested_class=\"{}\",effective=\"{}\"}} {}\n",
+                key.route, key.requested_class, key.effective, value,
+            ));
+        }
+        drop(guard);
+
         // priority_filtered_total
         out.push_str(
             "# HELP sgl_router_priority_filtered_total Requests affected by pre-selection priority-eligibility filtering (worker_excluded = a gated worker removed from a low-priority request but eligible workers remained; empty_set_rejected = filtering emptied the candidate set so the request was rejected with 503 rather than spilled onto a gated worker).\n",
@@ -1330,6 +1387,7 @@ mod tests {
         assert!(out.contains("# TYPE sgl_router_decode_affinity_total counter"));
         assert!(out.contains("# TYPE sgl_router_sticky_total counter"));
         assert!(out.contains("# TYPE sgl_router_ingress_tokenize_errors_total counter"));
+        assert!(out.contains("# TYPE sgl_router_reasoning_effort_normalized_total counter"));
         assert!(out.contains("# TYPE sgl_router_priority_filtered_total counter"));
         assert!(out.contains("# TYPE sgl_router_context_filtered_total counter"));
         assert!(out.contains("# TYPE sgl_router_external_queue_admission_total counter"));
@@ -1544,6 +1602,21 @@ mod tests {
             r#"sgl_router_requests_total{route="/v1/chat/completions",method="POST"} 2"#
         ));
         assert!(out.contains(r#"sgl_router_requests_total{route="/v1/models",method="GET"} 1"#));
+    }
+
+    #[test]
+    fn record_reasoning_effort_normalized_uses_bounded_labels() {
+        let reg = MetricsRegistry::new();
+        reg.record_reasoning_effort_normalized("/v1/responses", "unknown", "off");
+        reg.record_reasoning_effort_normalized("/v1/responses", "unknown", "off");
+        reg.record_reasoning_effort_normalized("/v1/messages", "low", "high");
+        let out = reg.render();
+        assert!(out.contains(
+            r#"sgl_router_reasoning_effort_normalized_total{route="/v1/responses",requested_class="unknown",effective="off"} 2"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_reasoning_effort_normalized_total{route="/v1/messages",requested_class="low",effective="high"} 1"#
+        ));
     }
 
     #[test]
