@@ -1,8 +1,5 @@
-# distributed-cache-state Specification
+## MODIFIED Requirements
 
-## Purpose
-Define the standalone cache-state service and gateway integration used to share prefix-cache state across gateway replicas while preserving safe fallback behavior.
-## Requirements
 ### Requirement: Distributed cache state exposes prefix-match queries
 The system SHALL provide a cache-state service mode that maintains a prefix-cache hash tree and exposes an internal HTTP API for matching request block hashes against cached worker prefixes; when reconciliation is enabled, matches SHALL contain only worker ranks whose state is currently trusted.
 
@@ -52,38 +49,7 @@ The gateway SHALL treat remote cache-state transport failures, timeouts, and mal
 - **WHEN** the authoritative response has no useful match
 - **THEN** the gateway SHALL select through its normal cache-miss load-balancing path
 
-### Requirement: Distributed cache-state operation is opt-in
-The system SHALL require explicit configuration to run cache-state service mode or to make a gateway query a remote cache-state service.
-
-#### Scenario: Existing gateway flags are unchanged
-- **WHEN** an operator starts the gateway with the existing cache-aware flags and no distributed cache-state flags
-- **THEN** startup and routing SHALL preserve the previous behavior
-
-#### Scenario: ACA service can run separately
-- **WHEN** an operator starts the binary in cache-state service mode with host and port configuration
-- **THEN** it SHALL serve only cache-state endpoints and SHALL NOT require worker discovery or proxy configuration
-
-### Requirement: Gateway can feed remote cache state
-When route-history cache tree source is enabled with a remote cache-state URL, the gateway SHALL be able to submit the chosen worker and request block hashes to the remote cache-state service after worker selection.
-
-#### Scenario: Route-history selection feeds remote cache state
-- **WHEN** a cache-aware route-history gateway selects a worker for a request with non-empty block hashes and remote cache-state is configured
-- **THEN** the gateway SHALL send an internal cache-state insert request containing the model id, chosen worker URL, dp rank, and block hash chain
-
-#### Scenario: Remote feed failure is non-fatal
-- **WHEN** the gateway cannot insert a selected route-history prefix into the remote cache-state service
-- **THEN** the gateway SHALL still return the selected worker for the user request and keep the local route-history insertion behavior
-
-### Requirement: Remote cache-state observability is bounded
-The gateway SHALL expose bounded-cardinality metrics for remote cache-state query and feed outcomes.
-
-#### Scenario: Remote query outcome is recorded
-- **WHEN** the gateway attempts a remote cache-state match query
-- **THEN** it SHALL increment a counter labeled by a bounded outcome such as hit, miss, failure, or fallback_local_hit
-
-#### Scenario: Remote feed outcome is recorded
-- **WHEN** the gateway attempts a remote cache-state insert/feed
-- **THEN** it SHALL increment a counter labeled by a bounded outcome such as success or failure
+## ADDED Requirements
 
 ### Requirement: Cache-state tracks sequence continuity and worker trust
 When reconciliation is enabled, cache-state SHALL track cache epoch and last applied transport sequence independently for each `worker_url + dp_rank`, and SHALL mark only that worker rank untrusted when it observes an epoch transition, sequence gap, conflicting duplicate, malformed authoritative metadata, or digest mismatch.

@@ -500,6 +500,8 @@ mod tests {
             ts: 0.0,
             events,
             attn_dp_rank: None,
+            publisher_epoch: None,
+            reconciliation: None,
         }
     }
 

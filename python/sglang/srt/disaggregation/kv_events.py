@@ -19,13 +19,15 @@ KV caching events
 
 import atexit
 import enum
+import hashlib
 import logging
 import queue
+import struct
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections import deque
-from itertools import count
 from queue import Queue
 from typing import Any, Callable, Optional, Union
 
@@ -45,6 +47,78 @@ class EventBatch(
     ts: float
     events: list[Any]
     attn_dp_rank: Optional[int] = None
+
+
+class CacheStateReconciliationRecord(
+    msgspec.Struct,
+    array_like=True,  # type: ignore[call-arg]
+    omit_defaults=True,  # type: ignore[call-arg]
+    gc=False,  # type: ignore[call-arg]
+    tag=True,
+):
+    """Base class for worker-authoritative cache-state control records."""
+
+
+class CacheStateDigest(CacheStateReconciliationRecord):
+    through_seq: int
+    block_count: int
+    algorithm: str
+    digest: str
+
+
+class CacheStateSnapshotEntry(
+    msgspec.Struct,
+    array_like=True,  # type: ignore[call-arg]
+    gc=False,  # type: ignore[call-arg]
+):
+    parent_block_hash: Optional[int]
+    block_hash: int
+    media: list[str]
+
+
+class CacheStateSnapshotStart(CacheStateReconciliationRecord):
+    snapshot_id: str
+    watermark: int
+    total_chunks: int
+    block_count: int
+    algorithm: str
+    digest: str
+
+
+class CacheStateSnapshotChunk(CacheStateReconciliationRecord):
+    snapshot_id: str
+    chunk_index: int
+    entries: list[CacheStateSnapshotEntry]
+
+
+class CacheStateSnapshotEnd(CacheStateReconciliationRecord):
+    snapshot_id: str
+    watermark: int
+    total_chunks: int
+    block_count: int
+    algorithm: str
+    digest: str
+
+
+class ReconciliationEventBatch(
+    msgspec.Struct,
+    array_like=True,  # type: ignore[call-arg]
+    gc=False,  # type: ignore[call-arg]
+):
+    """Opt-in extension of the legacy three-field ``EventBatch`` wire shape."""
+
+    ts: float
+    events: list[Any]
+    attn_dp_rank: Optional[int]
+    publisher_epoch: str
+    reconciliation: Optional[
+        Union[
+            CacheStateDigest,
+            CacheStateSnapshotStart,
+            CacheStateSnapshotChunk,
+            CacheStateSnapshotEnd,
+        ]
+    ]
 
 
 class KVCacheEvent(
@@ -103,6 +177,103 @@ class AllBlocksCleared(KVCacheEvent):
 
 class KVEventBatch(EventBatch):
     events: list[Union[BlockStored, BlockRemoved, AllBlocksCleared]]
+
+
+class CacheStateTracker:
+    """Logical routing state maintained by the publisher thread.
+
+    Entries are keyed by ``(parent_hash, block_hash)`` so identical block
+    hashes in different chains remain distinct. Storage media are reference
+    counted as a set: removing one tier does not hide an entry that is still
+    present in another tier.
+    """
+
+    DIGEST_ALGORITHM = "xor-sha256-v1"
+    DIGEST_BYTES = 32
+    _DEFAULT_MEDIUM = StorageMedium.GPU.value
+
+    def __init__(self) -> None:
+        self._media_by_entry: dict[tuple[Optional[int], int], set[str]] = {}
+        self._xor_digest = bytearray(self.DIGEST_BYTES)
+
+    @staticmethod
+    def canonical_entry_bytes(parent_hash: Optional[int], block_hash: int) -> bytes:
+        return struct.pack(
+            ">Bqq",
+            0 if parent_hash is None else 1,
+            0 if parent_hash is None else parent_hash,
+            block_hash,
+        )
+
+    @classmethod
+    def entry_digest(cls, parent_hash: Optional[int], block_hash: int) -> bytes:
+        return hashlib.sha256(
+            cls.canonical_entry_bytes(parent_hash, block_hash)
+        ).digest()
+
+    def _xor_entry(self, parent_hash: Optional[int], block_hash: int) -> None:
+        item = self.entry_digest(parent_hash, block_hash)
+        for i, value in enumerate(item):
+            self._xor_digest[i] ^= value
+
+    @classmethod
+    def _medium_key(cls, medium: Optional[str]) -> str:
+        if isinstance(medium, StorageMedium):
+            return medium.value
+        return str(medium) if medium is not None else cls._DEFAULT_MEDIUM
+
+    def apply(self, events: list[Any]) -> None:
+        for event in events:
+            if isinstance(event, BlockStored):
+                medium = self._medium_key(event.medium)
+                parent_hash = event.parent_block_hash
+                for block_hash in event.block_hashes:
+                    key = (parent_hash, block_hash)
+                    media = self._media_by_entry.get(key)
+                    if media is None:
+                        media = set()
+                        self._media_by_entry[key] = media
+                        self._xor_entry(*key)
+                    media.add(medium)
+                    parent_hash = block_hash
+            elif isinstance(event, BlockRemoved):
+                medium = self._medium_key(event.medium)
+                hashes = set(event.block_hashes)
+                for key in [key for key in self._media_by_entry if key[1] in hashes]:
+                    media = self._media_by_entry[key]
+                    media.discard(medium)
+                    if not media:
+                        del self._media_by_entry[key]
+                        self._xor_entry(*key)
+            elif isinstance(event, AllBlocksCleared):
+                self._media_by_entry.clear()
+                self._xor_digest = bytearray(self.DIGEST_BYTES)
+
+    @property
+    def block_count(self) -> int:
+        return len(self._media_by_entry)
+
+    @property
+    def digest_hex(self) -> str:
+        return self._xor_digest.hex()
+
+    def snapshot_entries(self) -> list[CacheStateSnapshotEntry]:
+        keys = sorted(
+            self._media_by_entry,
+            key=lambda item: (
+                0 if item[0] is None else 1,
+                0 if item[0] is None else item[0],
+                item[1],
+            ),
+        )
+        return [
+            CacheStateSnapshotEntry(
+                parent,
+                block,
+                sorted(self._media_by_entry[(parent, block)]),
+            )
+            for parent, block in keys
+        ]
 
 
 class EventPublisher(ABC):
@@ -178,7 +349,25 @@ class ZmqEventPublisher(EventPublisher):
         hwm: int = 100_000,
         max_queue_size: int = 100_000,
         topic: str = "",
+        reconciliation_enabled: bool = False,
+        reconciliation_digest_interval_s: float = 30.0,
+        reconciliation_snapshot_interval_s: float = 600.0,
+        reconciliation_snapshot_chunk_bytes: int = 256 * 1024,
+        reconciliation_max_snapshot_entries: int = 2_000_000,
     ) -> None:
+        if reconciliation_enabled and reconciliation_digest_interval_s <= 0:
+            raise ValueError("reconciliation_digest_interval_s must be greater than 0")
+        if reconciliation_snapshot_interval_s < 0:
+            raise ValueError(
+                "reconciliation_snapshot_interval_s must be greater than or equal to 0"
+            )
+        if reconciliation_snapshot_chunk_bytes < 512:
+            raise ValueError("reconciliation_snapshot_chunk_bytes must be at least 512")
+        if reconciliation_max_snapshot_entries <= 0:
+            raise ValueError(
+                "reconciliation_max_snapshot_entries must be greater than 0"
+            )
+
         # Storage
         self._event_queue = Queue[Optional[EventBatch]](maxsize=max_queue_size)
         self._buffer = deque[tuple[int, bytes]](maxlen=buffer_steps)
@@ -196,8 +385,19 @@ class ZmqEventPublisher(EventPublisher):
         self._socket_setup()
 
         # Payload
-        self._seq_gen = count()
+        self._pack = msgspec.msgpack.Encoder()
+        self._next_seq = 0
         self._topic_bytes = topic.encode("utf-8")
+        self._reconciliation_enabled = reconciliation_enabled
+        self._publisher_epoch = uuid.uuid4().hex if reconciliation_enabled else None
+        self._tracker = CacheStateTracker() if reconciliation_enabled else None
+        self._digest_interval_s = reconciliation_digest_interval_s
+        self._snapshot_interval_s = reconciliation_snapshot_interval_s
+        self._snapshot_chunk_bytes = reconciliation_snapshot_chunk_bytes
+        self._max_snapshot_entries = reconciliation_max_snapshot_entries
+        now = time.monotonic()
+        self._last_digest_at = now
+        self._last_snapshot_at = now
 
         # Thread
         self._running = True
@@ -288,8 +488,6 @@ class ZmqEventPublisher(EventPublisher):
 
     def _publisher_thread(self) -> None:
         """Background thread that processes the event queue."""
-        self._pack = msgspec.msgpack.Encoder()
-
         assert self._pub is not None  # narrows type for mypy
 
         while self._running or self._event_queue.qsize() > 0:
@@ -301,27 +499,202 @@ class ZmqEventPublisher(EventPublisher):
                     logger.exception("Error in replay: %s", e)
 
             # --- main queue (critical) ---------------------------------
+            event: Optional[EventBatch] = None
+            dequeued = False
             try:
-                event = self._event_queue.get(timeout=0.1)
+                event = self._event_queue.get(timeout=self._queue_poll_timeout())
+                dequeued = True
                 if event is None:
+                    self._event_queue.task_done()
                     break  # Sentinel received, exit thread
             except queue.Empty:
+                pass
+
+            if event is not None:
+                try:
+                    if self._tracker is not None:
+                        self._tracker.apply(event.events)
+                    self._send_mutation_batch(event)
+                except Exception as e:
+                    # Publishing failed; back off to avoid a tight error loop.
+                    logger.exception("Error in publisher thread: %s", e)
+                    time.sleep(0.1)
+                finally:
+                    if dequeued:
+                        self._event_queue.task_done()
+
+            if self._reconciliation_enabled:
+                try:
+                    self._emit_due_reconciliation()
+                except Exception as e:
+                    logger.exception(
+                        "Error publishing cache-state reconciliation: %s", e
+                    )
+                    time.sleep(0.1)
+
+    def _queue_poll_timeout(self) -> float:
+        if not self._reconciliation_enabled:
+            return 0.1
+        now = time.monotonic()
+        due_in = max(0.0, self._digest_interval_s - (now - self._last_digest_at))
+        if self._snapshot_interval_s > 0:
+            due_in = min(
+                due_in,
+                max(0.0, self._snapshot_interval_s - (now - self._last_snapshot_at)),
+            )
+        return min(0.1, due_in)
+
+    def _allocate_seq(self) -> int:
+        seq = self._next_seq
+        self._next_seq += 1
+        return seq
+
+    def _send_payload(self, seq: int, payload: bytes) -> None:
+        assert self._pub is not None
+        self._pub.send_multipart((self._topic_bytes, seq.to_bytes(8, "big"), payload))
+        self._buffer.append((seq, payload))
+
+    def _send_mutation_batch(self, event: EventBatch) -> int:
+        seq = self._allocate_seq()
+        if self._publisher_epoch is None:
+            payload = self._pack.encode(event)
+        else:
+            payload = self._pack.encode(
+                ReconciliationEventBatch(
+                    ts=event.ts,
+                    events=event.events,
+                    attn_dp_rank=event.attn_dp_rank,
+                    publisher_epoch=self._publisher_epoch,
+                    reconciliation=None,
+                )
+            )
+        self._send_payload(seq, payload)
+        return seq
+
+    def _send_control(self, seq: int, control: CacheStateReconciliationRecord) -> None:
+        assert self._publisher_epoch is not None
+        payload = self._pack.encode(
+            ReconciliationEventBatch(
+                ts=time.time(),
+                events=[],
+                attn_dp_rank=self._dp_rank,
+                publisher_epoch=self._publisher_epoch,
+                reconciliation=control,
+            )
+        )
+        self._send_payload(seq, payload)
+
+    def _emit_due_reconciliation(self) -> None:
+        assert self._tracker is not None
+        now = time.monotonic()
+        if now - self._last_digest_at >= self._digest_interval_s:
+            seq = self._allocate_seq()
+            self._send_control(
+                seq,
+                CacheStateDigest(
+                    through_seq=seq,
+                    block_count=self._tracker.block_count,
+                    algorithm=CacheStateTracker.DIGEST_ALGORITHM,
+                    digest=self._tracker.digest_hex,
+                ),
+            )
+            self._last_digest_at = now
+
+        if (
+            self._snapshot_interval_s > 0
+            and now - self._last_snapshot_at >= self._snapshot_interval_s
+        ):
+            self._emit_snapshot()
+            self._last_snapshot_at = now
+
+    def _emit_snapshot(self) -> None:
+        assert self._tracker is not None
+        entries = self._tracker.snapshot_entries()
+        if len(entries) > self._max_snapshot_entries:
+            logger.error(
+                "Skipping cache-state snapshot with %s entries; configured cap is %s",
+                len(entries),
+                self._max_snapshot_entries,
+            )
+            return
+
+        snapshot_id = uuid.uuid4().hex
+        chunks = self._chunk_snapshot_entries(snapshot_id, entries)
+        watermark = self._next_seq
+        common = dict(
+            snapshot_id=snapshot_id,
+            watermark=watermark,
+            total_chunks=len(chunks),
+            block_count=self._tracker.block_count,
+            algorithm=CacheStateTracker.DIGEST_ALGORITHM,
+            digest=self._tracker.digest_hex,
+        )
+        start_seq = self._allocate_seq()
+        assert start_seq == watermark
+        self._send_control(start_seq, CacheStateSnapshotStart(**common))
+        for chunk_index, chunk in enumerate(chunks):
+            self._send_control(
+                self._allocate_seq(),
+                CacheStateSnapshotChunk(
+                    snapshot_id=snapshot_id,
+                    chunk_index=chunk_index,
+                    entries=chunk,
+                ),
+            )
+        self._send_control(self._allocate_seq(), CacheStateSnapshotEnd(**common))
+
+    def _chunk_snapshot_entries(
+        self, snapshot_id: str, entries: list[CacheStateSnapshotEntry]
+    ) -> list[list[CacheStateSnapshotEntry]]:
+        if not entries:
+            return []
+        assert self._publisher_epoch is not None
+        chunks: list[list[CacheStateSnapshotEntry]] = []
+        current: list[CacheStateSnapshotEntry] = []
+        for entry in entries:
+            candidate = [*current, entry]
+            encoded = self._pack.encode(
+                ReconciliationEventBatch(
+                    ts=0.0,
+                    events=[],
+                    attn_dp_rank=self._dp_rank,
+                    publisher_epoch=self._publisher_epoch,
+                    reconciliation=CacheStateSnapshotChunk(
+                        snapshot_id=snapshot_id,
+                        chunk_index=len(chunks),
+                        entries=candidate,
+                    ),
+                )
+            )
+            if len(encoded) <= self._snapshot_chunk_bytes:
+                current = candidate
                 continue
-
-            try:
-                seq = next(self._seq_gen)
-
-                payload = self._pack.encode(event)
-                seq_bytes = seq.to_bytes(8, "big")
-                self._pub.send_multipart((self._topic_bytes, seq_bytes, payload))
-
-                self._buffer.append((seq, payload))
-                self._event_queue.task_done()
-
-            except Exception as e:
-                # Publishing failed;  back-off a bit to avoid a tight error loop
-                logger.exception("Error in publisher thread: %s", e)
-                time.sleep(0.1)
+            if not current:
+                raise ValueError(
+                    "reconciliation_snapshot_chunk_bytes is too small for one entry"
+                )
+            chunks.append(current)
+            current = [entry]
+            single = self._pack.encode(
+                ReconciliationEventBatch(
+                    ts=0.0,
+                    events=[],
+                    attn_dp_rank=self._dp_rank,
+                    publisher_epoch=self._publisher_epoch,
+                    reconciliation=CacheStateSnapshotChunk(
+                        snapshot_id=snapshot_id,
+                        chunk_index=len(chunks),
+                        entries=current,
+                    ),
+                )
+            )
+            if len(single) > self._snapshot_chunk_bytes:
+                raise ValueError(
+                    "reconciliation_snapshot_chunk_bytes is too small for one entry"
+                )
+        if current:
+            chunks.append(current)
+        return chunks
 
     def _service_replay(self) -> None:
         """If a replay request is waiting, send buffered batches."""
@@ -413,6 +786,21 @@ class KVEventsConfig(BaseModel):
     """The topic to use for the event publisher. Consumers can subscribe to
     this topic to receive events.
     """
+
+    reconciliation_enabled: bool = False
+    """Enable worker-authoritative epoch, digest, and snapshot emission."""
+
+    reconciliation_digest_interval_s: float = 30.0
+    """Seconds between authoritative digest records while enabled."""
+
+    reconciliation_snapshot_interval_s: float = 600.0
+    """Seconds between full routing-metadata snapshots; zero disables snapshots."""
+
+    reconciliation_snapshot_chunk_bytes: int = 256 * 1024
+    """Maximum encoded bytes for each snapshot chunk batch."""
+
+    reconciliation_max_snapshot_entries: int = 2_000_000
+    """Maximum logical entries allowed in one generated snapshot."""
 
     @classmethod
     def from_cli(cls, cli_value: str) -> "KVEventsConfig":

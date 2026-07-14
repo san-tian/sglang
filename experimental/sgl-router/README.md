@@ -126,6 +126,52 @@ it uses router-local pending reservations only.
 The feature is disabled by default. Enabling it on live ACA/APIM deployments
 requires a separate rollout approval and configuration change.
 
+## Cache-State Reconciliation
+
+Worker-authoritative cache reconciliation is disabled by default. When enabled,
+the Python ZMQ publisher maintains the routing-visible block union off the
+scheduler thread, emits periodic XOR-SHA256 digests, and emits bounded snapshots
+containing `(parent hash, block hash, storage media)` entries. Cache-state tracks
+epoch and sequence continuity per worker DP rank; a gap or mismatch excludes only
+that rank from cache-hit matches until a matching digest or verified snapshot
+restores trust. Inference/load routing remains available.
+
+Worker `--kv-events-config` JSON fields:
+
+- `reconciliation_enabled` (default `false`)
+- `reconciliation_digest_interval_s` (default `30`)
+- `reconciliation_snapshot_interval_s` (default `600`; `0` disables snapshots)
+- `reconciliation_snapshot_chunk_bytes` (default `262144`)
+- `reconciliation_max_snapshot_entries` (default `2000000`)
+
+Cache-event-agent controls:
+
+- `CACHE_EVENT_AGENT_SINK_QUEUE_CAPACITY` (default `4096`)
+- `CACHE_EVENT_AGENT_SINK_MAX_ATTEMPTS` (default `3`)
+- `CACHE_EVENT_AGENT_SINK_RETRY_BACKOFF_MS` (default `100`)
+- `CACHE_EVENT_AGENT_SINK_DELIVERY_TIMEOUT_MS` (default `10000`)
+- `CACHE_EVENT_AGENT_MAX_SINK_PAYLOAD_BYTES` (default `1048576`)
+- `CACHE_EVENT_AGENT_METRICS_BIND` (default `127.0.0.1:9898`)
+
+Cache-state controls:
+
+- `CACHE_STATE_RECONCILIATION_ENABLED` (default `false`)
+- `CACHE_STATE_RECONCILIATION_MAX_WORKER_RANKS` (default `4096`)
+- `CACHE_STATE_RECONCILIATION_MAX_SNAPSHOT_ENTRIES` (default `2000000`)
+- `CACHE_STATE_RECONCILIATION_MAX_IN_PROGRESS_SNAPSHOT_ENTRIES` (default `4000000`)
+- `CACHE_STATE_RECONCILIATION_MAX_SNAPSHOT_CHUNKS` (default `65536`)
+- `CACHE_STATE_RECONCILIATION_DEDUPE_WINDOW` (default `8192`)
+- `CACHE_STATE_KAFKA_APPLY_MAX_ATTEMPTS` (default `3`)
+- `CACHE_STATE_KAFKA_APPLY_RETRY_BACKOFF_MS` (default `250`)
+
+Roll out consumers and agents first while reconciliation remains disabled. Then
+enable an isolated cache-state consumer group and one worker that has restarted
+with reconciliation enabled. Enable authoritative production responses only
+after every active worker rank emits epochs and a fault-injection test has shown
+gap detection plus snapshot recovery. Roll back by disabling
+`CACHE_STATE_RECONCILIATION_ENABLED` and worker emission; the legacy three-field
+event batch remains unchanged.
+
 ## License
 
 Apache-2.0.

@@ -20,7 +20,7 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::message::BorrowedMessage;
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use rdkafka::Message;
+use rdkafka::{Message, Offset, TopicPartitionList};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -205,6 +205,14 @@ pub struct KafkaKvEventConsumer {
     topic: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingKafkaRecord {
+    pub record: KvEventStreamRecord,
+    pub topic: String,
+    pub partition: i32,
+    pub offset: i64,
+}
+
 impl KafkaKvEventConsumer {
     pub fn new(config: KafkaKvEventStreamConfig) -> Result<Self> {
         let group = config
@@ -227,22 +235,55 @@ impl KafkaKvEventConsumer {
         Ok(Self { consumer, topic })
     }
 
-    pub async fn recv(&self) -> Result<KvEventStreamRecord> {
+    pub async fn recv(&self) -> Result<PendingKafkaRecord> {
         let message = self
             .consumer
             .recv()
             .await
             .context("receive Kafka KV event")?;
         let record = decode_kafka_record(&message)?;
+        Ok(PendingKafkaRecord {
+            record,
+            topic: message.topic().to_string(),
+            partition: message.partition(),
+            offset: message.offset(),
+        })
+    }
+
+    pub fn commit(&self, pending: &PendingKafkaRecord) -> Result<()> {
+        let next_offset = next_kafka_offset(pending.offset)?;
+        let mut offsets = TopicPartitionList::new();
+        offsets
+            .add_partition_offset(
+                &pending.topic,
+                pending.partition,
+                Offset::Offset(next_offset),
+            )
+            .context("build Kafka commit offset")?;
         self.consumer
-            .commit_message(&message, CommitMode::Async)
-            .context("commit Kafka KV event offset")?;
-        Ok(record)
+            .commit(&offsets, CommitMode::Sync)
+            .context("commit applied Kafka KV event offset")
     }
 
     pub fn topic(&self) -> &str {
         &self.topic
     }
+}
+
+fn next_kafka_offset(offset: i64) -> Result<i64> {
+    offset
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("Kafka offset overflow at {offset}"))
+}
+
+pub fn apply_then_commit<T>(
+    pending: &PendingKafkaRecord,
+    apply: impl FnOnce(&KvEventStreamRecord) -> Result<T>,
+    commit: impl FnOnce(&PendingKafkaRecord) -> Result<()>,
+) -> Result<T> {
+    let result = apply(&pending.record).context("apply Kafka KV event record")?;
+    commit(pending).context("commit Kafka KV event after apply")?;
+    Ok(result)
 }
 
 impl LocalKvEventStream {
@@ -389,6 +430,7 @@ pub fn encode_base64(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn append_and_replay_records() {
@@ -408,6 +450,63 @@ mod tests {
         let stats = stream.append(&record).unwrap();
         assert_eq!(stats.records_after_compaction, 1);
         assert_eq!(stream.read_all().unwrap(), vec![record]);
+    }
+
+    #[test]
+    fn apply_failure_never_invokes_commit() {
+        let pending = PendingKafkaRecord {
+            record: KvEventStreamRecord::from_payload(
+                "m".into(),
+                "http://worker".into(),
+                0,
+                1,
+                b"payload",
+            ),
+            topic: "events".into(),
+            partition: 2,
+            offset: 41,
+        };
+        let commits = AtomicUsize::new(0);
+        let result: Result<()> = apply_then_commit(
+            &pending,
+            |_| Err(anyhow!("apply failed")),
+            |_| {
+                commits.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(commits.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn successful_apply_commits_once_and_offsets_advance_by_one() {
+        let pending = PendingKafkaRecord {
+            record: KvEventStreamRecord::from_payload(
+                "m".into(),
+                "http://worker".into(),
+                0,
+                1,
+                b"payload",
+            ),
+            topic: "events".into(),
+            partition: 2,
+            offset: 41,
+        };
+        let commits = AtomicUsize::new(0);
+        let result = apply_then_commit(
+            &pending,
+            |_| Ok(7usize),
+            |_| {
+                commits.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(result, 7);
+        assert_eq!(commits.load(Ordering::Relaxed), 1);
+        assert_eq!(next_kafka_offset(pending.offset).unwrap(), 42);
+        assert!(next_kafka_offset(i64::MAX).is_err());
     }
 
     #[test]

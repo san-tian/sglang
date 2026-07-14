@@ -32,7 +32,7 @@ use serde::Deserialize;
 /// Top-level batch payload published by SGLang.
 ///
 /// Wire shape (`EventBatch`, `array_like`):
-/// `[ts: f64, events: [...], attn_dp_rank: int_or_nil_or_omitted]`.
+/// `[ts, events, attn_dp_rank?, publisher_epoch?, reconciliation?]`.
 /// SGLang declares `attn_dp_rank` as a Python `Optional[int]`; we decode
 /// it as `u32` since DP ranks are non-negative and bounded by the
 /// publisher's `dp_size`.
@@ -45,6 +45,61 @@ pub struct KvEventBatch {
     /// Optional DP-attention rank that produced this batch. `None` if the
     /// publisher emitted nil or omitted the field via `omit_defaults`.
     pub attn_dp_rank: Option<u32>,
+    /// Process-unique authoritative cache generation. Present only when the
+    /// worker reconciliation protocol is enabled.
+    pub publisher_epoch: Option<String>,
+    /// Optional worker-authoritative digest or snapshot transaction record.
+    pub reconciliation: Option<CacheStateReconciliationRecord>,
+}
+
+pub const CACHE_STATE_DIGEST_ALGORITHM: &str = "xor-sha256-v1";
+pub const MAX_PUBLISHER_EPOCH_LEN: usize = 128;
+pub const MAX_SNAPSHOT_ID_LEN: usize = 128;
+pub const MAX_DIGEST_LEN: usize = 64;
+pub const MAX_SNAPSHOT_CHUNKS: usize = 65_536;
+pub const MAX_SNAPSHOT_ENTRIES_PER_CHUNK: usize = 65_536;
+pub const MAX_SNAPSHOT_ENTRIES: usize = 2_000_000;
+pub const MAX_MEDIA_PER_SNAPSHOT_ENTRY: usize = 16;
+pub const MAX_RECONCILIATION_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheStateReconciliationRecord {
+    Digest(CacheStateDigest),
+    SnapshotStart(CacheStateSnapshotManifest),
+    SnapshotChunk(CacheStateSnapshotChunk),
+    SnapshotEnd(CacheStateSnapshotManifest),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheStateDigest {
+    pub through_seq: i64,
+    pub block_count: usize,
+    pub algorithm: String,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheStateSnapshotEntry {
+    pub parent_block_hash: Option<i64>,
+    pub block_hash: i64,
+    pub media: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheStateSnapshotManifest {
+    pub snapshot_id: String,
+    pub watermark: i64,
+    pub total_chunks: usize,
+    pub block_count: usize,
+    pub algorithm: String,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheStateSnapshotChunk {
+    pub snapshot_id: String,
+    pub chunk_index: usize,
+    pub entries: Vec<CacheStateSnapshotEntry>,
 }
 
 /// A single KV cache event. The Python base class `KVCacheEvent` uses
@@ -115,6 +170,8 @@ pub enum DecodeError {
         len: usize,
         cap: usize,
     },
+    #[error("invalid cache-state reconciliation metadata: {0}")]
+    InvalidReconciliation(String),
 }
 
 /// Sentinel string a custom visitor uses to encode a "field too large"
@@ -134,7 +191,10 @@ const PAYLOAD_TOO_LARGE_TAG: &str = "kv_events::wire::PAYLOAD_TOO_LARGE";
 /// unbounded allocation in the gateway.
 pub fn decode_event_batch(bytes: &[u8]) -> Result<KvEventBatch, DecodeError> {
     match rmp_serde::from_slice::<KvEventBatch>(bytes) {
-        Ok(b) => Ok(b),
+        Ok(b) => {
+            validate_reconciliation(&b, bytes.len())?;
+            Ok(b)
+        }
         Err(e) => {
             // Rewrap the size-cap sentinel into the typed variant. The
             // sentinel string is set by `BoundedI64Vec` / `BoundedU32Vec`
@@ -150,6 +210,7 @@ pub fn decode_event_batch(bytes: &[u8]) -> Result<KvEventBatch, DecodeError> {
                         let field = match field {
                             "block_hashes" => "block_hashes",
                             "token_ids" => "token_ids",
+                            "snapshot_entries" => "snapshot_entries",
                             // Unknown — fall through to Msgpack.
                             _ => return Err(DecodeError::Msgpack(e)),
                         };
@@ -158,6 +219,111 @@ pub fn decode_event_batch(bytes: &[u8]) -> Result<KvEventBatch, DecodeError> {
                 }
             }
             Err(DecodeError::Msgpack(e))
+        }
+    }
+}
+
+fn validate_reconciliation(batch: &KvEventBatch, payload_len: usize) -> Result<(), DecodeError> {
+    if batch
+        .publisher_epoch
+        .as_ref()
+        .is_some_and(|epoch| epoch.is_empty())
+    {
+        return Err(DecodeError::InvalidReconciliation(
+            "publisher_epoch must not be empty".into(),
+        ));
+    }
+    let Some(record) = batch.reconciliation.as_ref() else {
+        return Ok(());
+    };
+    if batch.publisher_epoch.is_none() {
+        return Err(DecodeError::InvalidReconciliation(
+            "control record is missing publisher_epoch".into(),
+        ));
+    }
+    if payload_len > MAX_RECONCILIATION_PAYLOAD_BYTES {
+        return Err(DecodeError::PayloadTooLarge {
+            field: "reconciliation_payload",
+            len: payload_len,
+            cap: MAX_RECONCILIATION_PAYLOAD_BYTES,
+        });
+    }
+    let validate_digest = |algorithm: &str, digest: &str| -> Result<(), DecodeError> {
+        if algorithm != CACHE_STATE_DIGEST_ALGORITHM {
+            return Err(DecodeError::InvalidReconciliation(format!(
+                "unsupported digest algorithm {algorithm:?}"
+            )));
+        }
+        if digest.len() != MAX_DIGEST_LEN || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(DecodeError::InvalidReconciliation(
+                "digest must be exactly 64 hexadecimal characters".into(),
+            ));
+        }
+        Ok(())
+    };
+    match record {
+        CacheStateReconciliationRecord::Digest(digest) => {
+            if digest.through_seq < 0 {
+                return Err(DecodeError::InvalidReconciliation(
+                    "digest through_seq must be non-negative".into(),
+                ));
+            }
+            if digest.block_count > MAX_SNAPSHOT_ENTRIES {
+                return Err(DecodeError::PayloadTooLarge {
+                    field: "snapshot_entries",
+                    len: digest.block_count,
+                    cap: MAX_SNAPSHOT_ENTRIES,
+                });
+            }
+            validate_digest(&digest.algorithm, &digest.digest)
+        }
+        CacheStateReconciliationRecord::SnapshotStart(manifest)
+        | CacheStateReconciliationRecord::SnapshotEnd(manifest) => {
+            if manifest.snapshot_id.is_empty() {
+                return Err(DecodeError::InvalidReconciliation(
+                    "snapshot_id must not be empty".into(),
+                ));
+            }
+            if manifest.watermark < 0 {
+                return Err(DecodeError::InvalidReconciliation(
+                    "snapshot watermark must be non-negative".into(),
+                ));
+            }
+            if manifest.total_chunks > MAX_SNAPSHOT_CHUNKS {
+                return Err(DecodeError::PayloadTooLarge {
+                    field: "snapshot_chunks",
+                    len: manifest.total_chunks,
+                    cap: MAX_SNAPSHOT_CHUNKS,
+                });
+            }
+            if manifest.block_count > MAX_SNAPSHOT_ENTRIES {
+                return Err(DecodeError::PayloadTooLarge {
+                    field: "snapshot_entries",
+                    len: manifest.block_count,
+                    cap: MAX_SNAPSHOT_ENTRIES,
+                });
+            }
+            validate_digest(&manifest.algorithm, &manifest.digest)
+        }
+        CacheStateReconciliationRecord::SnapshotChunk(chunk) => {
+            if chunk.snapshot_id.is_empty() {
+                return Err(DecodeError::InvalidReconciliation(
+                    "snapshot_id must not be empty".into(),
+                ));
+            }
+            if chunk.chunk_index >= MAX_SNAPSHOT_CHUNKS {
+                return Err(DecodeError::PayloadTooLarge {
+                    field: "snapshot_chunks",
+                    len: chunk.chunk_index.saturating_add(1),
+                    cap: MAX_SNAPSHOT_CHUNKS,
+                });
+            }
+            if chunk.entries.iter().any(|entry| entry.media.is_empty()) {
+                return Err(DecodeError::InvalidReconciliation(
+                    "snapshot entries must contain at least one storage medium".into(),
+                ));
+            }
+            Ok(())
         }
     }
 }
@@ -330,6 +496,307 @@ impl<'de> Deserialize<'de> for BoundedU32Vec {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BoundedProtocolString(String);
+
+impl<'de> Deserialize<'de> for BoundedProtocolString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = String;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(
+                    f,
+                    "a UTF-8 string of at most {MAX_PUBLISHER_EPOCH_LEN} bytes"
+                )
+            }
+
+            fn visit_borrowed_str<E: de::Error>(self, value: &'de str) -> Result<String, E> {
+                self.visit_str(value)
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<String, E> {
+                if value.len() > MAX_PUBLISHER_EPOCH_LEN {
+                    return Err(E::custom(format!(
+                        "protocol string length {} exceeds cap {}",
+                        value.len(),
+                        MAX_PUBLISHER_EPOCH_LEN
+                    )));
+                }
+                Ok(value.to_owned())
+            }
+
+            fn visit_string<E: de::Error>(self, value: String) -> Result<String, E> {
+                if value.len() > MAX_PUBLISHER_EPOCH_LEN {
+                    return Err(E::custom(format!(
+                        "protocol string length {} exceeds cap {}",
+                        value.len(),
+                        MAX_PUBLISHER_EPOCH_LEN
+                    )));
+                }
+                Ok(value)
+            }
+        }
+
+        deserializer
+            .deserialize_string(V)
+            .map(BoundedProtocolString)
+    }
+}
+
+impl<'de> Deserialize<'de> for CacheStateSnapshotEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct EntryVisitor;
+        impl<'de> Visitor<'de> for EntryVisitor {
+            type Value = CacheStateSnapshotEntry;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a snapshot entry array [parent_block_hash, block_hash, media]")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let parent_block_hash: Option<i64> = seq.next_element()?.unwrap_or(None);
+                let block_hash = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::missing_field("block_hash"))?;
+                let media = seq
+                    .next_element::<BoundedMedia>()?
+                    .ok_or_else(|| de::Error::missing_field("media"))?
+                    .0;
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(CacheStateSnapshotEntry {
+                    parent_block_hash,
+                    block_hash,
+                    media,
+                })
+            }
+        }
+
+        deserializer.deserialize_seq(EntryVisitor)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BoundedMedia(Vec<String>);
+
+impl<'de> Deserialize<'de> for BoundedMedia {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct MediaVisitor;
+        impl<'de> Visitor<'de> for MediaVisitor {
+            type Value = Vec<String>;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a bounded array of storage medium strings")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                if seq
+                    .size_hint()
+                    .is_some_and(|hint| hint > MAX_MEDIA_PER_SNAPSHOT_ENTRY)
+                {
+                    return Err(de::Error::custom(
+                        "too many storage media in snapshot entry",
+                    ));
+                }
+                let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(value) = seq.next_element::<BoundedProtocolString>()? {
+                    if out.len() >= MAX_MEDIA_PER_SNAPSHOT_ENTRY {
+                        return Err(de::Error::custom(
+                            "too many storage media in snapshot entry",
+                        ));
+                    }
+                    out.push(value.0);
+                }
+                Ok(out)
+            }
+        }
+
+        deserializer.deserialize_seq(MediaVisitor).map(BoundedMedia)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BoundedSnapshotEntries(Vec<CacheStateSnapshotEntry>);
+
+impl<'de> Deserialize<'de> for BoundedSnapshotEntries {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct EntriesVisitor;
+        impl<'de> Visitor<'de> for EntriesVisitor {
+            type Value = Vec<CacheStateSnapshotEntry>;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a bounded array of cache-state snapshot entries")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                if let Some(hint) = seq.size_hint() {
+                    if hint > MAX_SNAPSHOT_ENTRIES_PER_CHUNK {
+                        return Err(de::Error::custom(format!(
+                            "{PAYLOAD_TOO_LARGE_TAG}:snapshot_entries:{hint}:{MAX_SNAPSHOT_ENTRIES_PER_CHUNK}"
+                        )));
+                    }
+                }
+                let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(entry) = seq.next_element()? {
+                    if out.len() >= MAX_SNAPSHOT_ENTRIES_PER_CHUNK {
+                        return Err(de::Error::custom(format!(
+                            "{PAYLOAD_TOO_LARGE_TAG}:snapshot_entries:{}:{MAX_SNAPSHOT_ENTRIES_PER_CHUNK}",
+                            out.len() + 1
+                        )));
+                    }
+                    out.push(entry);
+                }
+                Ok(out)
+            }
+        }
+
+        deserializer
+            .deserialize_seq(EntriesVisitor)
+            .map(BoundedSnapshotEntries)
+    }
+}
+
+impl<'de> Deserialize<'de> for CacheStateReconciliationRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct RecordVisitor;
+        impl<'de> Visitor<'de> for RecordVisitor {
+            type Value = CacheStateReconciliationRecord;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a tagged cache-state reconciliation control array")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let tag: String = seq
+                    .next_element::<BoundedProtocolString>()?
+                    .ok_or_else(|| de::Error::missing_field("reconciliation tag"))?
+                    .0;
+                let record = match tag.as_str() {
+                    "CacheStateDigest" => {
+                        let through_seq = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("through_seq"))?;
+                        let block_count = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("block_count"))?;
+                        let algorithm = seq
+                            .next_element::<BoundedProtocolString>()?
+                            .ok_or_else(|| de::Error::missing_field("algorithm"))?
+                            .0;
+                        let digest = seq
+                            .next_element::<BoundedProtocolString>()?
+                            .ok_or_else(|| de::Error::missing_field("digest"))?
+                            .0;
+                        Self::Value::Digest(CacheStateDigest {
+                            through_seq,
+                            block_count,
+                            algorithm,
+                            digest,
+                        })
+                    }
+                    "CacheStateSnapshotStart" | "CacheStateSnapshotEnd" => {
+                        let snapshot_id = seq
+                            .next_element::<BoundedProtocolString>()?
+                            .ok_or_else(|| de::Error::missing_field("snapshot_id"))?
+                            .0;
+                        let watermark = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("watermark"))?;
+                        let total_chunks = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("total_chunks"))?;
+                        let block_count = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("block_count"))?;
+                        let algorithm = seq
+                            .next_element::<BoundedProtocolString>()?
+                            .ok_or_else(|| de::Error::missing_field("algorithm"))?
+                            .0;
+                        let digest = seq
+                            .next_element::<BoundedProtocolString>()?
+                            .ok_or_else(|| de::Error::missing_field("digest"))?
+                            .0;
+                        let manifest = CacheStateSnapshotManifest {
+                            snapshot_id,
+                            watermark,
+                            total_chunks,
+                            block_count,
+                            algorithm,
+                            digest,
+                        };
+                        if tag == "CacheStateSnapshotStart" {
+                            Self::Value::SnapshotStart(manifest)
+                        } else {
+                            Self::Value::SnapshotEnd(manifest)
+                        }
+                    }
+                    "CacheStateSnapshotChunk" => {
+                        let snapshot_id = seq
+                            .next_element::<BoundedProtocolString>()?
+                            .ok_or_else(|| de::Error::missing_field("snapshot_id"))?
+                            .0;
+                        let chunk_index = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("chunk_index"))?;
+                        let entries = seq
+                            .next_element::<BoundedSnapshotEntries>()?
+                            .ok_or_else(|| de::Error::missing_field("entries"))?
+                            .0;
+                        Self::Value::SnapshotChunk(CacheStateSnapshotChunk {
+                            snapshot_id,
+                            chunk_index,
+                            entries,
+                        })
+                    }
+                    other => {
+                        return Err(de::Error::unknown_variant(
+                            other,
+                            &[
+                                "CacheStateDigest",
+                                "CacheStateSnapshotStart",
+                                "CacheStateSnapshotChunk",
+                                "CacheStateSnapshotEnd",
+                            ],
+                        ));
+                    }
+                };
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(record)
+            }
+        }
+
+        deserializer.deserialize_seq(RecordVisitor)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Custom Deserialize impls — msgspec encodes these structs as msgpack arrays
 // (not maps), and `omit_defaults=True` means trailing optional fields may be
@@ -347,7 +814,9 @@ impl<'de> Deserialize<'de> for KvEventBatch {
             type Value = KvEventBatch;
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("a msgpack array [ts, events, attn_dp_rank?]")
+                f.write_str(
+                    "a msgpack array [ts, events, attn_dp_rank?, publisher_epoch?, reconciliation?]",
+                )
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<KvEventBatch, A::Error>
@@ -363,6 +832,12 @@ impl<'de> Deserialize<'de> for KvEventBatch {
                 // attn_dp_rank may be present-as-nil, present-as-int, or
                 // omitted entirely under msgspec's `omit_defaults`.
                 let attn_dp_rank: Option<u32> = seq.next_element()?.unwrap_or(None);
+                let publisher_epoch = seq
+                    .next_element::<Option<BoundedProtocolString>>()?
+                    .unwrap_or(None)
+                    .map(|value| value.0);
+                let reconciliation: Option<CacheStateReconciliationRecord> =
+                    seq.next_element()?.unwrap_or(None);
                 // Drain any extra trailing fields a future schema might add
                 // (forward-compat).
                 while seq.next_element::<IgnoredAny>()?.is_some() {}
@@ -370,6 +845,8 @@ impl<'de> Deserialize<'de> for KvEventBatch {
                     ts,
                     events,
                     attn_dp_rank,
+                    publisher_epoch,
+                    reconciliation,
                 })
             }
         }
@@ -916,6 +1393,60 @@ mod tests {
             }
             assert!(matches!(batch.events[2], KvCacheEvent::AllBlocksCleared));
         }
+
+        #[test]
+        fn reconciliation_digest_from_python_msgspec() {
+            // ReconciliationEventBatch(1.25, [], 3, "epoch-abc",
+            //   CacheStateDigest(9, 2, "xor-sha256-v1", "ab" * 32))
+            let bytes = hex_to_bytes(
+                "95cb3ff40000000000009003a965706f63682d61626395b0436163686553746174654469676573740902ad786f722d7368613235362d7631d94061626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162",
+            );
+            let batch = decode_event_batch(&bytes).expect("decode reconciliation digest");
+            assert_eq!(batch.publisher_epoch.as_deref(), Some("epoch-abc"));
+            match batch.reconciliation {
+                Some(CacheStateReconciliationRecord::Digest(digest)) => {
+                    assert_eq!(digest.through_seq, 9);
+                    assert_eq!(digest.block_count, 2);
+                    assert_eq!(digest.algorithm, CACHE_STATE_DIGEST_ALGORITHM);
+                    assert_eq!(digest.digest, "ab".repeat(32));
+                }
+                other => panic!("expected digest, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn reconciliation_snapshot_chunk_from_python_msgspec() {
+            // ReconciliationEventBatch(2.5, [], 3, "epoch-abc",
+            //   CacheStateSnapshotChunk("snap-1", 0,
+            //     [CacheStateSnapshotEntry(None, -7, ["GPU"]),
+            //      CacheStateSnapshotEntry(-7, 9, ["CPU_PINNED", "GPU"])]))
+            let bytes = hex_to_bytes(
+                "95cb40040000000000009003a965706f63682d61626394b743616368655374617465536e617073686f744368756e6ba6736e61702d31009293c0f991a347505593f90992aa4350555f50494e4e4544a3475055",
+            );
+            let batch = decode_event_batch(&bytes).expect("decode snapshot chunk");
+            match batch.reconciliation {
+                Some(CacheStateReconciliationRecord::SnapshotChunk(chunk)) => {
+                    assert_eq!(chunk.snapshot_id, "snap-1");
+                    assert_eq!(chunk.chunk_index, 0);
+                    assert_eq!(
+                        chunk.entries,
+                        vec![
+                            CacheStateSnapshotEntry {
+                                parent_block_hash: None,
+                                block_hash: -7,
+                                media: vec!["GPU".into()],
+                            },
+                            CacheStateSnapshotEntry {
+                                parent_block_hash: Some(-7),
+                                block_hash: 9,
+                                media: vec!["CPU_PINNED".into(), "GPU".into()],
+                            },
+                        ]
+                    );
+                }
+                other => panic!("expected snapshot chunk, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -1007,6 +1538,50 @@ mod tests {
             DecodeError::PayloadTooLarge { field, cap, .. } => {
                 assert_eq!(field, "block_hashes");
                 assert_eq!(cap, MAX_HASHES_PER_EVENT);
+            }
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reconciliation_control_without_epoch_is_rejected() {
+        let mut buf = Vec::new();
+        mp::write_array_len(&mut buf, 5).unwrap();
+        mp::write_f64(&mut buf, 0.0).unwrap();
+        mp::write_array_len(&mut buf, 0).unwrap();
+        mp::write_uint(&mut buf, 0).unwrap();
+        mp::write_nil(&mut buf).unwrap();
+        mp::write_array_len(&mut buf, 5).unwrap();
+        mp::write_str(&mut buf, "CacheStateDigest").unwrap();
+        mp::write_sint(&mut buf, 0).unwrap();
+        mp::write_uint(&mut buf, 0).unwrap();
+        mp::write_str(&mut buf, CACHE_STATE_DIGEST_ALGORITHM).unwrap();
+        mp::write_str(&mut buf, &"00".repeat(32)).unwrap();
+
+        let err = decode_event_batch(&buf).expect_err("missing epoch must fail");
+        assert!(matches!(err, DecodeError::InvalidReconciliation(_)));
+    }
+
+    #[test]
+    fn snapshot_chunk_oversize_entry_prefix_is_rejected() {
+        let mut buf = Vec::new();
+        mp::write_array_len(&mut buf, 5).unwrap();
+        mp::write_f64(&mut buf, 0.0).unwrap();
+        mp::write_array_len(&mut buf, 0).unwrap();
+        mp::write_uint(&mut buf, 0).unwrap();
+        mp::write_str(&mut buf, "epoch").unwrap();
+        mp::write_array_len(&mut buf, 4).unwrap();
+        mp::write_str(&mut buf, "CacheStateSnapshotChunk").unwrap();
+        mp::write_str(&mut buf, "snapshot").unwrap();
+        mp::write_uint(&mut buf, 0).unwrap();
+        mp::write_array_len(&mut buf, (MAX_SNAPSHOT_ENTRIES_PER_CHUNK + 1) as u32).unwrap();
+
+        let err = decode_event_batch(&buf).expect_err("oversize entries must fail");
+        match err {
+            DecodeError::PayloadTooLarge { field, len, cap } => {
+                assert_eq!(field, "snapshot_entries");
+                assert_eq!(len, MAX_SNAPSHOT_ENTRIES_PER_CHUNK + 1);
+                assert_eq!(cap, MAX_SNAPSHOT_ENTRIES_PER_CHUNK);
             }
             other => panic!("expected PayloadTooLarge, got {other:?}"),
         }

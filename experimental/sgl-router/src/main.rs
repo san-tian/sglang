@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use sgl_router::config::{Cli, LogFormat, RuntimeMode};
 use sgl_router::server::entry_auth::GatewayKeyring;
@@ -785,9 +785,22 @@ async fn run_cache_state(cfg: sgl_router::config::Config) -> Result<()> {
             Arc::clone(&block_size_oracle),
             endpoint_overrides,
         );
-    let service = Arc::new(sgl_router::cache_state::CacheStateService::new(
-        kv_index.tree(),
-    ));
+    let reconciliation_config = sgl_router::cache_state::CacheStateReconciliationConfig::from_env()
+        .map_err(anyhow::Error::msg)?;
+    tracing::info!(
+        enabled = reconciliation_config.enabled,
+        max_worker_ranks = reconciliation_config.max_worker_ranks,
+        max_snapshot_entries = reconciliation_config.max_snapshot_entries,
+        max_in_progress_snapshot_entries = reconciliation_config.max_in_progress_snapshot_entries,
+        max_snapshot_chunks = reconciliation_config.max_snapshot_chunks,
+        "cache-state reconciliation configuration loaded"
+    );
+    let service = Arc::new(
+        sgl_router::cache_state::CacheStateService::new_with_reconciliation(
+            kv_index.tree(),
+            reconciliation_config,
+        ),
+    );
     let cache_state_api_token = std::env::var("CACHE_STATE_API_TOKEN")
         .ok()
         .filter(|s| !s.is_empty());
@@ -954,6 +967,12 @@ fn spawn_cache_state_kafka_consumer_if_configured(
     };
     let consumer = sgl_router::cache_event_stream::KafkaKvEventConsumer::new(config)?;
     let topic = consumer.topic().to_string();
+    let max_attempts = env_u64("CACHE_STATE_KAFKA_APPLY_MAX_ATTEMPTS")?
+        .unwrap_or(3)
+        .max(1);
+    let retry_backoff = std::time::Duration::from_millis(
+        env_u64("CACHE_STATE_KAFKA_APPLY_RETRY_BACKOFF_MS")?.unwrap_or(250),
+    );
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
     let join = tokio::spawn(async move {
@@ -963,26 +982,56 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                 _ = task_cancel.cancelled() => break,
                 recv = consumer.recv() => {
                     match recv {
-                        Ok(record) => {
-                            match service.apply_stream_records(std::slice::from_ref(&record)) {
-                                Ok(resp) => {
-                                    tracing::debug!(
-                                        worker_url = %record.worker_url,
-                                        dp_rank = record.dp_rank,
-                                        seq = record.seq,
-                                        applied_events = resp.applied_events,
-                                        "applied cache-state Kafka event-stream record"
-                                    );
+                        Ok(pending) => {
+                            let record = &pending.record;
+                            let mut completed = false;
+                            for attempt in 1..=max_attempts {
+                                let result = sgl_router::cache_event_stream::apply_then_commit(
+                                    &pending,
+                                    |record| {
+                                        service
+                                            .apply_stream_records(std::slice::from_ref(record))
+                                            .map_err(|err| anyhow!("cache-state apply failed: {err:?}"))
+                                    },
+                                    |pending| consumer.commit(pending),
+                                );
+                                match result {
+                                    Ok(resp) => {
+                                        tracing::debug!(
+                                            worker_url = %record.worker_url,
+                                            dp_rank = record.dp_rank,
+                                            seq = record.seq,
+                                            applied_events = resp.applied_events,
+                                            attempt,
+                                            "applied and committed cache-state Kafka event-stream record"
+                                        );
+                                        completed = true;
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            worker_url = %record.worker_url,
+                                            dp_rank = record.dp_rank,
+                                            seq = record.seq,
+                                            attempt,
+                                            max_attempts,
+                                            error = %err,
+                                            "failed to apply or commit cache-state Kafka event-stream record"
+                                        );
+                                        if attempt < max_attempts {
+                                            tokio::time::sleep(retry_backoff).await;
+                                        }
+                                    }
                                 }
-                                Err(err) => {
-                                    tracing::warn!(
-                                        worker_url = %record.worker_url,
-                                        dp_rank = record.dp_rank,
-                                        seq = record.seq,
-                                        error = ?err,
-                                        "failed to apply cache-state Kafka event-stream record"
-                                    );
-                                }
+                            }
+                            if !completed {
+                                tracing::error!(
+                                    worker_url = %record.worker_url,
+                                    dp_rank = record.dp_rank,
+                                    seq = record.seq,
+                                    "stopping Kafka consumer with record offset uncommitted after bounded retries"
+                                );
+                                break;
                             }
                         }
                         Err(err) => {
