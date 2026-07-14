@@ -126,6 +126,10 @@ pub struct ProxyConfig {
     /// return headers + body. Default 300 s. The circuit breaker
     /// records a failure when this fires.
     pub request_timeout_secs: u64,
+    /// Maximum time to wait for each worker `/get_load` or `/health`
+    /// introspection probe. Default 3 s so a slow worker is excluded quickly;
+    /// deployments with higher cross-region latency can raise it explicitly.
+    pub worker_probe_timeout_secs: u64,
     /// Router-side admission control for external traffic. Disabled by
     /// default; production/internal routers opt out simply by not configuring
     /// it.
@@ -136,10 +140,15 @@ pub fn default_proxy_request_timeout_secs() -> u64 {
     300
 }
 
+pub fn default_worker_probe_timeout_secs() -> u64 {
+    3
+}
+
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             request_timeout_secs: default_proxy_request_timeout_secs(),
+            worker_probe_timeout_secs: default_worker_probe_timeout_secs(),
             external_queue_admission: ExternalQueueAdmissionConfig::default(),
         }
     }

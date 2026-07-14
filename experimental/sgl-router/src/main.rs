@@ -163,6 +163,11 @@ fn env_to_cli_args() -> Vec<OsString> {
         "LOAD_POLL_INTERVAL_SECS",
         "--load-poll-interval-secs",
     );
+    push_env_arg(
+        &mut args,
+        "WORKER_PROBE_TIMEOUT_SECS",
+        "--worker-probe-timeout-secs",
+    );
     push_env_arg(&mut args, "CACHE_TREE_SOURCE", "--cache-tree-source");
     push_env_arg(&mut args, "CACHE_TREE_PAGE_SIZE", "--cache-tree-page-size");
     push_env_flag(&mut args, "CACHE_TREE_BIGRAM", "--cache-tree-bigram");
@@ -683,11 +688,13 @@ async fn main() -> Result<()> {
     let load_poller_handle = cfg.load_poll_interval_secs.map(|secs| {
         tracing::info!(
             interval_secs = secs,
+            probe_timeout_secs = cfg.proxy.worker_probe_timeout_secs,
             "spawning worker load poller (/get_load + /health)"
         );
         sgl_router::policies::load_poller::spawn_load_poller(
             Arc::clone(&registry),
             std::time::Duration::from_secs(secs),
+            std::time::Duration::from_secs(cfg.proxy.worker_probe_timeout_secs),
             cfg.worker_introspect_key.clone(),
         )
     });
@@ -1233,6 +1240,7 @@ mod tests {
             ("TIER_SPILLOVER", "shared"),
             ("TIER_PRIMARY_PRESSURE_THRESHOLD", "3"),
             ("TIER_PRESSURE_TOKEN_SCALE", "4096"),
+            ("WORKER_PROBE_TIMEOUT_SECS", "5"),
             ("TRUSTED_PRIORITY_HEADER", "x-llm-priority"),
             ("TRUSTED_PRIORITY_SECRET_HEADER", "x-llm-priority-secret"),
             ("TRUSTED_PRIORITY_SECRET", "secret"),
@@ -1263,6 +1271,7 @@ mod tests {
             "--tier-spillover",
             "--tier-primary-pressure-threshold",
             "--tier-pressure-token-scale",
+            "--worker-probe-timeout-secs",
             "--trusted-priority-header",
             "--trusted-priority-secret-header",
             "--trusted-priority-secret",

@@ -84,10 +84,6 @@ struct ParsedWorkerLoad {
     prefill: Option<PrefillLoadSnapshot>,
 }
 
-/// Per-request timeout for worker introspection GETs. Small: both responses
-/// are tiny and a slow worker should fail fast rather than stall the round.
-const WORKER_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// Sum active plus waiting requests across all dp ranks reported by one worker.
 ///
 /// Borrowing production B200 capacity must treat already-running production
@@ -239,7 +235,7 @@ fn worker_get(
     worker: &crate::workers::worker::Worker,
     url: &str,
 ) -> reqwest::RequestBuilder {
-    let mut req = client.get(url).timeout(WORKER_PROBE_TIMEOUT);
+    let mut req = client.get(url);
     if let Some(token) = worker.bearer_token() {
         let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
             .expect("worker bearer token must be a valid HTTP header value");
@@ -315,18 +311,10 @@ async fn poll_round(client: &reqwest::Client, registry: &Arc<WorkerRegistry>) {
 pub fn spawn_load_poller(
     registry: Arc<WorkerRegistry>,
     interval: Duration,
+    probe_timeout: Duration,
     bearer: Option<String>,
 ) -> JanitorHandle {
-    let mut builder = reqwest::Client::builder().timeout(WORKER_PROBE_TIMEOUT);
-    if let Some(token) = bearer.as_deref() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-            .expect("worker introspect key must be a valid HTTP header value");
-        value.set_sensitive(true);
-        headers.insert(reqwest::header::AUTHORIZATION, value);
-        builder = builder.default_headers(headers);
-    }
-    let client = builder.build().expect("load-poller http client builds");
+    let client = build_probe_client(probe_timeout, bearer.as_deref());
 
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();
@@ -347,6 +335,19 @@ pub fn spawn_load_poller(
         }
     });
     JanitorHandle::from_parts(cancel, join)
+}
+
+fn build_probe_client(probe_timeout: Duration, bearer: Option<&str>) -> reqwest::Client {
+    let mut builder = reqwest::Client::builder().timeout(probe_timeout);
+    if let Some(token) = bearer {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .expect("worker introspect key must be a valid HTTP header value");
+        value.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+        builder = builder.default_headers(headers);
+    }
+    builder.build().expect("load-poller http client builds")
 }
 
 #[cfg(test)]
@@ -676,6 +677,57 @@ mod tests {
 
         assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
         assert_eq!(worker.reported_prefill_load(), None);
+        assert!(!worker.introspection_probe_allows_routing());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_round_honors_configured_probe_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route(
+                "/health",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    StatusCode::OK
+                }),
+            )
+            .route(
+                "/get_load",
+                get(|| async {
+                    Json(json!([
+                        {"dp_rank": 0, "num_reqs": 0, "num_waiting_reqs": 0}
+                    ]))
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let id = WorkerId("slow-health".into());
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: worker_url,
+                mode: WorkerMode::Plain,
+                model_ids: vec![ModelId("m".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: WorkerBackend::Sglang,
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+            })
+            .unwrap();
+        let worker = registry.get(&id).unwrap();
+        let client = build_probe_client(Duration::from_millis(20), None);
+
+        tokio::time::timeout(Duration::from_secs(1), poll_round(&client, &registry))
+            .await
+            .expect("probe round must respect the configured client timeout");
+
+        assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
         assert!(!worker.introspection_probe_allows_routing());
         server.abort();
     }
