@@ -186,6 +186,7 @@ fn env_to_cli_args() -> Vec<OsString> {
         "TTFT_CACHE_SCORE_MARGIN",
         "--ttft-cache-score-margin",
     );
+    push_env_arg(&mut args, "TTFT_SCORE_MODE", "--ttft-score-mode");
     push_env_flag(&mut args, "TTFT_FIRST_ROUTING", "--ttft-first-routing");
     push_env_flag(
         &mut args,
@@ -1281,5 +1282,24 @@ mod tests {
                 "{flag} missing from {args:?}"
             );
         }
+    }
+
+    #[test]
+    fn env_adapter_passes_ttft_score_mode() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("TTFT_SCORE_MODE");
+        std::env::set_var("TTFT_SCORE_MODE", "prefill-work-normalized");
+
+        let args = env_to_cli_args()
+            .into_iter()
+            .map(|arg| arg.into_string().expect("test args are utf-8"))
+            .collect::<Vec<_>>();
+
+        std::env::remove_var("TTFT_SCORE_MODE");
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--ttft-score-mode", "prefill-work-normalized"]));
     }
 }
