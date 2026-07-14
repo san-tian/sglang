@@ -20,6 +20,11 @@ if _is_npu:
     NPU_ROTARY_MUL_MAX_HEAD_SIZE = 896
 
 
+def canonicalize_rope_positions(positions: torch.Tensor) -> torch.Tensor:
+    """Give native RoPE kernels a dense, unit-stride position layout."""
+    return positions if positions.is_contiguous() else positions.contiguous()
+
+
 def rotate_neox(x: torch.Tensor) -> torch.Tensor:
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
