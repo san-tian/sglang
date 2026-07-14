@@ -22,6 +22,9 @@
 
 - [x] 4.1 Merge the first non-blocking source change into `san-tian/sglang@deploy-prod`, build immutable image digest `sha256:eb5c2f19d4e780d4a8b17a58dc4152e88fc9b4bceaa835114f97e66e3475e6ec`, and verify B liveness no longer restarts
 - [x] 4.2 Record the first B canary's production throughput evidence and stop expansion when synchronous commits consume slower than Event Hubs produces
-- [ ] 4.3 Merge the checkpoint follow-up, build a new immutable image, and update deployment truth
-- [ ] 4.4 Roll only `llm-cache-state-glm52-b` to the checkpoint image with the first canary digest as rollback
-- [ ] 4.5 Verify B restart count is stable, health remains responsive, broker offsets catch up faster than ingress, and reconciliation survives two snapshot intervals
+- [x] 4.3 Merge the checkpoint follow-up, build a new immutable image, and update deployment truth
+- [x] 4.4 Roll only `llm-cache-state-glm52-b` to the checkpoint image with the first canary digest as rollback
+- [x] 4.5 Verify B restart count is stable, health remains responsive, and broker offsets catch up faster than ingress and remain at the live head
+- [x] 4.6 Audit live and canonical worker publisher configuration and record the legacy-wire activation prerequisite
+- [x] 4.7 Roll the reviewed watchdog 1.67 cache-event-agent lifecycle image and verify stable subscriber PIDs across consecutive healthy monitor rounds
+- [ ] 4.8 After separate drain/restart approval, enable reconciliation on one explicitly designated test or canary worker rank and verify two complete snapshot intervals
