@@ -15,6 +15,8 @@ use tracing_subscriber::{
 use super::otel_trace::get_otel_layer;
 use crate::config::TraceConfig;
 
+use super::sls_log_layer::{SlsLayerConfig, SlsLogLayer, SlsWorkerGuard};
+
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const TIME_FORMAT_MS: &str = "%Y-%m-%d %H:%M:%S%.3f";
 const DEFAULT_LOG_TARGET: &str = "smg";
@@ -50,10 +52,11 @@ impl Default for LoggingConfig {
     }
 }
 
-/// Guard that keeps the file appender thread alive.
+/// Guards that keep background logging workers alive.
 #[allow(dead_code)]
 pub struct LogGuard {
     _file_guard: Option<WorkerGuard>,
+    _sls_guard: Option<SlsWorkerGuard>,
 }
 
 #[inline]
@@ -108,7 +111,7 @@ pub fn init_logging(config: LoggingConfig, otel_layer_config: Option<TraceConfig
         EnvFilter::new(filter_string)
     });
 
-    let mut layers = Vec::with_capacity(3);
+    let mut layers = Vec::with_capacity(4);
 
     let time_fmt = get_time_format();
 
@@ -126,6 +129,20 @@ pub fn init_logging(config: LoggingConfig, otel_layer_config: Option<TraceConfig
 
     layers.push(stdout_layer);
 
+    // SLS direct-push layer — pushes logs to阿里云 SLS via HTTP API.
+    // Only enabled when SLS_ENDPOINT + SLS_ACCESS_KEY_ID + SLS_ACCESS_KEY_SECRET
+    // are all set. No Logtail agent required.
+    let mut sls_guard = None;
+    if let Some(sls_config) = SlsLayerConfig::from_env("sglang-router") {
+        match SlsLogLayer::new(sls_config) {
+            Ok((sls_layer, guard)) => {
+                layers.push(sls_layer.boxed());
+                sls_guard = Some(guard);
+            }
+            Err(error) => eprintln!("Failed to initialize SLS logging: {}", error),
+        }
+    }
+
     let mut file_guard = None;
 
     if let Some(log_dir) = &config.log_dir {
@@ -134,7 +151,10 @@ pub fn init_logging(config: LoggingConfig, otel_layer_config: Option<TraceConfig
         if !log_dir.exists() {
             if let Err(e) = std::fs::create_dir_all(&log_dir) {
                 eprintln!("Failed to create log directory: {}", e);
-                return LogGuard { _file_guard: None };
+                return LogGuard {
+                    _file_guard: None,
+                    _sls_guard: sls_guard,
+                };
             }
         }
 
@@ -180,5 +200,6 @@ pub fn init_logging(config: LoggingConfig, otel_layer_config: Option<TraceConfig
 
     LogGuard {
         _file_guard: file_guard,
+        _sls_guard: sls_guard,
     }
 }

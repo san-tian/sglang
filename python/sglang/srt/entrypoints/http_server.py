@@ -403,6 +403,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def sls_trace_context_middleware(request: Request, call_next):
+    """Extract trace_id/request_id from headers for cross-service log correlation.
+
+    Enables unified log tracing across 中转站 → SGLang Router → SGLang Worker
+    via阿里云 SLS. The filter injects these IDs into every log record so
+    that SLS SDK direct-push (or stdout) is consistently tagged.
+    """
+    from sglang.srt.utils.log_utils import get_sls_log_filter
+
+    trace_id = request.headers.get("x-trace-id", "")
+    request_id = request.headers.get("x-request-id", "")
+
+    sls_filter = get_sls_log_filter()
+    context_tokens = sls_filter.set_context(
+        trace_id=trace_id or None,
+        request_id=request_id or None,
+    )
+    try:
+        response = await call_next(request)
+        # Propagate trace_id back to client for debugging
+        if trace_id:
+            response.headers["x-trace-id"] = trace_id
+        return response
+    finally:
+        sls_filter.reset_context(context_tokens)
+
+
 # Include routers
 from sglang.srt.entrypoints.v1_loads import router as v1_loads_router
 
@@ -2326,6 +2355,11 @@ def _setup_and_run_http_server(
     try:
         # Update logging configs
         set_uvicorn_logging_configs(server_args)
+
+        # Configure SLS structured logging if enabled. Pushes logs directly to
+        #阿里云 SLS via the Python SDK (async batching), no Logtail agent needed.
+        from sglang.srt.utils.log_utils import configure_sls_logging
+        configure_sls_logging(service_name="sglang-worker")
 
         if server_args.ssl_certfile:
             logger.info(
