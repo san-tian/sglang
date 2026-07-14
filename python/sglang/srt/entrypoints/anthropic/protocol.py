@@ -379,6 +379,11 @@ class AnthropicMessagesRequest(BaseModel):
     output_config: Optional[AnthropicOutputConfig] = None
     betas: Optional[list[str]] = None
 
+    # Disaggregated Prefill bootstrap fields.
+    bootstrap_host: Optional[str] = None
+    bootstrap_port: Optional[int] = None
+    bootstrap_room: Optional[int] = None
+
     @field_validator("model")
     @classmethod
     def _validate_model(cls, v):

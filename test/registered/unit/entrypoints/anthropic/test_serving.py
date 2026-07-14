@@ -164,6 +164,19 @@ class TestAnthropicServing(unittest.TestCase):
         data.update(overrides)
         return AnthropicMessagesRequest.model_validate(data)
 
+    def test_pd_bootstrap_fields_are_forwarded_to_chat_request(self):
+        request = self._anthropic_request(
+            bootstrap_host="10.0.0.10",
+            bootstrap_port=8998,
+            bootstrap_room=42,
+        )
+
+        chat_request = self._serving()._convert_to_chat_completion_request(request)
+
+        self.assertEqual(chat_request.bootstrap_host, "10.0.0.10")
+        self.assertEqual(chat_request.bootstrap_port, 8998)
+        self.assertEqual(chat_request.bootstrap_room, 42)
+
     def test_stream_closes_tool_block_before_text_delta(self):
         serving = self._serving(
             [

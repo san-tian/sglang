@@ -207,7 +207,7 @@ pub struct WorkerSpec {
     /// B200/B300 capacity, `500` means half speed, and `5000` means 5x
     /// capacity. Static URL discovery seeds this from
     /// `url@prefill_capacity=N`; policies that do not explicitly opt into
-    /// heterogenous normalization ignore it.
+    /// heterogeneous normalization ignore it.
     #[serde(default = "default_prefill_capacity_milli")]
     pub prefill_capacity_milli: usize,
 }
