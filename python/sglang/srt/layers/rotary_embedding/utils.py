@@ -22,7 +22,11 @@ if _is_npu:
 
 def canonicalize_rope_positions(positions: torch.Tensor) -> torch.Tensor:
     """Give native RoPE kernels a dense, unit-stride position layout."""
-    return positions if positions.is_contiguous() else positions.contiguous()
+    if positions.is_contiguous() and (
+        positions.dim() == 0 or positions.stride(-1) == 1
+    ):
+        return positions
+    return positions.clone(memory_format=torch.contiguous_format)
 
 
 def rotate_neox(x: torch.Tensor) -> torch.Tensor:
