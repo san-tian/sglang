@@ -16,8 +16,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
+use rdkafka::client::ClientContext;
 use rdkafka::config::ClientConfig;
-use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
+use rdkafka::consumer::{Consumer, ConsumerContext, StreamConsumer};
+use rdkafka::error::KafkaResult;
 use rdkafka::message::BorrowedMessage;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::{Message, Offset, TopicPartitionList};
@@ -26,6 +28,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 const SCHEMA_VERSION: u32 = 1;
+const DEFAULT_KAFKA_AUTO_COMMIT_INTERVAL_MS: u32 = 1_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KvEventStreamRecord {
@@ -98,6 +101,7 @@ pub struct KafkaKvEventStreamConfig {
     pub client_id: Option<String>,
     pub consumer_group: Option<String>,
     pub auto_offset_reset: String,
+    pub auto_commit_interval_ms: u32,
 }
 
 impl KafkaKvEventStreamConfig {
@@ -116,6 +120,7 @@ impl KafkaKvEventStreamConfig {
             client_id: env_string(&format!("{prefix}_KAFKA_CLIENT_ID")),
             consumer_group: None,
             auto_offset_reset: "latest".to_string(),
+            auto_commit_interval_ms: DEFAULT_KAFKA_AUTO_COMMIT_INTERVAL_MS,
         }))
     }
 
@@ -130,6 +135,8 @@ impl KafkaKvEventStreamConfig {
             env_string(&format!("{prefix}_KAFKA_CONSUMER_GROUP")).ok_or_else(|| {
                 anyhow!("{prefix}_KAFKA_CONSUMER_GROUP is required for cache-state Kafka consumer")
             })?;
+        let auto_commit_interval_ms =
+            parse_auto_commit_interval_ms(prefix, DEFAULT_KAFKA_AUTO_COMMIT_INTERVAL_MS)?;
         Ok(Some(Self {
             bootstrap_servers,
             topic,
@@ -139,6 +146,7 @@ impl KafkaKvEventStreamConfig {
             consumer_group: Some(consumer_group),
             auto_offset_reset: env_string(&format!("{prefix}_KAFKA_AUTO_OFFSET_RESET"))
                 .unwrap_or_else(|| "earliest".to_string()),
+            auto_commit_interval_ms,
         }))
     }
 
@@ -160,6 +168,34 @@ impl KafkaKvEventStreamConfig {
         }
         cfg
     }
+
+    fn consumer_client_config(&self, group: &str) -> ClientConfig {
+        let mut cfg = self.base_client_config();
+        cfg.set("group.id", group)
+            .set("enable.auto.commit", "true")
+            .set(
+                "auto.commit.interval.ms",
+                self.auto_commit_interval_ms.to_string(),
+            )
+            .set("enable.auto.offset.store", "false")
+            .set("auto.offset.reset", &self.auto_offset_reset)
+            .set("session.timeout.ms", "30000");
+        cfg
+    }
+}
+
+fn parse_auto_commit_interval_ms(prefix: &str, default: u32) -> Result<u32> {
+    let name = format!("{prefix}_KAFKA_AUTO_COMMIT_INTERVAL_MS");
+    let Some(raw) = env_string(&name) else {
+        return Ok(default);
+    };
+    let value = raw
+        .parse::<u32>()
+        .with_context(|| format!("parse {name} as a positive integer"))?;
+    if value == 0 {
+        return Err(anyhow!("{name} must be greater than zero"));
+    }
+    Ok(value)
 }
 
 #[derive(Clone)]
@@ -200,8 +236,31 @@ impl KafkaKvEventProducer {
     }
 }
 
+#[derive(Clone, Default)]
+struct CacheStateKafkaConsumerContext;
+
+impl ClientContext for CacheStateKafkaConsumerContext {}
+
+impl ConsumerContext for CacheStateKafkaConsumerContext {
+    fn commit_callback(&self, result: KafkaResult<()>, offsets: &TopicPartitionList) {
+        match result {
+            Ok(()) => tracing::debug!(
+                offsets = ?offsets,
+                "periodically committed cache-state Kafka checkpoints"
+            ),
+            Err(error) => tracing::warn!(
+                error = %error,
+                offsets = ?offsets,
+                "failed to periodically commit cache-state Kafka checkpoints"
+            ),
+        }
+    }
+}
+
+type CacheStateStreamConsumer = StreamConsumer<CacheStateKafkaConsumerContext>;
+
 pub struct KafkaKvEventConsumer {
-    consumer: StreamConsumer,
+    consumer: CacheStateStreamConsumer,
     topic: String,
 }
 
@@ -220,14 +279,9 @@ impl KafkaKvEventConsumer {
             .clone()
             .ok_or_else(|| anyhow!("Kafka consumer group is required"))?;
         let topic = config.topic.clone();
-        let mut client_config = config.base_client_config();
-        client_config
-            .set("group.id", &group)
-            .set("enable.auto.commit", "false")
-            .set("auto.offset.reset", &config.auto_offset_reset)
-            .set("session.timeout.ms", "30000");
-        let consumer: StreamConsumer = client_config
-            .create()
+        let client_config = config.consumer_client_config(&group);
+        let consumer: CacheStateStreamConsumer = client_config
+            .create_with_context(CacheStateKafkaConsumerContext)
             .context("create Kafka KV event consumer")?;
         consumer
             .subscribe(&[&topic])
@@ -250,7 +304,7 @@ impl KafkaKvEventConsumer {
         })
     }
 
-    pub fn commit(&self, pending: &PendingKafkaRecord) -> Result<()> {
+    pub fn checkpoint(&self, pending: &PendingKafkaRecord) -> Result<()> {
         let next_offset = next_kafka_offset(pending.offset)?;
         let mut offsets = TopicPartitionList::new();
         offsets
@@ -259,10 +313,10 @@ impl KafkaKvEventConsumer {
                 pending.partition,
                 Offset::Offset(next_offset),
             )
-            .context("build Kafka commit offset")?;
+            .context("build Kafka checkpoint offset")?;
         self.consumer
-            .commit(&offsets, CommitMode::Sync)
-            .context("commit applied Kafka KV event offset")
+            .store_offsets(&offsets)
+            .context("store applied Kafka KV event checkpoint")
     }
 
     pub fn topic(&self) -> &str {
@@ -276,29 +330,29 @@ fn next_kafka_offset(offset: i64) -> Result<i64> {
         .ok_or_else(|| anyhow!("Kafka offset overflow at {offset}"))
 }
 
-pub fn apply_then_commit<T>(
+pub fn apply_then_checkpoint<T>(
     pending: &PendingKafkaRecord,
     apply: impl FnOnce(&KvEventStreamRecord) -> Result<T>,
-    commit: impl FnOnce(&PendingKafkaRecord) -> Result<()>,
+    checkpoint: impl FnOnce(&PendingKafkaRecord) -> Result<()>,
 ) -> Result<T> {
     let result = apply(&pending.record).context("apply Kafka KV event record")?;
-    commit(pending).context("commit Kafka KV event after apply")?;
+    checkpoint(pending).context("checkpoint Kafka KV event after apply")?;
     Ok(result)
 }
 
-pub async fn apply_then_commit_blocking<T, Apply, Commit>(
+pub async fn apply_then_checkpoint_blocking<T, Apply, Checkpoint>(
     pending: Arc<PendingKafkaRecord>,
     apply: Apply,
-    commit: Commit,
+    checkpoint: Checkpoint,
 ) -> Result<T>
 where
     T: Send + 'static,
     Apply: FnOnce(&KvEventStreamRecord) -> Result<T> + Send + 'static,
-    Commit: FnOnce(&PendingKafkaRecord) -> Result<()> + Send + 'static,
+    Checkpoint: FnOnce(&PendingKafkaRecord) -> Result<()> + Send + 'static,
 {
-    tokio::task::spawn_blocking(move || apply_then_commit(pending.as_ref(), apply, commit))
+    tokio::task::spawn_blocking(move || apply_then_checkpoint(pending.as_ref(), apply, checkpoint))
         .await
-        .context("join blocking Kafka KV event apply-and-commit task")?
+        .context("join blocking Kafka KV event apply-and-checkpoint task")?
 }
 
 impl LocalKvEventStream {
@@ -469,7 +523,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_failure_never_invokes_commit() {
+    fn apply_failure_never_invokes_checkpoint() {
         let pending = PendingKafkaRecord {
             record: KvEventStreamRecord::from_payload(
                 "m".into(),
@@ -482,21 +536,21 @@ mod tests {
             partition: 2,
             offset: 41,
         };
-        let commits = AtomicUsize::new(0);
-        let result: Result<()> = apply_then_commit(
+        let checkpoints = AtomicUsize::new(0);
+        let result: Result<()> = apply_then_checkpoint(
             &pending,
             |_| Err(anyhow!("apply failed")),
             |_| {
-                commits.fetch_add(1, Ordering::Relaxed);
+                checkpoints.fetch_add(1, Ordering::Relaxed);
                 Ok(())
             },
         );
         assert!(result.is_err());
-        assert_eq!(commits.load(Ordering::Relaxed), 0);
+        assert_eq!(checkpoints.load(Ordering::Relaxed), 0);
     }
 
     #[test]
-    fn successful_apply_commits_once_and_offsets_advance_by_one() {
+    fn successful_apply_checkpoints_once_after_apply_and_offsets_advance_by_one() {
         let pending = PendingKafkaRecord {
             record: KvEventStreamRecord::from_payload(
                 "m".into(),
@@ -509,24 +563,29 @@ mod tests {
             partition: 2,
             offset: 41,
         };
-        let commits = AtomicUsize::new(0);
-        let result = apply_then_commit(
+        let applied = AtomicBool::new(false);
+        let checkpoints = AtomicUsize::new(0);
+        let result = apply_then_checkpoint(
             &pending,
-            |_| Ok(7usize),
             |_| {
-                commits.fetch_add(1, Ordering::Relaxed);
+                applied.store(true, Ordering::Release);
+                Ok(7usize)
+            },
+            |_| {
+                assert!(applied.load(Ordering::Acquire));
+                checkpoints.fetch_add(1, Ordering::Relaxed);
                 Ok(())
             },
         )
         .unwrap();
         assert_eq!(result, 7);
-        assert_eq!(commits.load(Ordering::Relaxed), 1);
+        assert_eq!(checkpoints.load(Ordering::Relaxed), 1);
         assert_eq!(next_kafka_offset(pending.offset).unwrap(), 42);
         assert!(next_kafka_offset(i64::MAX).is_err());
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn blocking_apply_and_commit_does_not_starve_single_thread_runtime() {
+    async fn blocking_apply_and_checkpoint_does_not_starve_single_thread_runtime() {
         let pending = PendingKafkaRecord {
             record: KvEventStreamRecord::from_payload(
                 "m".into(),
@@ -541,7 +600,7 @@ mod tests {
         };
         let started = Arc::new(AtomicBool::new(false));
         let release = Arc::new(AtomicBool::new(false));
-        let commits = Arc::new(AtomicUsize::new(0));
+        let checkpoints = Arc::new(AtomicUsize::new(0));
 
         let watchdog_started = Arc::clone(&started);
         let watchdog_release = Arc::clone(&release);
@@ -560,8 +619,8 @@ mod tests {
 
         let apply_started = Arc::clone(&started);
         let apply_release = Arc::clone(&release);
-        let commit_count = Arc::clone(&commits);
-        let operation = tokio::spawn(apply_then_commit_blocking(
+        let checkpoint_count = Arc::clone(&checkpoints);
+        let operation = tokio::spawn(apply_then_checkpoint_blocking(
             Arc::new(pending),
             move |_| {
                 apply_started.store(true, Ordering::Release);
@@ -571,7 +630,7 @@ mod tests {
                 Ok(7usize)
             },
             move |_| {
-                commit_count.fetch_add(1, Ordering::Relaxed);
+                checkpoint_count.fetch_add(1, Ordering::Relaxed);
                 Ok(())
             },
         ));
@@ -587,8 +646,26 @@ mod tests {
         release.store(true, Ordering::Release);
 
         assert_eq!(operation.await.unwrap().unwrap(), 7);
-        assert_eq!(commits.load(Ordering::Relaxed), 1);
+        assert_eq!(checkpoints.load(Ordering::Relaxed), 1);
         watchdog.join().unwrap();
+    }
+
+    #[test]
+    fn consumer_config_batches_manually_stored_offsets() {
+        let config = KafkaKvEventStreamConfig {
+            bootstrap_servers: "localhost:9092".into(),
+            topic: "events".into(),
+            username: None,
+            password: None,
+            client_id: None,
+            consumer_group: Some("cache-state".into()),
+            auto_offset_reset: "earliest".into(),
+            auto_commit_interval_ms: 1_234,
+        };
+        let client_config = config.consumer_client_config("cache-state");
+        assert_eq!(client_config.get("enable.auto.commit"), Some("true"));
+        assert_eq!(client_config.get("enable.auto.offset.store"), Some("false"));
+        assert_eq!(client_config.get("auto.commit.interval.ms"), Some("1234"));
     }
 
     #[test]

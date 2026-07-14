@@ -463,6 +463,7 @@ fn build_event_sinks(args: &Args) -> Result<Vec<EventSink>> {
             client_id: args.kafka_client_id.clone(),
             consumer_group: None,
             auto_offset_reset: "latest".to_string(),
+            auto_commit_interval_ms: 1_000,
         })?;
         sinks.push(EventSink::Kafka(producer));
     }

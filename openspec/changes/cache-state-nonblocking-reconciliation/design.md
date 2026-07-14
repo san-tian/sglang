@@ -4,11 +4,14 @@ The first reconciliation-enabled GLM-5.2 cache-state shadow runs in Azure Contai
 
 The cache-state Kafka task currently calls synchronous record application and `CommitMode::Sync` directly inside `tokio::spawn`. Snapshot end processing holds reconciliation state while `HashTree::replace_worker` repeatedly scans every unresolved entry until parent hashes become reachable. Publisher snapshots are deterministically sorted by hashes, not topologically, so deep chains can require many full scans. The same synchronous application path is also reachable through the cache-state HTTP event endpoint.
 
+The first canary moved apply and `CommitMode::Sync` to Tokio's blocking pool and replaced the quadratic snapshot traversal. It remained healthy with no restart growth, proving the liveness fix, but its successful apply/commit operations averaged about 0.59 seconds and it consumed only about 90 records/minute. Event Hubs simultaneously received 312-590 records/minute. The consumer backlog therefore continued to grow and no snapshot could be reached. This production result invalidates the assumption that waiting for one broker-confirmed commit per record is viable at the observed event rate.
+
 ## Goals / Non-Goals
 
 **Goals:**
 
 - Keep cache-state liveness responsive while Kafka/Event Hubs apply and commit operations are slow.
+- Sustain consumption above the observed producer rate by batching broker commits independently of record application.
 - Preserve at-least-once, post-apply offset commit semantics and per-partition ordering.
 - Make valid snapshot dependency ordering linear in the number of logical entries.
 - Preserve atomic worker ownership replacement and existing validation behavior.
@@ -23,11 +26,11 @@ The cache-state Kafka task currently calls synchronous record application and `C
 
 ## Decisions
 
-### Run apply and synchronous commit on Tokio's blocking pool
+### Run apply on Tokio's blocking pool and checkpoint offsets locally
 
-The Kafka receive future remains on the asynchronous runtime. Once it yields an owned record, a `spawn_blocking` task performs decode/application and the synchronous offset commit in the existing apply-then-commit order. The consumer waits for that task before receiving the next record, preserving per-consumer ordering and bounded retries. The HTTP KV-event handler uses the same blocking boundary for record application.
+The Kafka receive future remains on the asynchronous runtime. Once it yields an owned record, a `spawn_blocking` task performs application and stores the record's next offset only after application succeeds. The consumer waits for that task before receiving the next record, preserving per-consumer ordering and bounded retries. The HTTP KV-event handler uses the same blocking boundary for record application.
 
-Keeping `CommitMode::Sync` is deliberate: switching to asynchronous commit would return before the broker confirms the offset and would weaken the existing post-apply durability contract. Adding more Tokio worker threads alone would hide the immediate symptom but leave blocking work on the I/O executor and remain sensitive to quota/runtime sizing.
+The consumer enables librdkafka auto-commit with a one-second configurable interval while disabling automatic offset storage. `store_offsets(offset + 1)` is therefore the only operation that makes a record eligible for a later broker commit, and it runs strictly after successful application. A crash before the next periodic commit replays already-applied records rather than skipping unprocessed records. Reconciliation's sequence/hash dedupe makes this replay safe, so the design retains at-least-once delivery while removing a broker round trip from each record's critical path. Auto-commit callbacks log failures and successful progress without adding unbounded metric labels.
 
 ### Replace repeated scans with a dependency adjacency traversal
 
@@ -45,18 +48,20 @@ The reconciliation mutex and HashTree replacement boundary remain unchanged to a
 
 ## Risks / Trade-offs
 
-- [A pathological record can occupy a blocking thread for a long time] -> One ordered consumer has at most one apply/commit operation in flight, and liveness remains available; logs identify the stuck partition/offset for operator action.
+- [A pathological record can occupy a blocking thread for a long time] -> One ordered consumer has at most one apply/checkpoint operation in flight, and liveness remains available; logs identify the stuck partition/offset for operator action.
 - [One CPU is shared by the blocking worker and HTTP runtime] -> OS scheduling still gives the I/O runtime an independent runnable thread; regression tests exercise a single-thread Tokio runtime under blocking work.
+- [The process can exit after local checkpointing but before the periodic broker commit] -> At most one commit interval of records is replayed; offsets are never stored before apply, and reconciliation dedupe accepts identical replay.
+- [A periodic broker commit can fail asynchronously] -> The consumer context reports the failed commit and affected offsets through structured warning logs; librdkafka continues its normal retry/next-interval behavior, and rollout verification reads broker-committed offsets directly.
 - [Linear ordering allocates an adjacency map in addition to the snapshot vector] -> Memory remains O(n) and within the existing configured snapshot-entry bounds; the old algorithm already cloned the complete entry list.
 - [HTTP match requests can wait on the reconciliation lock] -> Gateway timeouts and A/B failover continue to contain this; lock-free generation swap is explicitly out of scope.
 
 ## Migration Plan
 
-1. Validate the source change with deep reverse-ordered snapshot and single-thread runtime regression tests.
+1. Validate the source change with deep reverse-ordered snapshot, single-thread runtime, post-apply checkpoint-ordering, and consumer configuration regression tests.
 2. Build one immutable router/cache-state image from `san-tian/sglang@deploy-prod`.
 3. Update only the shadow `llm-cache-state-glm52-b` revision; do not change gateway traffic, APIM, worker pools, or SGLang workers.
-4. Require stable liveness, no restart growth, advancing consumer offsets, and bounded reconciliation metrics across at least two snapshot intervals before any broader rollout.
-5. Roll back B to image digest `sha256:5e15b20367640491b16a59ff133d1f6893bd9fae30eb6cdd064051bb9cb48264` if health or reconciliation regresses.
+4. Require stable liveness, no restart growth, consumption faster than the producer rate, advancing broker-committed offsets, and bounded reconciliation metrics across at least two snapshot intervals before any broader rollout.
+5. Roll back B to the liveness-stable first canary digest `sha256:eb5c2f19d4e780d4a8b17a58dc4152e88fc9b4bceaa835114f97e66e3475e6ec` if checkpointing regresses. The pre-fix digest `sha256:5e15b20367640491b16a59ff133d1f6893bd9fae30eb6cdd064051bb9cb48264` remains only an emergency artifact because it crash-loops under backlog.
 
 ## Open Questions
 
