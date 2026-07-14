@@ -264,7 +264,7 @@ pub async fn chat_completions(
         &headers,
         body,
     )?;
-    let body = normalize_chat_tool_call_arguments(body)?;
+    let body = normalize_chat_tool_call_arguments(&headers, body)?;
     if let Some(response) =
         maybe_forward_external_model(&ctx, &headers, &body, "/v1/chat/completions").await?
     {
