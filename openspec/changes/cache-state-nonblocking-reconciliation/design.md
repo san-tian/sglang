@@ -6,6 +6,10 @@ The cache-state Kafka task currently calls synchronous record application and `C
 
 The first canary moved apply and `CommitMode::Sync` to Tokio's blocking pool and replaced the quadratic snapshot traversal. It remained healthy with no restart growth, proving the liveness fix, but its successful apply/commit operations averaged about 0.59 seconds and it consumed only about 90 records/minute. Event Hubs simultaneously received 312-590 records/minute. The consumer backlog therefore continued to grow and no snapshot could be reached. This production result invalidates the assumption that waiting for one broker-confirmed commit per record is viable at the observed event rate.
 
+The checkpoint canary then consumed more than 88,000 records, reduced an approximately 79,000-record backlog to the live head in about 17 minutes, and remained healthy with no checkpoint failures or replica restarts. Reconciliation counters nevertheless remained zero. A production truth audit showed why: every current worker `KV_EVENTS_CONFIG` contains only the legacy ZMQ publisher and endpoint fields, while worker-authoritative reconciliation emission defaults to disabled. The cache-event agent and watchdog only forward and supervise worker payloads; rolling them cannot manufacture digests or snapshots. Two snapshot intervals therefore require a separately approved drained or test worker restart with a source commit containing the publisher feature and `reconciliation_enabled=true`.
+
+The reviewed watchdog 1.67 lifecycle image was also rolled without changing its service table or any worker process. Its only replica remained healthy with no restart, all 16 services completed three consecutive health/model rounds, and HK agent processes reused the same PIDs across consecutive settled rounds. This closes the subscriber-inode prerequisite but does not alter the worker publisher prerequisite above.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -20,6 +24,7 @@ The first canary moved apply and `CommitMode::Sync` to Tokio's blocking pool and
 **Non-Goals:**
 
 - Change worker event emission intervals, Event Hubs retention, worker membership, or gateway traffic.
+- Authorize or perform a production SGLang worker drain, source update, startup-parameter change, or restart as part of this consumer follow-up.
 - Cancel an in-progress tree mutation on a wall-clock timeout.
 - Redesign the coarse HashTree or reconciliation locks in this follow-up.
 - Skip, dead-letter, or commit a failed record automatically.
@@ -60,9 +65,12 @@ The reconciliation mutex and HashTree replacement boundary remain unchanged to a
 1. Validate the source change with deep reverse-ordered snapshot, single-thread runtime, post-apply checkpoint-ordering, and consumer configuration regression tests.
 2. Build one immutable router/cache-state image from `san-tian/sglang@deploy-prod`.
 3. Update only the shadow `llm-cache-state-glm52-b` revision; do not change gateway traffic, APIM, worker pools, or SGLang workers.
-4. Require stable liveness, no restart growth, consumption faster than the producer rate, advancing broker-committed offsets, and bounded reconciliation metrics across at least two snapshot intervals before any broader rollout.
-5. Roll back B to the liveness-stable first canary digest `sha256:eb5c2f19d4e780d4a8b17a58dc4152e88fc9b4bceaa835114f97e66e3475e6ec` if checkpointing regresses. The pre-fix digest `sha256:5e15b20367640491b16a59ff133d1f6893bd9fae30eb6cdd064051bb9cb48264` remains only an emergency artifact because it crash-loops under backlog.
+4. Require stable liveness, no restart growth, consumption faster than the producer rate, advancing broker-committed offsets, and sustained operation at the Event Hubs head while workers still emit legacy batches.
+5. Roll the already-reviewed cache-event-agent lifecycle image so a matching remote binary keeps its inode and long-lived subscriber process.
+6. After separate worker-drain and restart approval, select an explicitly designated test or canary rank, pin a source commit containing the reconciliation publisher, set `reconciliation_enabled=true`, and verify digest comparisons plus two complete 600-second snapshot intervals before any wider worker rollout.
+7. Roll back B to the liveness-stable first canary digest `sha256:eb5c2f19d4e780d4a8b17a58dc4152e88fc9b4bceaa835114f97e66e3475e6ec` if checkpointing regresses. Roll back a worker canary only while it remains drained by restoring its previous source/config and restarting through its canonical path. The pre-fix B digest `sha256:5e15b20367640491b16a59ff133d1f6893bd9fae30eb6cdd064051bb9cb48264` remains only an emergency artifact because it crash-loops under backlog.
 
 ## Open Questions
 
 - Whether match-prefix latency during a large atomic replacement warrants a later copy-on-write HashTree generation will be decided from shadow metrics; it is not required for liveness recovery.
+- Which drained or test worker rank should be the first production publisher canary requires explicit operator selection because no test server was designated for this rollout.
