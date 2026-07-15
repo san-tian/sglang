@@ -168,6 +168,8 @@ Cache-state controls:
 - `CACHE_STATE_RECONCILIATION_DEDUPE_WINDOW` (default `8192`)
 - `CACHE_STATE_KAFKA_APPLY_MAX_ATTEMPTS` (default `3`)
 - `CACHE_STATE_KAFKA_APPLY_RETRY_BACKOFF_MS` (default `250`)
+- `CACHE_STATE_KAFKA_POISON_RECORD_ACTION` (`stop` by default; `skip` checkpoints an
+  exhausted record after bounded retries and continues consuming)
 
 Roll out consumers and agents first while reconciliation remains disabled. Then
 enable an isolated cache-state consumer group and one worker that has restarted

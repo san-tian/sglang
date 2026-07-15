@@ -272,6 +272,32 @@ pub struct PendingKafkaRecord {
     pub offset: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoisonRecordAction {
+    Stop,
+    Skip,
+}
+
+impl std::str::FromStr for PoisonRecordAction {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "stop" => Ok(Self::Stop),
+            "skip" => Ok(Self::Skip),
+            other => Err(anyhow!(
+                "invalid poison-record action {other:?}; expected stop or skip"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustedRecordDisposition {
+    Stop,
+    Continue,
+}
+
 impl KafkaKvEventConsumer {
     pub fn new(config: KafkaKvEventStreamConfig) -> Result<Self> {
         let group = config
@@ -353,6 +379,35 @@ where
     tokio::task::spawn_blocking(move || apply_then_checkpoint(pending.as_ref(), apply, checkpoint))
         .await
         .context("join blocking Kafka KV event apply-and-checkpoint task")?
+}
+
+pub fn handle_exhausted_kafka_record(
+    pending: &PendingKafkaRecord,
+    action: PoisonRecordAction,
+    checkpoint: impl FnOnce(&PendingKafkaRecord) -> Result<()>,
+) -> Result<ExhaustedRecordDisposition> {
+    match action {
+        PoisonRecordAction::Stop => Ok(ExhaustedRecordDisposition::Stop),
+        PoisonRecordAction::Skip => {
+            checkpoint(pending).context("checkpoint skipped Kafka record")?;
+            Ok(ExhaustedRecordDisposition::Continue)
+        }
+    }
+}
+
+pub async fn handle_exhausted_kafka_record_blocking<Checkpoint>(
+    pending: Arc<PendingKafkaRecord>,
+    action: PoisonRecordAction,
+    checkpoint: Checkpoint,
+) -> Result<ExhaustedRecordDisposition>
+where
+    Checkpoint: FnOnce(&PendingKafkaRecord) -> Result<()> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        handle_exhausted_kafka_record(pending.as_ref(), action, checkpoint)
+    })
+    .await
+    .context("join blocking skipped Kafka record checkpoint task")?
 }
 
 impl LocalKvEventStream {
@@ -582,6 +637,96 @@ mod tests {
         assert_eq!(checkpoints.load(Ordering::Relaxed), 1);
         assert_eq!(next_kafka_offset(pending.offset).unwrap(), 42);
         assert!(next_kafka_offset(i64::MAX).is_err());
+    }
+
+    #[test]
+    fn exhausted_record_skip_checkpoints_once_and_continues() {
+        let pending = PendingKafkaRecord {
+            record: KvEventStreamRecord::from_payload(
+                "m".into(),
+                "http://worker".into(),
+                0,
+                7,
+                b"payload",
+            ),
+            topic: "events".into(),
+            partition: 2,
+            offset: 41,
+        };
+        let checkpoints = AtomicUsize::new(0);
+
+        let disposition = handle_exhausted_kafka_record(&pending, PoisonRecordAction::Skip, |_| {
+            checkpoints.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(disposition, ExhaustedRecordDisposition::Continue);
+        assert_eq!(checkpoints.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn exhausted_record_stop_does_not_checkpoint() {
+        let pending = PendingKafkaRecord {
+            record: KvEventStreamRecord::from_payload(
+                "m".into(),
+                "http://worker".into(),
+                0,
+                7,
+                b"payload",
+            ),
+            topic: "events".into(),
+            partition: 2,
+            offset: 41,
+        };
+        let checkpoints = AtomicUsize::new(0);
+
+        let disposition = handle_exhausted_kafka_record(&pending, PoisonRecordAction::Stop, |_| {
+            checkpoints.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(disposition, ExhaustedRecordDisposition::Stop);
+        assert_eq!(checkpoints.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn exhausted_record_skip_fails_closed_when_checkpoint_fails() {
+        let pending = PendingKafkaRecord {
+            record: KvEventStreamRecord::from_payload(
+                "m".into(),
+                "http://worker".into(),
+                0,
+                7,
+                b"payload",
+            ),
+            topic: "events".into(),
+            partition: 2,
+            offset: 41,
+        };
+
+        let error = handle_exhausted_kafka_record(&pending, PoisonRecordAction::Skip, |_| {
+            Err(anyhow!("checkpoint failed"))
+        })
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("checkpoint skipped Kafka record"));
+    }
+
+    #[test]
+    fn poison_record_action_parser_is_explicit() {
+        assert_eq!(
+            "stop".parse::<PoisonRecordAction>().unwrap(),
+            PoisonRecordAction::Stop
+        );
+        assert_eq!(
+            " SKIP ".parse::<PoisonRecordAction>().unwrap(),
+            PoisonRecordAction::Skip
+        );
+        assert!("continue".parse::<PoisonRecordAction>().is_err());
     }
 
     #[tokio::test(flavor = "current_thread")]
