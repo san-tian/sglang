@@ -1022,6 +1022,7 @@ class CommonKVReceiver(BaseKVReceiver):
                             bootstrap_info["_prefill_cp_rank"] = target_cp_rank
                             bootstrap_info["_target_tp_rank"] = target_tp_rank
                             bootstrap_info["_target_pp_rank"] = target_pp_rank
+                            bootstrap_info["_bootstrap_key"] = bootstrap_key
                             if self.kv_mgr.is_mla_backend:
                                 # For MLA: target_tp_rank is the selected real rank, others are dummy ranks
                                 bootstrap_info["is_dummy"] = not bool(
@@ -1050,12 +1051,16 @@ class CommonKVReceiver(BaseKVReceiver):
                 self.bootstrap_infos = bootstrap_infos
                 self.kv_mgr.connection_pool[bootstrap_key] = self.bootstrap_infos
 
-                # Register kv_args only once to prefill KVManager according to the info fetched from the bootstrap server
+                # Register kv_args to prefill KVManager according to the info fetched from the bootstrap server.
                 self._register_kv_args()
                 if self.conclude_state == KVPoll.Failed:
                     return
             else:
                 self.bootstrap_infos = self.kv_mgr.connection_pool[bootstrap_key]
+                if self._should_reregister_kv_args_on_cache_hit():
+                    self._register_kv_args()
+                    if self.conclude_state == KVPoll.Failed:
+                        return
 
             assert len(self.bootstrap_infos) > 0
             all_bootstrap_infos.extend(self.bootstrap_infos)
@@ -1066,20 +1071,38 @@ class CommonKVReceiver(BaseKVReceiver):
         self, prefill_dp_rank, prefill_cp_rank, target_tp_rank, target_pp_rank
     ):
         """Fetch the bootstrap info from the bootstrap server."""
-        try:
-            url = f"http://{self.bootstrap_addr}/route?prefill_dp_rank={prefill_dp_rank}&prefill_cp_rank={prefill_cp_rank}&target_tp_rank={target_tp_rank}&target_pp_rank={target_pp_rank}"
-            response = requests.get(url, timeout=5)
+        url = f"http://{self.bootstrap_addr}/route?prefill_dp_rank={prefill_dp_rank}&prefill_cp_rank={prefill_cp_rank}&target_tp_rank={target_tp_rank}&target_pp_rank={target_pp_rank}"
+        last_error = None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                response = requests.get(url, timeout=5)
+            except Exception as e:
+                last_error = e
+                if attempt < max_attempts - 1:
+                    time.sleep(0.05 * (2**attempt))
+                    continue
+                logger.error(f"Error fetching prefill info from bootstrap: {e}")
+                return None
+
             if response.status_code == 200:
                 bootstrap_info = response.json()
                 return bootstrap_info
-            else:
-                logger.error(
-                    f"Failed to get prefill server info: {response.status_code}, {response.text}"
-                )
-                return None
-        except Exception as e:
-            logger.error(f"Error fetching prefill info from bootstrap: {e}")
+
+            last_error = f"{response.status_code}, {response.text}"
+            if (
+                response.status_code in (408, 429, 500, 502, 503, 504)
+                and attempt < max_attempts - 1
+            ):
+                time.sleep(0.05 * (2**attempt))
+                continue
+            logger.error(
+                f"Failed to get prefill server info: {response.status_code}, {response.text}"
+            )
             return None
+
+        logger.error(f"Failed to get prefill server info after retries: {last_error}")
+        return None
 
     @staticmethod
     def query_prefill_dp_ranks(
@@ -1193,8 +1216,36 @@ class CommonKVReceiver(BaseKVReceiver):
                         evicted_sock.close(linger=0)
                     raise
         except zmq.ZMQError:
-            self._invalidate_bootstrap_connection_pool()
             raise
+
+    @staticmethod
+    def _bootstrap_info_matches(lhs: dict, rhs: dict) -> bool:
+        fields = (
+            "_prefill_dp_rank",
+            "_prefill_cp_rank",
+            "_target_tp_rank",
+            "_target_pp_rank",
+        )
+        return all(lhs.get(field) == rhs.get(field) for field in fields)
+
+    def _replace_bootstrap_info(self, old_info: dict, refreshed_info: dict) -> None:
+        if self.bootstrap_infos is not None:
+            for idx, info in enumerate(self.bootstrap_infos):
+                if info is old_info or self._bootstrap_info_matches(info, old_info):
+                    self.bootstrap_infos[idx] = refreshed_info
+                    break
+
+        bootstrap_key = old_info.get("_bootstrap_key")
+        if bootstrap_key is None:
+            return
+        with self.kv_mgr.connection_lock:
+            cached_infos = self.kv_mgr.connection_pool.get(bootstrap_key)
+            if cached_infos is None:
+                return
+            for idx, info in enumerate(cached_infos):
+                if info is old_info or self._bootstrap_info_matches(info, old_info):
+                    cached_infos[idx] = refreshed_info
+                    return
 
     def _refresh_bootstrap_info_for_retry(self, bootstrap_info: dict) -> Optional[dict]:
         prefill_dp_rank = bootstrap_info.get("_prefill_dp_rank")
@@ -1209,7 +1260,6 @@ class CommonKVReceiver(BaseKVReceiver):
         ):
             return None
 
-        self._invalidate_bootstrap_connection_pool()
         refreshed = self._get_bootstrap_info_from_server(
             prefill_dp_rank,
             prefill_cp_rank,
@@ -1223,8 +1273,19 @@ class CommonKVReceiver(BaseKVReceiver):
         refreshed["_prefill_cp_rank"] = prefill_cp_rank
         refreshed["_target_tp_rank"] = target_tp_rank
         refreshed["_target_pp_rank"] = target_pp_rank
+        if "_bootstrap_key" in bootstrap_info:
+            refreshed["_bootstrap_key"] = bootstrap_info["_bootstrap_key"]
         refreshed["is_dummy"] = bootstrap_info.get("is_dummy", False)
         return refreshed
+
+    def _on_bootstrap_info_refreshed(
+        self, refreshed_bootstrap_info: dict, frames: List[bytes]
+    ) -> bool:
+        """Hook for backend-specific refresh handling before metadata retry."""
+        return True
+
+    def _should_reregister_kv_args_on_cache_hit(self) -> bool:
+        return False
 
     def _record_bootstrap_metadata_send_failure(
         self, bootstrap_room: int, failure_reason: str
@@ -1244,7 +1305,6 @@ class CommonKVReceiver(BaseKVReceiver):
             self._send_multipart_to_bootstrap(bootstrap_info, frames)
             return True
         except (ValueError, zmq.ZMQError) as error:
-            self._invalidate_bootstrap_connection_pool()
             endpoint, _ = self._bootstrap_endpoint(bootstrap_info)
             if retry_with_fresh_bootstrap_info:
                 refreshed = self._refresh_bootstrap_info_for_retry(bootstrap_info)
@@ -1258,14 +1318,14 @@ class CommonKVReceiver(BaseKVReceiver):
                         type(error).__name__,
                     )
                     try:
+                        if not self._on_bootstrap_info_refreshed(refreshed, frames):
+                            raise RuntimeError(
+                                "bootstrap info refresh hook returned False"
+                            )
                         self._send_multipart_to_bootstrap(refreshed, frames)
-                        if self.bootstrap_infos is not None:
-                            for idx, info in enumerate(self.bootstrap_infos):
-                                if info is bootstrap_info:
-                                    self.bootstrap_infos[idx] = refreshed
-                                    break
+                        self._replace_bootstrap_info(bootstrap_info, refreshed)
                         return True
-                    except (ValueError, zmq.ZMQError) as retry_error:
+                    except (ValueError, zmq.ZMQError, RuntimeError) as retry_error:
                         self._invalidate_bootstrap_connection_pool()
                         failure_reason = (
                             "Failed to send disaggregation metadata to Prefill "
@@ -1282,6 +1342,7 @@ class CommonKVReceiver(BaseKVReceiver):
                 "Failed to send disaggregation metadata to Prefill endpoint "
                 f"{endpoint}: {type(error).__name__}"
             )
+            self._invalidate_bootstrap_connection_pool()
             self._record_bootstrap_metadata_send_failure(
                 self.bootstrap_room, failure_reason
             )

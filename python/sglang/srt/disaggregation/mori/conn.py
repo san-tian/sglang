@@ -1658,27 +1658,103 @@ class MoriKVReceiver(CommonKVReceiver):
             self.kv_mgr.kv_args.state_dim_per_tensor, "I"
         )
 
-        for bootstrap_info in self.bootstrap_infos:
-            if not self._send_request_multipart_to_bootstrap(
+        for bootstrap_info in list(self.bootstrap_infos):
+            if not self._register_kv_args_to_bootstrap_info(
                 bootstrap_info,
-                [
-                    MORI_GUARD,
-                    "None".encode("ascii"),
-                    self.kv_mgr.local_ip.encode("ascii"),
-                    str(self.kv_mgr.rank_port).encode("ascii"),
-                    engine_desc_blob,
-                    packed_kv_descs,
-                    packed_aux_descs,
-                    packed_state_descs,
-                    gpu_id,
-                    decode_tp_size,
-                    decode_tp_rank,
-                    kv_item_len,
-                    packed_state_item_lens,
-                    packed_state_dim_per_tensor,
-                ],
+                engine_desc_blob,
+                packed_kv_descs,
+                packed_aux_descs,
+                packed_state_descs,
+                gpu_id,
+                decode_tp_size,
+                decode_tp_rank,
+                kv_item_len,
+                packed_state_item_lens,
+                packed_state_dim_per_tensor,
             ):
                 return
+
+    def _register_kv_args_to_bootstrap_info(
+        self,
+        bootstrap_info: dict,
+        engine_desc_blob: bytes,
+        packed_kv_descs: bytes,
+        packed_aux_descs: bytes,
+        packed_state_descs: bytes,
+        gpu_id: bytes,
+        decode_tp_size: bytes,
+        decode_tp_rank: bytes,
+        kv_item_len: bytes,
+        packed_state_item_lens: bytes,
+        packed_state_dim_per_tensor: bytes,
+        retry_with_fresh_bootstrap_info: bool = True,
+    ) -> bool:
+        return self._send_request_multipart_to_bootstrap(
+            bootstrap_info,
+            [
+                MORI_GUARD,
+                "None".encode("ascii"),
+                self.kv_mgr.local_ip.encode("ascii"),
+                str(self.kv_mgr.rank_port).encode("ascii"),
+                engine_desc_blob,
+                packed_kv_descs,
+                packed_aux_descs,
+                packed_state_descs,
+                gpu_id,
+                decode_tp_size,
+                decode_tp_rank,
+                kv_item_len,
+                packed_state_item_lens,
+                packed_state_dim_per_tensor,
+            ],
+            retry_with_fresh_bootstrap_info=retry_with_fresh_bootstrap_info,
+        )
+
+    def _on_bootstrap_info_refreshed(
+        self, refreshed_bootstrap_info: dict, frames: List[bytes]
+    ) -> bool:
+        # The common retry sends the original frames after this hook. If those
+        # frames already carry the peer registration, sending another copy here
+        # would create a second failure point on the refreshed endpoint.
+        if len(frames) > 1 and frames[0] == MORI_GUARD and frames[1] == b"None":
+            return True
+        if self.bootstrap_infos is None:
+            return False
+
+        engine_desc_blob = self.kv_mgr.engine_desc.pack()
+        packed_kv_descs = _pack_mem_desc_list(self.kv_mgr.kv_mem_descs)
+        packed_aux_descs = _pack_mem_desc_list(self.kv_mgr.aux_mem_descs)
+        packed_state_descs = _pack_mem_desc_lists(self.kv_mgr.state_mem_descs)
+        gpu_id = str(self.kv_mgr.kv_args.gpu_id).encode("ascii")
+        decode_tp_size = str(self.kv_mgr.attn_tp_size).encode("ascii")
+        decode_tp_rank = str(self.kv_mgr.kv_args.engine_rank).encode("ascii")
+        kv_item_len = str(self.kv_mgr.kv_args.kv_item_lens[0]).encode("ascii")
+        packed_state_item_lens = pack_int_lists(
+            self.kv_mgr.kv_args.state_item_lens, "I"
+        )
+        packed_state_dim_per_tensor = pack_int_lists(
+            self.kv_mgr.kv_args.state_dim_per_tensor, "I"
+        )
+
+        return self._register_kv_args_to_bootstrap_info(
+            refreshed_bootstrap_info,
+            engine_desc_blob,
+            packed_kv_descs,
+            packed_aux_descs,
+            packed_state_descs,
+            gpu_id,
+            decode_tp_size,
+            decode_tp_rank,
+            kv_item_len,
+            packed_state_item_lens,
+            packed_state_dim_per_tensor,
+            retry_with_fresh_bootstrap_info=False,
+        )
+
+    def _should_reregister_kv_args_on_cache_hit(self) -> bool:
+        # A restarted Prefill loses its per-process Mori remote-engine table even
+        # when Decode can reuse the cached rank endpoint.
+        return True
 
     def send_metadata(
         self,
@@ -1702,7 +1778,7 @@ class MoriKVReceiver(CommonKVReceiver):
             else b""
         )
 
-        for bootstrap_info in self.bootstrap_infos:
+        for bootstrap_info in list(self.bootstrap_infos):
             is_dummy = bootstrap_info.get("is_dummy", False)
             if not is_dummy and normalized_state is not None:
                 state_bytes = _pack_state_indices(normalized_state)
