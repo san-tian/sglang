@@ -246,6 +246,19 @@ pub struct SelectionContext<'a> {
     request_body: Option<&'a [u8]>,
     routing_key: Option<&'a str>,
     request_tokens: Option<&'a [u32]>,
+    route_decision_log: Option<RouteDecisionLogContext<'a>>,
+}
+
+/// Optional per-request logging context for route-decision explain logs.
+/// Handlers attach this only when sampling or an explicit debug header asks for
+/// a decision record, so policies can avoid building expensive candidate
+/// summaries on the ordinary hot path.
+#[derive(Clone, Copy)]
+pub struct RouteDecisionLogContext<'a> {
+    pub request_id: &'a str,
+    pub endpoint: &'a str,
+    pub request_priority: i64,
+    pub candidate_limit: usize,
 }
 
 impl<'a> SelectionContext<'a> {
@@ -255,6 +268,7 @@ impl<'a> SelectionContext<'a> {
             request_body,
             routing_key: None,
             request_tokens: None,
+            route_decision_log: None,
         }
     }
 
@@ -268,6 +282,7 @@ impl<'a> SelectionContext<'a> {
             request_body,
             routing_key,
             request_tokens: None,
+            route_decision_log: None,
         }
     }
 
@@ -276,6 +291,11 @@ impl<'a> SelectionContext<'a> {
     /// re-tokenizing the body.
     pub fn with_request_tokens(mut self, request_tokens: Option<&'a [u32]>) -> Self {
         self.request_tokens = request_tokens;
+        self
+    }
+
+    pub fn with_route_decision_log(mut self, log: Option<RouteDecisionLogContext<'a>>) -> Self {
+        self.route_decision_log = log;
         self
     }
 
@@ -295,6 +315,10 @@ impl<'a> SelectionContext<'a> {
     /// must derive tokens itself (e.g. a caller that didn't pre-tokenize).
     pub fn request_tokens(&self) -> Option<&[u32]> {
         self.request_tokens
+    }
+
+    pub fn route_decision_log(&self) -> Option<RouteDecisionLogContext<'a>> {
+        self.route_decision_log
     }
 }
 
@@ -320,6 +344,13 @@ pub trait Policy: Send + Sync + std::fmt::Debug {
     /// `ActiveLoadRegistry::attach_metrics`: the registry is built after the
     /// policies, so it is injected here rather than passed to the constructor.
     fn attach_metrics(&self, _metrics: Arc<MetricsRegistry>) {}
+
+    /// Whether this policy emits its own detailed route-decision explain logs
+    /// when [`SelectionContext::route_decision_log`] is set. Handlers use this
+    /// to avoid also emitting a generic fallback record for the same request.
+    fn logs_route_decisions(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Default)]

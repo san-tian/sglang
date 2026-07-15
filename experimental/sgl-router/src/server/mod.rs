@@ -7,5 +7,6 @@ pub mod entry_auth;
 pub mod error;
 pub mod header_utils;
 pub mod metrics;
+pub mod route_decision;
 pub mod routes;
 pub mod trace;

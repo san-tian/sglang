@@ -53,6 +53,7 @@ use crate::server::metrics::{
 use crate::tokenizer::TokenizerRegistry;
 use crate::workers::worker::PrefillLoadRole;
 use crate::workers::Worker;
+use serde_json::json;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -398,9 +399,40 @@ impl CacheAwareZmqPolicy {
                 w
             });
 
-        chosen
-            .map(|hot| self.apply_ttft_hit_load_guard(hot, workers, matched_blocks, matched_urls))
-            .or_else(|| self.pick_min_ttft_load(workers))
+        let hot_url = chosen.as_ref().map(|worker| worker.url.clone());
+        let mut reason = if chosen.is_some() {
+            "ttft_first_score"
+        } else {
+            "ttft_min_load_fallback"
+        };
+        let selected = if let Some(hot) = chosen {
+            let selected =
+                self.apply_ttft_hit_load_guard(hot, workers, matched_blocks, matched_urls);
+            if hot_url.as_deref() != Some(selected.url.as_str()) {
+                reason = "ttft_hit_load_guard_divert";
+            }
+            Some(selected)
+        } else {
+            self.pick_min_ttft_load(workers)
+        };
+        self.log_ttft_decision(
+            ctx,
+            workers,
+            score_workers,
+            selected.as_deref(),
+            hot_url.as_deref(),
+            reason,
+            total_blocks,
+            matched_blocks,
+            matched_urls,
+            candidate_tokens,
+            block_size,
+            candidate_priority,
+            score_mode,
+            best_score,
+            score_limit,
+        );
+        selected
     }
 
     #[cfg(test)]
@@ -566,6 +598,191 @@ impl CacheAwareZmqPolicy {
                 worker.mode() == WorkerMode::Plain && snapshot.role == PrefillLoadRole::Integrated
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn log_ttft_decision(
+        &self,
+        ctx: &SelectionContext<'_>,
+        workers: &[Arc<Worker>],
+        score_workers: &[Arc<Worker>],
+        selected: Option<&Worker>,
+        hot_worker_url: Option<&str>,
+        reason: &str,
+        total_blocks: usize,
+        matched_blocks: usize,
+        matched_urls: &HashSet<&str>,
+        candidate_tokens: usize,
+        block_size: usize,
+        candidate_priority: i64,
+        score_mode: TtftScoreMode,
+        best_score: usize,
+        score_limit: usize,
+    ) {
+        let Some(log_ctx) = ctx.route_decision_log() else {
+            return;
+        };
+        let selected_url = selected.map(|worker| worker.url.as_str()).unwrap_or("-");
+        let score_urls: HashSet<&str> = score_workers
+            .iter()
+            .map(|worker| worker.url.as_str())
+            .collect();
+        let mut candidates: Vec<_> = workers
+            .iter()
+            .map(|worker| {
+                let worker_matched =
+                    matched_blocks_for_worker(worker, matched_blocks, matched_urls);
+                let score = self.ttft_score_with_mode(
+                    worker,
+                    total_blocks,
+                    worker_matched,
+                    candidate_tokens,
+                    block_size,
+                    candidate_priority,
+                    score_mode,
+                );
+                json!({
+                    "worker": worker.url,
+                    "selected": worker.url == selected_url,
+                    "score_considered": score_urls.contains(worker.url.as_str()),
+                    "matched_blocks": worker_matched,
+                    "matched_by_cache": worker_matched > 0,
+                    "ttft_score": score,
+                    "score_breakdown": self.ttft_score_breakdown_json(
+                        worker,
+                        total_blocks,
+                        worker_matched,
+                        candidate_tokens,
+                        block_size,
+                        candidate_priority,
+                        score_mode,
+                    ),
+                    "state": crate::server::route_decision::generic_candidate_json(
+                        worker,
+                        worker.url == selected_url,
+                    ),
+                })
+            })
+            .collect();
+        candidates.sort_by_key(|candidate| {
+            candidate
+                .get("ttft_score")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(u64::MAX)
+        });
+        let truncated = candidates.len() > log_ctx.candidate_limit;
+        candidates.truncate(log_ctx.candidate_limit);
+        let decision = json!({
+            "event": "route_decision",
+            "policy": "cache_aware_zmq",
+            "policy_detail": "ttft_first",
+            "endpoint": log_ctx.endpoint,
+            "request_id": log_ctx.request_id,
+            "model": ctx.model().0,
+            "request_priority": log_ctx.request_priority,
+            "candidate_priority_for_score": candidate_priority,
+            "reason": reason,
+            "selected_worker": selected_url,
+            "hot_worker_before_guard": hot_worker_url,
+            "candidate_count": workers.len(),
+            "candidate_limit": log_ctx.candidate_limit,
+            "candidates_truncated": truncated,
+            "total_blocks": total_blocks,
+            "matched_blocks_global": matched_blocks,
+            "matched_worker_url_count": matched_urls.len(),
+            "candidate_tokens": candidate_tokens,
+            "block_size": block_size,
+            "ttft_score_mode": format!("{:?}", score_mode),
+            "configured_ttft_score_mode": format!("{:?}", self.config.ttft_score_mode),
+            "ttft_cache_score_margin": self.config.ttft_cache_score_margin,
+            "best_score": best_score,
+            "score_limit": score_limit,
+            "ttft_idle_first_routing": self.config.ttft_idle_first_routing,
+            "use_reported_load": self.config.use_reported_load,
+            "ttft_token_scale": self.config.ttft_token_scale,
+            "candidates": candidates,
+        });
+        tracing::info!(decision = %decision, "route_decision");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ttft_score_breakdown_json(
+        &self,
+        worker: &Worker,
+        total_blocks: usize,
+        matched_blocks: usize,
+        candidate_tokens: usize,
+        block_size: usize,
+        candidate_priority: i64,
+        score_mode: TtftScoreMode,
+    ) -> serde_json::Value {
+        let candidate_uncached =
+            candidate_tokens.saturating_sub(matched_blocks.saturating_mul(block_size));
+        let snapshot = worker.reported_prefill_load();
+        let existing_work_tokens = snapshot.as_ref().map(|snapshot| match score_mode {
+            TtftScoreMode::Additive => 0,
+            TtftScoreMode::PrefillWorkOnly
+            | TtftScoreMode::PrefillWorkNormalized
+            | TtftScoreMode::Lmetric => snapshot.total_waiting_uncached_tokens,
+            TtftScoreMode::LmetricCandidateAware => snapshot
+                .candidate
+                .as_ref()
+                .and_then(|candidate| {
+                    candidate.work_ahead_tokens(candidate_priority, candidate_uncached)
+                })
+                .unwrap_or(snapshot.total_waiting_uncached_tokens),
+        });
+        let reserved_tokens = worker
+            .pending_token_load()
+            .saturating_add(worker.global_pending_token_load());
+        let reserved_requests = worker
+            .pending_load()
+            .saturating_add(worker.global_pending_load());
+        let prefill_factor_tokens = existing_work_tokens.map(|existing| {
+            candidate_uncached
+                .saturating_add(existing)
+                .saturating_add(reserved_tokens)
+        });
+        let batch_factor = snapshot.as_ref().map(|snapshot| {
+            1usize
+                .saturating_add(snapshot.running_requests)
+                .saturating_add(reserved_requests)
+        });
+        json!({
+            "score_mode": format!("{:?}", score_mode),
+            "total_blocks": total_blocks,
+            "matched_blocks": matched_blocks,
+            "candidate_tokens": candidate_tokens,
+            "block_size": block_size,
+            "candidate_uncached_tokens": candidate_uncached,
+            "existing_work_tokens": existing_work_tokens,
+            "reserved_tokens": reserved_tokens,
+            "reserved_requests": reserved_requests,
+            "prefill_factor_tokens": prefill_factor_tokens,
+            "prefill_capacity_milli": worker.prefill_capacity_milli(),
+            "normalized_prefill_score": prefill_factor_tokens
+                .map(|work| normalize_prefill_work(work, worker.prefill_capacity_milli())),
+            "batch_factor": batch_factor,
+            "additive_pressure": worker.effective_ttft_load(
+                self.config.use_reported_load,
+                self.config.ttft_token_scale,
+            ),
+            "final_score": self.ttft_score_with_mode(
+                worker,
+                total_blocks,
+                matched_blocks,
+                candidate_tokens,
+                block_size,
+                candidate_priority,
+                score_mode,
+            ),
+            "reported_prefill_load": snapshot.map(|snapshot| json!({
+                "role": format!("{:?}", snapshot.role),
+                "running_requests": snapshot.running_requests,
+                "total_waiting_uncached_tokens": snapshot.total_waiting_uncached_tokens,
+                "candidate_aware": snapshot.candidate.is_some(),
+            })),
+        })
     }
 
     fn match_prefix(&self, model: &crate::discovery::ModelId, block_hashes: &[i64]) -> CacheMatch {
@@ -891,6 +1108,10 @@ impl Policy for CacheAwareZmqPolicy {
 
     fn attach_metrics(&self, metrics: Arc<MetricsRegistry>) {
         let _ = self.metrics.set(metrics);
+    }
+
+    fn logs_route_decisions(&self) -> bool {
+        true
     }
 }
 
