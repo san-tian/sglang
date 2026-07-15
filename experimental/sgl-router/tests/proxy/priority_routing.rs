@@ -185,6 +185,22 @@ fn messages_request(priority: Option<i64>) -> Request<Body> {
         .unwrap()
 }
 
+fn completions_request() -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "model": "tiny",
+                "prompt": "hi",
+                "max_tokens": 8,
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+}
+
 fn was_hit(w: &MockWorker) -> bool {
     w.captured.lock().unwrap().last_body.is_some()
 }
@@ -210,6 +226,118 @@ fn gateway_keyring() -> Arc<GatewayKeyring> {
         )
         .unwrap(),
     )
+}
+
+fn nvidia_gateway_keyring(nvidia_worker_url: &str) -> Arc<GatewayKeyring> {
+    Arc::new(
+        GatewayKeyring::from_json_with_nvidia_workers(
+            r#"{"version":1,"keys":[
+                {"key_id":"nvidia-high","class":"external_nvidia","enabled":true}
+            ]}"#,
+            r#"{"nvidia-high":"nvidia-high-secret"}"#,
+            Some(nvidia_worker_url),
+        )
+        .unwrap(),
+    )
+}
+
+fn with_nvidia_key(request: Request<Body>) -> Request<Body> {
+    with_header(request, "authorization", "Bearer nvidia-high-secret")
+}
+
+#[tokio::test]
+async fn nvidia_key_routes_all_generation_protocols_only_to_allowlisted_worker() {
+    let nvidia = MockWorker::start(vec![]).await;
+    let amd = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![
+        plain_spec("nvidia", &nvidia.url, None),
+        plain_spec("amd", &amd.url, None),
+    ]);
+    let keyring = nvidia_gateway_keyring(&nvidia.url);
+
+    for request in [
+        chat_request(None),
+        completions_request(),
+        messages_request(None),
+        responses_request(None),
+    ] {
+        let response = build_router_with_gateway_keyring(Arc::clone(&ctx), Arc::clone(&keyring))
+            .oneshot(with_nvidia_key(request))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    assert!(was_hit(&nvidia));
+    assert!(
+        !was_hit(&amd),
+        "NVIDIA-only key must never dispatch to an AMD worker"
+    );
+    assert_eq!(captured_priority(&nvidia), Some(100));
+}
+
+#[tokio::test]
+async fn nvidia_key_rejects_when_only_amd_worker_is_available() {
+    let nvidia = MockWorker::start(vec![]).await;
+    let amd = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![plain_spec("amd", &amd.url, None)]);
+    let keyring = nvidia_gateway_keyring(&nvidia.url);
+
+    let response = build_router_with_gateway_keyring(ctx, keyring)
+        .oneshot(with_nvidia_key(chat_request(None)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!was_hit(&amd), "NVIDIA-only traffic must not spill to AMD");
+}
+
+#[tokio::test]
+async fn nvidia_key_hides_and_rejects_external_model() {
+    let nvidia = MockWorker::start(vec![]).await;
+    let provider = MockWorker::start(vec![]).await;
+    let mut cfg = config();
+    cfg.external_model = Some(sgl_router::config::ExternalModelConfig {
+        model_id: "Macaron-V1-Tall".into(),
+        base_url: provider.url.clone(),
+        bearer_token: "provider-secret".into(),
+    });
+    let ctx = build_ctx_with_config(cfg, vec![plain_spec("nvidia", &nvidia.url, None)]);
+    let keyring = nvidia_gateway_keyring(&nvidia.url);
+
+    let models = build_router_with_gateway_keyring(Arc::clone(&ctx), Arc::clone(&keyring))
+        .oneshot(with_nvidia_key(
+            Request::builder()
+                .uri("/v1/models")
+                .body(Body::empty())
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(models.status(), StatusCode::OK);
+    let models_body = models.into_body().collect().await.unwrap().to_bytes();
+    let models_json: serde_json::Value = serde_json::from_slice(&models_body).unwrap();
+    assert_eq!(models_json["data"].as_array().unwrap().len(), 1);
+    assert_eq!(models_json["data"][0]["id"], "tiny");
+
+    let external_request = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "model": "Macaron-V1-Tall",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 8,
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let response = build_router_with_gateway_keyring(ctx, keyring)
+        .oneshot(with_nvidia_key(external_request))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(!was_hit(&provider));
 }
 
 fn with_header(

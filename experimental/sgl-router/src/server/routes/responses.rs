@@ -26,7 +26,7 @@ use crate::policies::registry::{
 };
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::GatewayKeyIdentity;
+use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -393,14 +393,21 @@ pub async fn responses(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
+    let entry_identity = entry_identity.map(|Extension(identity)| identity);
     let body = apply_request_priority_override(
         &ctx.config.priority_override,
-        entry_identity.as_ref().map(|identity| &identity.0),
+        entry_identity.as_ref(),
         &headers,
         body,
     )?;
-    if let Some(response) =
-        maybe_forward_external_model(&ctx, &headers, &body, "/v1/responses").await?
+    if let Some(response) = maybe_forward_external_model(
+        &ctx,
+        &headers,
+        &body,
+        "/v1/responses",
+        entry_identity.as_ref(),
+    )
+    .await?
     {
         return Ok(response);
     }
@@ -410,6 +417,12 @@ pub async fn responses(
         .model
         .clone()
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
+    if entry_identity
+        .as_ref()
+        .is_some_and(|identity| identity.is_nvidia_only() && model_str != ctx.config.model.id)
+    {
+        return Err(ApiError::ModelNotFound(model_str));
+    }
     let Some(cfg) = ctx
         .config
         .alias_fallback
@@ -417,7 +430,7 @@ pub async fn responses(
         .filter(|cfg| cfg.alias_model_id == model_str)
         .cloned()
     else {
-        return responses_inner(State(ctx), headers, body).await;
+        return responses_inner(State(ctx), entry_identity, headers, body).await;
     };
     let request_id = headers
         .get("x-request-id")
@@ -434,7 +447,13 @@ pub async fn responses(
         path = "/v1/responses",
         "alias primary selected",
     );
-    let primary = responses_inner(State(Arc::clone(&ctx)), headers.clone(), primary_body).await;
+    let primary = responses_inner(
+        State(Arc::clone(&ctx)),
+        entry_identity,
+        headers.clone(),
+        primary_body,
+    )
+    .await;
     match primary {
         Ok(resp) => {
             if let Some(reason) = fallback_reason_for_response(resp.status()) {
@@ -475,6 +494,7 @@ pub async fn responses(
 
 async fn responses_inner(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<GatewayKeyIdentity>,
     mut headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
@@ -544,6 +564,21 @@ async fn responses_inner(
             "/v1/responses passthrough does not support PD-disaggregated mode yet; use /v1/chat/completions".into(),
         ));
     }
+
+    let scoped = filter_key_scope(&workers, entry_identity.as_ref());
+    if scoped.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            key_id = entry_identity.as_ref().map(|identity| identity.key_id()).unwrap_or("-"),
+            healthy_workers = workers.len(),
+            route = "/v1/responses",
+            "gateway key worker scope removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = scoped.workers;
 
     // Priority-eligibility filtering — identical semantics to the
     // `/v1/chat/completions` and `/v1/messages` paths: capacity-restricted

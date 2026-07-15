@@ -9,7 +9,7 @@ use crate::policies::registry::{
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::router_state::RouterStateReservationGuard;
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::GatewayKeyIdentity;
+use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
 use crate::server::error::ApiError;
 use crate::server::metrics::{
     MetricsRegistry, PriorityFilterOutcome, RequestOutcome, SseClientDisconnectPhase,
@@ -258,15 +258,22 @@ pub async fn chat_completions(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
+    let entry_identity = entry_identity.map(|Extension(identity)| identity);
     let body = apply_request_priority_override(
         &ctx.config.priority_override,
-        entry_identity.as_ref().map(|identity| &identity.0),
+        entry_identity.as_ref(),
         &headers,
         body,
     )?;
     let body = normalize_chat_tool_call_arguments(&headers, body)?;
-    if let Some(response) =
-        maybe_forward_external_model(&ctx, &headers, &body, "/v1/chat/completions").await?
+    if let Some(response) = maybe_forward_external_model(
+        &ctx,
+        &headers,
+        &body,
+        "/v1/chat/completions",
+        entry_identity.as_ref(),
+    )
+    .await?
     {
         return Ok(response);
     }
@@ -279,6 +286,12 @@ pub async fn chat_completions(
         .model
         .clone()
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
+    if entry_identity
+        .as_ref()
+        .is_some_and(|identity| identity.is_nvidia_only() && model_str != ctx.config.model.id)
+    {
+        return Err(ApiError::ModelNotFound(model_str));
+    }
     let Some(cfg) = ctx
         .config
         .alias_fallback
@@ -286,7 +299,7 @@ pub async fn chat_completions(
         .filter(|cfg| cfg.alias_model_id == model_str)
         .cloned()
     else {
-        return chat_completions_inner(State(ctx), headers, body).await;
+        return chat_completions_inner(State(ctx), entry_identity, headers, body).await;
     };
 
     let request_id = headers
@@ -304,8 +317,13 @@ pub async fn chat_completions(
         path = "/v1/chat/completions",
         "alias primary selected",
     );
-    let primary =
-        chat_completions_inner(State(Arc::clone(&ctx)), headers.clone(), primary_body).await;
+    let primary = chat_completions_inner(
+        State(Arc::clone(&ctx)),
+        entry_identity,
+        headers.clone(),
+        primary_body,
+    )
+    .await;
     match primary {
         Ok(resp) => {
             if let Some(reason) = fallback_reason_for_response(resp.status()) {
@@ -346,6 +364,7 @@ pub async fn chat_completions(
 
 async fn chat_completions_inner(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<GatewayKeyIdentity>,
     mut headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
@@ -409,6 +428,31 @@ async fn chat_completions_inner(
         .policies
         .get(&model_id)
         .ok_or_else(|| ApiError::ModelNotFound(model_str.clone()))?;
+
+    let scoped = filter_key_scope(&workers, entry_identity.as_ref());
+    if scoped.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            key_id = entry_identity.as_ref().map(|identity| identity.key_id()).unwrap_or("-"),
+            healthy_workers = workers.len(),
+            "gateway key worker scope removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = scoped.workers;
+    if entry_identity
+        .as_ref()
+        .is_some_and(GatewayKeyIdentity::is_nvidia_only)
+        && workers
+            .iter()
+            .any(|worker| worker.mode() != WorkerMode::Plain)
+    {
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
 
     // Priority-eligibility filtering: capacity-restricted workers (e.g. an
     // RTX-6000 tagged `min_priority=100`) are removed from the candidate

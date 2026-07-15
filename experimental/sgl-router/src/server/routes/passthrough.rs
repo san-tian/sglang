@@ -14,7 +14,7 @@ use crate::policies::registry::{
 use crate::policies::SelectionContext;
 use crate::policies::{request_tokens_for, RequestTokens};
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::GatewayKeyIdentity;
+use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -108,7 +108,9 @@ async fn passthrough(
         &headers,
         body,
     )?;
-    if let Some(response) = maybe_forward_external_model(&ctx, &headers, &body, path).await? {
+    if let Some(response) =
+        maybe_forward_external_model(&ctx, &headers, &body, path, entry_identity).await?
+    {
         return Ok(response);
     }
     let probe = parse_probe(&body)?;
@@ -116,6 +118,11 @@ async fn passthrough(
     let model_str = probe
         .model
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
+    if entry_identity
+        .is_some_and(|identity| identity.is_nvidia_only() && model_str != ctx.config.model.id)
+    {
+        return Err(ApiError::ModelNotFound(model_str));
+    }
     let Some(cfg) = ctx
         .config
         .alias_fallback
@@ -123,7 +130,8 @@ async fn passthrough(
         .filter(|cfg| cfg.alias_model_id == model_str)
         .cloned()
     else {
-        return passthrough_primary(State(ctx), headers, body, path, log_name).await;
+        return passthrough_primary(State(ctx), entry_identity, headers, body, path, log_name)
+            .await;
     };
 
     let request_id = headers
@@ -144,6 +152,7 @@ async fn passthrough(
 
     let primary = passthrough_primary(
         State(Arc::clone(&ctx)),
+        entry_identity,
         headers.clone(),
         primary_body,
         path,
@@ -176,6 +185,7 @@ async fn passthrough(
 
 async fn passthrough_primary(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<&GatewayKeyIdentity>,
     headers: HeaderMap,
     body: Bytes,
     path: &'static str,
@@ -233,6 +243,21 @@ async fn passthrough_primary(
             "{path} passthrough does not support PD-disaggregated mode yet; use /v1/chat/completions"
         )));
     }
+
+    let scoped = filter_key_scope(&workers, entry_identity);
+    if scoped.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            key_id = entry_identity.map(|identity| identity.key_id()).unwrap_or("-"),
+            healthy_workers = workers.len(),
+            path,
+            "gateway key worker scope removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = scoped.workers;
 
     let request_priority = crate::policies::priority_from_value(probe.priority.as_ref());
     let eligible = filter_eligible(&workers, request_priority);

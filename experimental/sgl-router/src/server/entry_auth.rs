@@ -8,7 +8,9 @@
 //! exactly the same key IDs; startup fails instead of silently accepting a
 //! partial configuration.
 
+use crate::discovery::static_urls::normalize_worker_url;
 use crate::server::error::X_ROUTER_ERROR_CODE;
+use crate::workers::Worker;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -24,6 +26,7 @@ use thiserror::Error;
 
 pub const GATEWAY_KEY_POLICIES_ENV: &str = "GATEWAY_KEY_POLICIES_JSON";
 pub const GATEWAY_API_KEYS_ENV: &str = "GATEWAY_API_KEYS_JSON";
+pub const GATEWAY_NVIDIA_WORKER_URLS_ENV: &str = "GATEWAY_NVIDIA_WORKER_URLS";
 pub const PD_PROXY_API_KEY_ENV: &str = "PD_PROXY_API_KEY";
 
 const MAX_KEY_COUNT: usize = 1_024;
@@ -34,9 +37,10 @@ const X_API_KEY: HeaderName = HeaderName::from_static("x-api-key");
 const OCP_APIM_SUBSCRIPTION_KEY: HeaderName = HeaderName::from_static("ocp-apim-subscription-key");
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum GatewayKeyClass {
     External,
+    ExternalNvidia,
     Internal,
     /// Internal upstream gateway identity. This class cannot be selected by
     /// the Git-managed gateway policy document; it is built only by the
@@ -48,7 +52,7 @@ pub enum GatewayKeyClass {
 impl GatewayKeyClass {
     pub const fn priority_override(self) -> Option<i64> {
         match self {
-            Self::External => Some(100),
+            Self::External | Self::ExternalNvidia => Some(100),
             Self::Internal => Some(0),
             Self::Proxy => None,
         }
@@ -57,6 +61,7 @@ impl GatewayKeyClass {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::External => "external",
+            Self::ExternalNvidia => "external_nvidia",
             Self::Internal => "internal",
             Self::Proxy => "proxy",
         }
@@ -74,6 +79,7 @@ impl fmt::Display for GatewayKeyClass {
 pub struct GatewayKeyIdentity {
     key_id: Arc<str>,
     class: GatewayKeyClass,
+    allowed_worker_urls: Option<Arc<HashSet<String>>>,
 }
 
 impl GatewayKeyIdentity {
@@ -89,11 +95,72 @@ impl GatewayKeyIdentity {
         self.class.priority_override()
     }
 
+    pub const fn is_nvidia_only(&self) -> bool {
+        matches!(self.class, GatewayKeyClass::ExternalNvidia)
+    }
+
+    pub fn allows_worker_url(&self, worker_url: &str) -> bool {
+        if !self.is_nvidia_only() {
+            return true;
+        }
+        match self.allowed_worker_urls.as_ref() {
+            Some(urls) => {
+                normalize_worker_url(worker_url).is_ok_and(|normalized| urls.contains(&normalized))
+            }
+            None => false,
+        }
+    }
+
+    pub const fn allows_external_model(&self) -> bool {
+        !self.is_nvidia_only()
+    }
+
     pub(crate) fn new(key_id: impl Into<Arc<str>>, class: GatewayKeyClass) -> Self {
         Self {
             key_id: key_id.into(),
             class,
+            allowed_worker_urls: None,
         }
+    }
+
+    fn with_allowed_worker_urls(
+        key_id: impl Into<Arc<str>>,
+        class: GatewayKeyClass,
+        allowed_worker_urls: Option<Arc<HashSet<String>>>,
+    ) -> Self {
+        Self {
+            key_id: key_id.into(),
+            class,
+            allowed_worker_urls,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct KeyScopeCandidates {
+    pub workers: Vec<Arc<Worker>>,
+    pub excluded_all: bool,
+}
+
+pub fn filter_key_scope(
+    workers: &[Arc<Worker>],
+    identity: Option<&GatewayKeyIdentity>,
+) -> KeyScopeCandidates {
+    let Some(identity) = identity.filter(|identity| identity.is_nvidia_only()) else {
+        return KeyScopeCandidates {
+            workers: workers.to_vec(),
+            excluded_all: false,
+        };
+    };
+    let scoped: Vec<_> = workers
+        .iter()
+        .filter(|worker| identity.allows_worker_url(&worker.url))
+        .cloned()
+        .collect();
+    let excluded_all = scoped.is_empty() && !workers.is_empty();
+    KeyScopeCandidates {
+        excluded_all,
+        workers: scoped,
     }
 }
 
@@ -141,6 +208,9 @@ pub enum GatewayKeyringError {
 
     #[error("gateway API keys must be non-empty, unique, visible ASCII strings")]
     InvalidApiKeys,
+
+    #[error("invalid {GATEWAY_NVIDIA_WORKER_URLS_ENV}: {0}")]
+    InvalidNvidiaWorkerUrls(String),
 }
 
 #[derive(Deserialize)]
@@ -200,7 +270,8 @@ impl GatewayKeyring {
     pub fn from_env() -> Result<Self, GatewayKeyringError> {
         let policies = read_required_env(GATEWAY_KEY_POLICIES_ENV)?;
         let api_keys = read_required_env(GATEWAY_API_KEYS_ENV)?;
-        Self::from_json(&policies, &api_keys)
+        let nvidia_worker_urls = std::env::var(GATEWAY_NVIDIA_WORKER_URLS_ENV).ok();
+        Self::from_json_with_nvidia_workers(&policies, &api_keys, nvidia_worker_urls.as_deref())
     }
 
     /// Load the single upstream credential used by a dedicated PD proxy.
@@ -237,6 +308,14 @@ impl GatewayKeyring {
     pub fn from_json(
         policies_json: &str,
         api_keys_json: &str,
+    ) -> Result<Self, GatewayKeyringError> {
+        Self::from_json_with_nvidia_workers(policies_json, api_keys_json, None)
+    }
+
+    pub fn from_json_with_nvidia_workers(
+        policies_json: &str,
+        api_keys_json: &str,
+        nvidia_worker_urls: Option<&str>,
     ) -> Result<Self, GatewayKeyringError> {
         let document: PolicyDocument = serde_json::from_str(policies_json)
             .map_err(|error| GatewayKeyringError::InvalidPolicies(error.to_string()))?;
@@ -275,6 +354,36 @@ impl GatewayKeyring {
             return Err(GatewayKeyringError::InventoryMismatch);
         }
 
+        let requires_nvidia_workers = policies
+            .values()
+            .any(|policy| policy.class == GatewayKeyClass::ExternalNvidia);
+        let nvidia_worker_urls = if requires_nvidia_workers {
+            let raw = nvidia_worker_urls.ok_or_else(|| {
+                GatewayKeyringError::InvalidNvidiaWorkerUrls("value is required".to_string())
+            })?;
+            let mut urls = HashSet::new();
+            for worker_url in raw.split_ascii_whitespace() {
+                let normalized = normalize_worker_url(worker_url).map_err(|e| {
+                    GatewayKeyringError::InvalidNvidiaWorkerUrls(format!(
+                        "worker URL is invalid: {e}"
+                    ))
+                })?;
+                if !urls.insert(normalized) {
+                    return Err(GatewayKeyringError::InvalidNvidiaWorkerUrls(
+                        "worker URLs must be unique".to_string(),
+                    ));
+                }
+            }
+            if urls.is_empty() {
+                return Err(GatewayKeyringError::InvalidNvidiaWorkerUrls(
+                    "at least one worker URL is required".to_string(),
+                ));
+            }
+            Some(Arc::new(urls))
+        } else {
+            None
+        };
+
         let mut seen_digests = HashSet::with_capacity(policies.len());
         let mut entries = Vec::with_capacity(policies.len());
         for (key_id, policy) in policies {
@@ -290,7 +399,12 @@ impl GatewayKeyring {
             }
             entries.push(KeyEntry {
                 digest,
-                identity: GatewayKeyIdentity::new(Arc::<str>::from(key_id), policy.class),
+                identity: GatewayKeyIdentity::with_allowed_worker_urls(
+                    Arc::<str>::from(key_id),
+                    policy.class,
+                    (policy.class == GatewayKeyClass::ExternalNvidia)
+                        .then(|| Arc::clone(nvidia_worker_urls.as_ref().expect("validated above"))),
+                ),
                 enabled: policy.enabled,
             });
         }
@@ -562,6 +676,50 @@ mod tests {
             let error = GatewayKeyring::from_json(policies, secrets).unwrap_err();
             assert!(matches!(error, GatewayKeyringError::InvalidApiKeys));
         }
+    }
+
+    #[test]
+    fn nvidia_key_requires_a_nonempty_unique_worker_allowlist() {
+        let policies = r#"{"version":1,"keys":[
+            {"key_id":"nvidia","class":"external_nvidia","enabled":true}
+        ]}"#;
+        let secrets = r#"{"nvidia":"nvidia-secret"}"#;
+
+        for urls in [
+            None,
+            Some(""),
+            Some("http://nvidia:30000 http://nvidia:30000"),
+        ] {
+            let error =
+                GatewayKeyring::from_json_with_nvidia_workers(policies, secrets, urls).unwrap_err();
+            assert!(matches!(
+                error,
+                GatewayKeyringError::InvalidNvidiaWorkerUrls(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn nvidia_key_is_priority_100_and_fail_closed_to_its_allowlist() {
+        let unconfigured = GatewayKeyIdentity::new("unconfigured", GatewayKeyClass::ExternalNvidia);
+        assert!(!unconfigured.allows_worker_url("http://nvidia:30000"));
+
+        let keyring = GatewayKeyring::from_json_with_nvidia_workers(
+            r#"{"version":1,"keys":[
+                {"key_id":"nvidia","class":"external_nvidia","enabled":true}
+            ]}"#,
+            r#"{"nvidia":"nvidia-secret"}"#,
+            Some("http://nvidia:30000"),
+        )
+        .unwrap();
+        let identity = keyring.authenticate("nvidia-secret").unwrap();
+        assert_eq!(identity.class(), GatewayKeyClass::ExternalNvidia);
+        assert_eq!(identity.priority_override(), Some(100));
+        assert!(identity.allows_worker_url("http://nvidia:30000"));
+        assert!(identity.allows_worker_url("http://nvidia:30000/"));
+        assert!(!identity.allows_worker_url("http://amd:30000"));
+        assert!(!identity.allows_worker_url("not-a-worker-url"));
+        assert!(!identity.allows_external_model());
     }
 
     #[test]

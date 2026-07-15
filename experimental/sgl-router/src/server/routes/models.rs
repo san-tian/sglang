@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::server::app_context::AppContext;
-use axum::extract::State;
+use crate::server::entry_auth::GatewayKeyIdentity;
+use axum::extract::{Extension, State};
 use axum::Json;
 use serde::Serialize;
 use std::sync::Arc;
@@ -20,7 +21,10 @@ pub struct ModelEntry {
     pub owned_by: &'static str,
 }
 
-pub async fn list_models(State(ctx): State<Arc<AppContext>>) -> Json<ModelsList> {
+pub async fn list_models(
+    State(ctx): State<Arc<AppContext>>,
+    identity: Option<Extension<GatewayKeyIdentity>>,
+) -> Json<ModelsList> {
     // The router serves a single configured model; OpenAI clients still
     // expect a list shape, so return a one-element `data` array.
     let m = &ctx.config.model;
@@ -29,12 +33,18 @@ pub async fn list_models(State(ctx): State<Arc<AppContext>>) -> Json<ModelsList>
         object: "model",
         owned_by: "sglang",
     }];
-    if let Some(external) = &ctx.config.external_model {
-        data.push(ModelEntry {
-            id: external.model_id.clone(),
-            object: "model",
-            owned_by: "external",
-        });
+    let external_allowed = match identity.as_ref() {
+        Some(identity) => identity.allows_external_model(),
+        None => true,
+    };
+    if external_allowed {
+        if let Some(external) = &ctx.config.external_model {
+            data.push(ModelEntry {
+                id: external.model_id.clone(),
+                object: "model",
+                owned_by: "external",
+            });
+        }
     }
     Json(ModelsList {
         object: "list",

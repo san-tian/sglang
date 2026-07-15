@@ -4,6 +4,7 @@
 //! Direct routing for one fixed external OpenAI-compatible model.
 
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::GatewayKeyIdentity;
 use crate::server::error::ApiError;
 use crate::server::routes::chat::make_client_disconnect_hook;
 use crate::server::trace::TraceContext;
@@ -28,6 +29,7 @@ pub async fn maybe_forward(
     inbound_headers: &HeaderMap,
     body: &Bytes,
     path: &'static str,
+    identity: Option<&GatewayKeyIdentity>,
 ) -> Result<Option<Response<Body>>, ApiError> {
     let Some(cfg) = ctx.config.external_model.as_ref() else {
         return Ok(None);
@@ -37,6 +39,9 @@ pub async fn maybe_forward(
     };
     if probe.model.as_deref() != Some(cfg.model_id.as_str()) {
         return Ok(None);
+    }
+    if identity.is_some_and(|identity| !identity.allows_external_model()) {
+        return Err(ApiError::ModelNotFound(cfg.model_id.clone()));
     }
     let streaming = probe.stream.unwrap_or(false);
 
