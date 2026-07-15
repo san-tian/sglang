@@ -378,6 +378,16 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
     let legacy_load_url = format!("{base}/get_load");
     let health_url = format!("{base}/health");
     let load_probe = async {
+        if worker.prefill_members().is_empty() {
+            let legacy = worker_get(client, worker, &legacy_load_url)
+                .send()
+                .await
+                .ok()?;
+            if !legacy.status().is_success() {
+                return None;
+            }
+            return parse_worker_load(&legacy.text().await.ok()?);
+        }
         let resp = worker_get(client, worker, &v1_loads_url)
             .send()
             .await
@@ -954,7 +964,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
-                prefill_members: Vec::new(),
+                prefill_members: vec!["http://p0".into()],
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -963,6 +973,62 @@ mod tests {
 
         assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
         assert!(!worker.introspection_probe_allows_routing());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_round_uses_legacy_load_api_for_physical_engine() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/v1/loads",
+                get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+            )
+            .route(
+                "/get_load",
+                get(|| async {
+                    Json(json!([{
+                        "num_reqs": 1,
+                        "num_waiting_reqs": 2,
+                        "num_running_reqs": 1,
+                        "num_waiting_uncached_tokens": 700,
+                        "load_role": "prefill"
+                    }]))
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let id = WorkerId("physical-prefill".into());
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: worker_url,
+                mode: WorkerMode::Prefill,
+                model_ids: vec![ModelId("m".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: WorkerBackend::Sglang,
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 400,
+                prefill_members: Vec::new(),
+            })
+            .unwrap();
+        let worker = registry.get(&id).unwrap();
+
+        poll_round(&reqwest::Client::new(), &registry).await;
+
+        assert_eq!(worker.reported_load(), 3);
+        let snapshot = worker
+            .reported_prefill_load()
+            .expect("physical Prefill should keep its legacy scheduler snapshot");
+        assert_eq!(snapshot.role, PrefillLoadRole::Prefill);
+        assert_eq!(snapshot.total_waiting_uncached_tokens, 700);
         server.abort();
     }
 
