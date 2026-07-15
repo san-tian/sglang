@@ -16,7 +16,8 @@
 
 use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
 use crate::policies::registry::{
-    filter_eligible, filter_route_eligible, PdPoolResolver, PdResolveError,
+    filter_dedicated_eligible, filter_eligible, filter_route_eligible, PdPoolResolver,
+    PdResolveError,
 };
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
@@ -397,10 +398,9 @@ pub async fn messages(
             .model
             .clone()
             .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-        if entry_identity
-            .as_ref()
-            .is_some_and(|identity| identity.is_nvidia_only() && model_str != ctx.config.model.id)
-        {
+        if entry_identity.as_ref().is_some_and(|identity| {
+            !identity.allows_external_model() && model_str != ctx.config.model.id
+        }) {
             return Err(ApiError::ModelNotFound(model_str));
         }
         let Some(cfg) = ctx
@@ -516,10 +516,9 @@ pub async fn count_tokens(
         let model_str = probe
             .model
             .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-        if entry_identity
-            .as_ref()
-            .is_some_and(|identity| identity.is_nvidia_only() && model_str != ctx.config.model.id)
-        {
+        if entry_identity.as_ref().is_some_and(|identity| {
+            !identity.allows_external_model() && model_str != ctx.config.model.id
+        }) {
             return Err(ApiError::ModelNotFound(model_str));
         }
         messages_inner(
@@ -679,6 +678,18 @@ async fn messages_inner(
         });
     }
     let workers = scoped.workers;
+    let dedicated = filter_dedicated_eligible(
+        &workers,
+        entry_identity
+            .as_ref()
+            .is_some_and(GatewayKeyIdentity::is_dedicated),
+    );
+    if dedicated.excluded_all {
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = dedicated.workers;
 
     // Priority-eligibility filtering — identical semantics to the
     // `/v1/chat/completions` path: capacity-restricted workers are removed

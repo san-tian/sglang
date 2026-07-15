@@ -83,6 +83,8 @@ pub enum WorkerTier {
     Bulk,
     #[value(name = "shared")]
     Shared,
+    #[value(name = "dedicated")]
+    Dedicated,
 }
 
 /// Request routes a worker is allowed to serve.

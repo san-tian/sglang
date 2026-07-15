@@ -214,6 +214,7 @@ fn gateway_keyring() -> Arc<GatewayKeyring> {
                     {"key_id":"external-a","class":"external","enabled":true},
                     {"key_id":"external-b","class":"external","enabled":true},
                     {"key_id":"internal-a","class":"internal","enabled":true},
+                    {"key_id":"dedicated-rdma06","class":"dedicated","enabled":true},
                     {"key_id":"disabled-a","class":"external","enabled":false}
                 ]
             }"#,
@@ -221,11 +222,47 @@ fn gateway_keyring() -> Arc<GatewayKeyring> {
                 "external-a":"external-secret-a",
                 "external-b":"external-secret-b",
                 "internal-a":"internal-secret-a",
+                "dedicated-rdma06":"dedicated-secret-rdma06",
                 "disabled-a":"disabled-secret-a"
             }"#,
         )
         .unwrap(),
     )
+}
+
+#[tokio::test]
+async fn gateway_key_class_enforces_bidirectional_dedicated_worker_isolation() {
+    let ordinary = MockWorker::start(vec![]).await;
+    let dedicated = MockWorker::start(vec![]).await;
+    let ordinary_spec = plain_spec("ordinary", &ordinary.url, None);
+    let mut dedicated_spec = plain_spec("rdma06", &dedicated.url, None);
+    dedicated_spec.tier = WorkerTier::Dedicated;
+    let ctx = build_ctx(vec![ordinary_spec, dedicated_spec]);
+    let keyring = gateway_keyring();
+
+    let ordinary_response =
+        build_router_with_gateway_keyring(Arc::clone(&ctx), Arc::clone(&keyring))
+            .oneshot(with_header(
+                chat_request(None),
+                "authorization",
+                "Bearer external-secret-a",
+            ))
+            .await
+            .unwrap();
+    assert_eq!(ordinary_response.status(), StatusCode::OK);
+    assert!(was_hit(&ordinary));
+    assert!(!was_hit(&dedicated));
+
+    let dedicated_response = build_router_with_gateway_keyring(ctx, keyring)
+        .oneshot(with_header(
+            chat_request(None),
+            "authorization",
+            "Bearer dedicated-secret-rdma06",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(dedicated_response.status(), StatusCode::OK);
+    assert!(was_hit(&dedicated));
 }
 
 fn nvidia_gateway_keyring(nvidia_worker_url: &str) -> Arc<GatewayKeyring> {

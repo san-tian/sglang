@@ -9,7 +9,8 @@
 
 use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
 use crate::policies::registry::{
-    filter_eligible, filter_route_eligible, PdPoolResolver, PdResolveError,
+    filter_dedicated_eligible, filter_eligible, filter_route_eligible, PdPoolResolver,
+    PdResolveError,
 };
 use crate::policies::SelectionContext;
 use crate::policies::{request_tokens_for, RequestTokens};
@@ -118,9 +119,9 @@ async fn passthrough(
     let model_str = probe
         .model
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-    if entry_identity
-        .is_some_and(|identity| identity.is_nvidia_only() && model_str != ctx.config.model.id)
-    {
+    if entry_identity.is_some_and(|identity| {
+        !identity.allows_external_model() && model_str != ctx.config.model.id
+    }) {
         return Err(ApiError::ModelNotFound(model_str));
     }
     let Some(cfg) = ctx
@@ -258,6 +259,16 @@ async fn passthrough_primary(
         });
     }
     let workers = scoped.workers;
+    let dedicated = filter_dedicated_eligible(
+        &workers,
+        entry_identity.is_some_and(GatewayKeyIdentity::is_dedicated),
+    );
+    if dedicated.excluded_all {
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = dedicated.workers;
 
     let request_priority = crate::policies::priority_from_value(probe.priority.as_ref());
     let eligible = filter_eligible(&workers, request_priority);

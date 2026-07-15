@@ -41,6 +41,7 @@ const OCP_APIM_SUBSCRIPTION_KEY: HeaderName = HeaderName::from_static("ocp-apim-
 pub enum GatewayKeyClass {
     External,
     ExternalNvidia,
+    Dedicated,
     Internal,
     /// Internal upstream gateway identity. This class cannot be selected by
     /// the Git-managed gateway policy document; it is built only by the
@@ -52,7 +53,7 @@ pub enum GatewayKeyClass {
 impl GatewayKeyClass {
     pub const fn priority_override(self) -> Option<i64> {
         match self {
-            Self::External | Self::ExternalNvidia => Some(100),
+            Self::External | Self::ExternalNvidia | Self::Dedicated => Some(100),
             Self::Internal => Some(0),
             Self::Proxy => None,
         }
@@ -62,6 +63,7 @@ impl GatewayKeyClass {
         match self {
             Self::External => "external",
             Self::ExternalNvidia => "external_nvidia",
+            Self::Dedicated => "dedicated",
             Self::Internal => "internal",
             Self::Proxy => "proxy",
         }
@@ -99,6 +101,10 @@ impl GatewayKeyIdentity {
         matches!(self.class, GatewayKeyClass::ExternalNvidia)
     }
 
+    pub const fn is_dedicated(&self) -> bool {
+        matches!(self.class, GatewayKeyClass::Dedicated)
+    }
+
     pub fn allows_worker_url(&self, worker_url: &str) -> bool {
         if !self.is_nvidia_only() {
             return true;
@@ -112,7 +118,7 @@ impl GatewayKeyIdentity {
     }
 
     pub const fn allows_external_model(&self) -> bool {
-        !self.is_nvidia_only()
+        !self.is_nvidia_only() && !self.is_dedicated()
     }
 
     pub(crate) fn new(key_id: impl Into<Arc<str>>, class: GatewayKeyClass) -> Self {
@@ -719,6 +725,22 @@ mod tests {
         assert!(identity.allows_worker_url("http://nvidia:30000/"));
         assert!(!identity.allows_worker_url("http://amd:30000"));
         assert!(!identity.allows_worker_url("not-a-worker-url"));
+        assert!(!identity.allows_external_model());
+    }
+
+    #[test]
+    fn dedicated_key_is_priority_100_and_cannot_use_external_models() {
+        let keyring = GatewayKeyring::from_json(
+            r#"{"version":1,"keys":[
+                {"key_id":"dedicated","class":"dedicated","enabled":true}
+            ]}"#,
+            r#"{"dedicated":"dedicated-secret"}"#,
+        )
+        .unwrap();
+        let identity = keyring.authenticate("dedicated-secret").unwrap();
+        assert_eq!(identity.class(), GatewayKeyClass::Dedicated);
+        assert_eq!(identity.priority_override(), Some(100));
+        assert!(identity.is_dedicated());
         assert!(!identity.allows_external_model());
     }
 
