@@ -8,7 +8,7 @@ use crate::health::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use crate::router_state::RouterStateLoadOverlay;
 use axum::http::{header, HeaderMap, HeaderValue};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicI64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +72,13 @@ pub struct PrefillLoadSnapshot {
     pub running_requests: usize,
     pub total_waiting_uncached_tokens: usize,
     pub candidate: Option<CandidatePrefillLoad>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberPrefillLoadSnapshot {
+    pub worker_url: String,
+    pub prefill_capacity_milli: usize,
+    pub snapshot: PrefillLoadSnapshot,
 }
 
 /// Parse a host from a worker URL. Matches SMG's `worker_builder.rs`
@@ -252,6 +259,11 @@ pub struct Worker {
     /// poll. Old workers omit these fields, so absence is a compatibility
     /// state rather than a probe failure.
     reported_prefill_load: Arc<RwLock<Option<PrefillLoadSnapshot>>>,
+    reported_prefill_load_updated_ms: Arc<AtomicU64>,
+    /// Per-Prefill-member snapshots exposed by a logical PD proxy. Keeping
+    /// members separate preserves parallel capacity and lets cache ownership
+    /// be joined to the load of the exact physical Prefill worker.
+    reported_prefill_members: Arc<RwLock<Vec<MemberPrefillLoadSnapshot>>>,
     /// Optional global pending snapshot from the single-writer router-state
     /// service. Present only in multi-replica gateway deployments.
     global_pending: Option<Arc<RouterStateLoadOverlay>>,
@@ -308,6 +320,8 @@ impl Worker {
             prefill_members: spec.prefill_members,
             reported_load: Arc::new(AtomicI64::new(REPORTED_LOAD_UNSET)),
             reported_prefill_load: Arc::new(RwLock::new(None)),
+            reported_prefill_load_updated_ms: Arc::new(AtomicU64::new(0)),
+            reported_prefill_members: Arc::new(RwLock::new(Vec::new())),
             global_pending: None,
             bearer_token: spec.bearer_token,
         }
@@ -450,10 +464,39 @@ impl Worker {
     }
 
     pub fn set_reported_prefill_load(&self, snapshot: Option<PrefillLoadSnapshot>) {
+        self.reported_prefill_load_updated_ms.store(
+            if snapshot.is_some() {
+                unix_time_ms()
+            } else {
+                0
+            },
+            Ordering::Relaxed,
+        );
         *self
             .reported_prefill_load
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
+    }
+
+    pub fn reported_prefill_load_age_ms(&self) -> Option<u64> {
+        let updated = self
+            .reported_prefill_load_updated_ms
+            .load(Ordering::Relaxed);
+        (updated != 0).then(|| unix_time_ms().saturating_sub(updated))
+    }
+
+    pub fn reported_prefill_members(&self) -> Vec<MemberPrefillLoadSnapshot> {
+        self.reported_prefill_members
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn set_reported_prefill_members(&self, snapshots: Vec<MemberPrefillLoadSnapshot>) {
+        *self
+            .reported_prefill_members
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshots;
     }
 
     /// Whether the latest combined load and health probe permits dispatch.
@@ -529,6 +572,17 @@ impl Worker {
             tokens,
         )
     }
+}
+
+fn unix_time_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 impl std::fmt::Debug for Worker {

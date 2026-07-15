@@ -144,8 +144,9 @@ pub fn build_router_with_gateway_keyring(
                 post(crate::server::routes::cache::flush_cache_for_gateway),
             );
     } else if ctx.config.runtime_mode == crate::config::RuntimeMode::PdProxy {
-        protected_routes =
-            protected_routes.route("/get_load", get(crate::server::routes::get_load::get_load));
+        protected_routes = protected_routes
+            .route("/get_load", get(crate::server::routes::get_load::get_load))
+            .route("/v1/loads", get(crate::server::routes::v1_loads::get_loads));
     }
 
     protected_routes = protected_routes.layer(middleware::from_fn_with_state(

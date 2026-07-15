@@ -388,6 +388,11 @@ pub enum TtftScoreMode {
     PrefillWorkOnly,
     #[value(name = "prefill-work-normalized")]
     PrefillWorkNormalized,
+    /// Estimate relative time-to-first-token from uncached work ahead divided
+    /// by each worker's configured prefill capacity. Cache credit is
+    /// continuous in this mode; `cache_threshold` is not applied.
+    #[value(name = "predicted-ttft")]
+    PredictedTtft,
     #[value(name = "lmetric")]
     Lmetric,
     #[value(name = "lmetric-candidate-aware")]
@@ -449,7 +454,8 @@ pub struct CacheAwareConfig {
     pub ttft_first_routing: bool,
     /// First-token score formula. Additive preserves the existing behavior;
     /// Prefill-work-only and LMetric modes require token-level worker load
-    /// snapshots.
+    /// snapshots. Predicted-TTFT can use snapshots when available and falls
+    /// back to router reservations without changing score units.
     pub ttft_score_mode: TtftScoreMode,
     /// In TTFT-first mode, rank by first-token pressure before cache scoring.
     /// Cache overlap then breaks ties only among the least-pressured workers.

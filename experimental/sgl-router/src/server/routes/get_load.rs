@@ -31,9 +31,17 @@ pub struct GetLoadEntry {
 pub async fn get_load(
     State(ctx): State<Arc<AppContext>>,
 ) -> Result<Json<Vec<GetLoadEntry>>, StatusCode> {
+    let entries = decode_load_entries(&ctx);
+    if entries.is_empty() {
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    } else {
+        Ok(Json(entries))
+    }
+}
+
+pub(crate) fn decode_load_entries(ctx: &AppContext) -> Vec<GetLoadEntry> {
     let model = ModelId(ctx.config.model.id.clone());
-    let entries: Vec<GetLoadEntry> = ctx
-        .registry
+    ctx.registry
         .routable_workers_for(&model)
         .into_iter()
         .filter(|worker| worker.mode() == WorkerMode::Decode)
@@ -62,13 +70,7 @@ pub async fn get_load(
                     .saturating_add(worker.global_pending_token_load()),
             ),
         })
-        .collect();
-
-    if entries.is_empty() {
-        Err(StatusCode::SERVICE_UNAVAILABLE)
-    } else {
-        Ok(Json(entries))
-    }
+        .collect()
 }
 
 fn saturating_i64(value: usize) -> i64 {
