@@ -42,7 +42,7 @@ class _ReregisteringTestKVReceiver(_TestKVReceiver):
 def _make_receiver(receiver_cls=_TestKVReceiver):
     receiver = receiver_cls.__new__(receiver_cls)
     receiver.bootstrap_room = 123
-    receiver.bootstrap_addr = "10.60.0.8:8998"
+    receiver.bootstrap_addr = "192.0.2.8:8998"
     receiver.kv_mgr = _FakeKVManager()
     receiver.conclude_state = None
     return receiver
@@ -50,14 +50,14 @@ def _make_receiver(receiver_cls=_TestKVReceiver):
 
 def _bootstrap_info(rank_port):
     return {
-        "rank_ip": "10.60.0.8",
+        "rank_ip": "192.0.2.8",
         "rank_port": rank_port,
         "is_dummy": False,
         "_prefill_dp_rank": 0,
         "_prefill_cp_rank": 0,
         "_target_tp_rank": 0,
         "_target_pp_rank": 0,
-        "_bootstrap_key": "10.60.0.8:8998_0_0_0",
+        "_bootstrap_key": "192.0.2.8:8998_0_0_0",
     }
 
 
@@ -66,7 +66,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         receiver = _make_receiver()
         old_info = _bootstrap_info(38931)
         receiver.bootstrap_infos = [old_info]
-        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [old_info]
+        receiver.kv_mgr.connection_pool["192.0.2.8:8998_0_0_0"] = [old_info]
         refreshed_info = _bootstrap_info(30100)
 
         with (
@@ -90,7 +90,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         mock_route.assert_called_once_with(0, 0, 0, 0)
         self.assertIs(receiver.bootstrap_infos[0], refreshed_info)
         self.assertIs(
-            receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"][0],
+            receiver.kv_mgr.connection_pool["192.0.2.8:8998_0_0_0"][0],
             refreshed_info,
         )
         self.assertEqual(receiver.kv_mgr.failures, [])
@@ -99,7 +99,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         receiver = _make_receiver()
         old_info = _bootstrap_info(38931)
         receiver.bootstrap_infos = [old_info]
-        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [old_info]
+        receiver.kv_mgr.connection_pool["192.0.2.8:8998_0_0_0"] = [old_info]
         refreshed_info = _bootstrap_info(30100)
         events = []
 
@@ -166,7 +166,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
             kv_mem_descs=[],
             aux_mem_descs=[],
             state_mem_descs=[],
-            local_ip="10.60.0.37",
+            local_ip="198.51.100.37",
             rank_port=39001,
             attn_tp_size=4,
             kv_args=SimpleNamespace(
@@ -226,7 +226,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         receiver.required_dst_info_num = 1
         receiver.init_time = None
         receiver.kv_mgr = SimpleNamespace(
-            local_ip="10.60.0.37",
+            local_ip="198.51.100.37",
             rank_port=39001,
             engine_desc=SimpleNamespace(key="decode-engine"),
         )
@@ -267,13 +267,13 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         self.assertFalse(ok)
         self.assertEqual(len(receiver.kv_mgr.failures), 1)
         _, reason = receiver.kv_mgr.failures[0]
-        self.assertIn("tcp://10.60.0.8:38931", reason)
-        self.assertIn("tcp://10.60.0.8:37251", reason)
+        self.assertIn("tcp://192.0.2.8:38931", reason)
+        self.assertIn("tcp://192.0.2.8:37251", reason)
 
     def test_cached_bootstrap_infos_still_registers_kv_args(self):
         receiver = _make_receiver(_ReregisteringTestKVReceiver)
         cached_info = _bootstrap_info(30100)
-        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [cached_info]
+        receiver.kv_mgr.connection_pool["192.0.2.8:8998_0_0_0"] = [cached_info]
         receiver.prefill_dp_rank = 0
         receiver.target_cp_ranks = [0]
         receiver.target_tp_rank = 0
@@ -289,7 +289,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
     def test_cached_bootstrap_infos_do_not_register_by_default(self):
         receiver = _make_receiver()
         cached_info = _bootstrap_info(30100)
-        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [cached_info]
+        receiver.kv_mgr.connection_pool["192.0.2.8:8998_0_0_0"] = [cached_info]
         receiver.prefill_dp_rank = 0
         receiver.target_cp_ranks = [0]
         receiver.target_tp_rank = 0
