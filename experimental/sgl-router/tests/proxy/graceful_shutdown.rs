@@ -84,6 +84,7 @@ fn build_ctx_with_worker(worker_url: &str) -> Arc<AppContext> {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         })
         .expect("test worker accepted");
     let policies = Arc::new(build_registry_with_defaults(&cfg).unwrap());

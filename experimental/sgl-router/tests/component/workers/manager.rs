@@ -52,6 +52,7 @@ fn spec_for(id: &str, url: &str, mode: WorkerMode) -> WorkerSpec {
         tier: Default::default(),
         routes: Default::default(),
         prefill_capacity_milli: 1000,
+        prefill_members: Vec::new(),
     }
 }
 

@@ -164,6 +164,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .unwrap();
         let app = crate::server::app::build_router(ctx.clone());

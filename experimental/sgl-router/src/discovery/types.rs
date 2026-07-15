@@ -210,6 +210,12 @@ pub struct WorkerSpec {
     /// heterogeneous normalization ignore it.
     #[serde(default = "default_prefill_capacity_milli")]
     pub prefill_capacity_milli: usize,
+    /// Physical Prefill worker URLs that belong to this logical routing
+    /// endpoint. Cache-state events still use the physical Prefill URLs; a
+    /// logical PD proxy can opt into receiving cache credit for those members
+    /// via static URL discovery.
+    #[serde(default)]
+    pub prefill_members: Vec<String>,
 }
 
 pub fn default_prefill_capacity_milli() -> usize {
@@ -260,6 +266,7 @@ mod tests {
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         let s = serde_json::to_string(&w).unwrap();
         let d: WorkerSpec = serde_json::from_str(&s).unwrap();
@@ -281,6 +288,7 @@ mod tests {
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"bootstrap_port\":8997"));
@@ -303,6 +311,7 @@ mod tests {
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"min_priority\":100"));
@@ -368,6 +377,7 @@ mod tests {
             tier: WorkerTier::Bulk,
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         let s = serde_json::to_string(&w).unwrap();
         assert!(s.contains("\"backend\":\"vllm\""));
@@ -417,6 +427,7 @@ mod tests {
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         });
         let s = serde_json::to_string(&e).unwrap();
         let d: DiscoveryEvent = serde_json::from_str(&s).unwrap();

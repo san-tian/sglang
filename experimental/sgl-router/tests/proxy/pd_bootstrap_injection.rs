@@ -180,6 +180,7 @@ async fn pd_mode_chat_injects_bootstrap_fields_into_both_bodies() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -194,6 +195,7 @@ async fn pd_mode_chat_injects_bootstrap_fields_into_both_bodies() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
     ]);
     let app = build_router(ctx);
@@ -266,6 +268,7 @@ async fn pd_mode_reselects_decode_after_connect_failure() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
         WorkerSpec {
             id: WorkerId("d-dead".into()),
@@ -280,6 +283,7 @@ async fn pd_mode_reselects_decode_after_connect_failure() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
         WorkerSpec {
             id: WorkerId("d-healthy".into()),
@@ -294,6 +298,7 @@ async fn pd_mode_reselects_decode_after_connect_failure() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
     ]);
     let app = build_router(ctx);
@@ -357,6 +362,7 @@ async fn plain_mode_chat_does_not_inject_bootstrap_fields() {
         tier: Default::default(),
         routes: Default::default(),
         prefill_capacity_milli: 1000,
+        prefill_members: Vec::new(),
     }]);
     let app = build_router(ctx);
 
@@ -401,6 +407,7 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
         WorkerSpec {
             id: WorkerId("pB".into()),
@@ -415,6 +422,7 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -429,6 +437,7 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
     ]);
     let app = build_router(ctx);
@@ -486,6 +495,7 @@ async fn pd_mode_prefill_5xx_does_not_poison_decode_response() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -500,6 +510,7 @@ async fn pd_mode_prefill_5xx_does_not_poison_decode_response() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         },
     ]);
     let app = build_router(ctx);

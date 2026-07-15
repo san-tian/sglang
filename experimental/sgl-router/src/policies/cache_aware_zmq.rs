@@ -53,6 +53,7 @@ use crate::server::metrics::{
 use crate::tokenizer::TokenizerRegistry;
 use crate::workers::worker::PrefillLoadRole;
 use crate::workers::Worker;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -156,36 +157,30 @@ impl CacheAwareZmqPolicy {
         workers: &[Arc<Worker>],
         use_reported: bool,
     ) -> Option<Arc<Worker>> {
-        let min_load = workers
-            .iter()
-            .map(|w| w.effective_load(use_reported))
-            .min()?;
+        let groups = grouped_worker_scores(workers, |w| (w.effective_load(use_reported), 0));
+        let min_load = groups.iter().map(|g| g.best_score).min()?;
         self.pick_fair_worker(
-            workers
+            groups
                 .iter()
-                .filter(|w| w.effective_load(use_reported) == min_load)
-                .map(Arc::clone)
+                .filter(|g| g.best_score == min_load)
+                .map(|g| Arc::clone(&workers[g.root_index]))
                 .collect(),
         )
     }
 
     fn pick_min_ttft_load(&self, workers: &[Arc<Worker>]) -> Option<Arc<Worker>> {
-        let min_load = workers
-            .iter()
-            .map(|w| {
-                w.effective_ttft_load(self.config.use_reported_load, self.config.ttft_token_scale)
-            })
-            .min()?;
+        let groups = grouped_worker_scores(workers, |w| {
+            (
+                w.effective_ttft_load(self.config.use_reported_load, self.config.ttft_token_scale),
+                0,
+            )
+        });
+        let min_load = groups.iter().map(|g| g.best_score).min()?;
         self.pick_fair_worker(
-            workers
+            groups
                 .iter()
-                .filter(|w| {
-                    w.effective_ttft_load(
-                        self.config.use_reported_load,
-                        self.config.ttft_token_scale,
-                    ) == min_load
-                })
-                .map(Arc::clone)
+                .filter(|g| g.best_score == min_load)
+                .map(|g| Arc::clone(&workers[g.root_index]))
                 .collect(),
         )
     }
@@ -343,60 +338,48 @@ impl CacheAwareZmqPolicy {
         };
 
         let total_blocks = block_hashes.len();
-        let best_score = score_workers
+        let groups = grouped_worker_scores(score_workers, |w| {
+            let worker_matched = matched_blocks_for_worker(w, matched_blocks, matched_urls);
+            let score = self.ttft_score_with_mode(
+                w,
+                total_blocks,
+                worker_matched,
+                candidate_tokens,
+                block_size,
+                candidate_priority,
+                score_mode,
+            );
+            (score, worker_matched)
+        });
+        let best_score = groups
             .iter()
-            .map(|w| {
-                self.ttft_score_with_mode(
-                    w,
-                    total_blocks,
-                    matched_blocks_for_worker(w, matched_blocks, matched_urls),
-                    candidate_tokens,
-                    block_size,
-                    candidate_priority,
-                    score_mode,
-                )
-            })
+            .map(|g| g.best_score)
             .min()
             .unwrap_or(usize::MAX);
         let score_limit = best_score.saturating_add(self.config.ttft_cache_score_margin);
 
-        let eligible: Vec<(Arc<Worker>, usize, usize)> = score_workers
+        let eligible: Vec<&GroupScore> = groups
             .iter()
-            .filter_map(|w| {
-                let worker_matched = matched_blocks_for_worker(w, matched_blocks, matched_urls);
-                let score = self.ttft_score_with_mode(
-                    w,
-                    total_blocks,
-                    worker_matched,
-                    candidate_tokens,
-                    block_size,
-                    candidate_priority,
-                    score_mode,
-                );
-                if score <= score_limit {
-                    Some((Arc::clone(w), score, worker_matched))
-                } else {
-                    None
-                }
-            })
+            .filter(|group| group.best_score <= score_limit)
             .collect();
 
         let chosen = eligible
             .iter()
-            .map(|(_, _, worker_matched)| *worker_matched)
+            .map(|group| group.best_matched_blocks)
             .max()
             .and_then(|best_matched| {
                 let best_score_for_match = eligible
                     .iter()
-                    .filter(|(_, _, worker_matched)| *worker_matched == best_matched)
-                    .map(|(_, score, _)| *score)
+                    .filter(|group| group.best_matched_blocks == best_matched)
+                    .map(|group| group.best_score)
                     .min()?;
                 let candidates = eligible
                     .iter()
-                    .filter(|(_, score, worker_matched)| {
-                        *worker_matched == best_matched && *score == best_score_for_match
+                    .filter(|group| {
+                        group.best_matched_blocks == best_matched
+                            && group.best_score == best_score_for_match
                     })
-                    .map(|(w, _, _)| Arc::clone(w))
+                    .map(|group| Arc::clone(&score_workers[group.root_index]))
                     .collect();
                 self.pick_fair_worker(candidates)
                     .map(|w| (w, best_score_for_match, best_matched))
@@ -917,6 +900,13 @@ struct CacheMatch {
     worker_urls: HashSet<String>,
 }
 
+#[derive(Debug, Clone)]
+struct GroupScore {
+    root_index: usize,
+    best_score: usize,
+    best_matched_blocks: usize,
+}
+
 impl CacheMatch {
     fn from_local(matched: crate::policies::kv_events::tree::MatchResult) -> Self {
         Self {
@@ -942,11 +932,54 @@ fn matched_blocks_for_worker(
     matched_blocks: usize,
     matched_urls: &HashSet<&str>,
 ) -> usize {
-    if matched_urls.contains(worker.url.as_str()) {
+    if matched_urls.contains(worker.url.as_str())
+        || worker
+            .prefill_members()
+            .iter()
+            .any(|member| matched_urls.contains(member.as_str()))
+    {
         matched_blocks
     } else {
         0
     }
+}
+
+fn grouped_worker_scores<F>(workers: &[Arc<Worker>], mut score_fn: F) -> Vec<GroupScore>
+where
+    F: FnMut(&Worker) -> (usize, usize),
+{
+    let mut owner_by_member: HashMap<&str, usize> = HashMap::new();
+    for (idx, worker) in workers.iter().enumerate() {
+        for member in worker.prefill_members() {
+            owner_by_member.entry(member.as_str()).or_insert(idx);
+        }
+    }
+
+    let mut groups: HashMap<usize, GroupScore> = HashMap::new();
+    for (idx, worker) in workers.iter().enumerate() {
+        let root_index = owner_by_member
+            .get(worker.url.as_str())
+            .copied()
+            .unwrap_or(idx);
+        let (score, matched_blocks) = score_fn(worker);
+        groups
+            .entry(root_index)
+            .and_modify(|group| {
+                if score < group.best_score
+                    || (score == group.best_score && matched_blocks > group.best_matched_blocks)
+                {
+                    group.best_score = score;
+                    group.best_matched_blocks = matched_blocks;
+                }
+            })
+            .or_insert(GroupScore {
+                root_index,
+                best_score: score,
+                best_matched_blocks: matched_blocks,
+            });
+    }
+
+    groups.into_values().collect()
 }
 
 fn normalize_prefill_work(prefill_work_tokens: usize, capacity_milli: usize) -> usize {
@@ -1076,6 +1109,16 @@ mod tests {
         backend: WorkerBackend,
         prefill_capacity_milli: usize,
     ) -> Arc<Worker> {
+        worker_with_prefill_members(url, model_id, backend, prefill_capacity_milli, Vec::new())
+    }
+
+    fn worker_with_prefill_members(
+        url: &str,
+        model_id: &str,
+        backend: WorkerBackend,
+        prefill_capacity_milli: usize,
+        prefill_members: Vec<String>,
+    ) -> Arc<Worker> {
         Arc::new(Worker::new(WorkerSpec {
             id: WorkerId(url.into()),
             url: url.into(),
@@ -1089,6 +1132,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli,
+            prefill_members,
         }))
     }
 
@@ -1110,6 +1154,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         });
         worker.attach_router_state_overlay(overlay);
         Arc::new(worker)
@@ -2653,6 +2698,22 @@ mod tests {
     }
 
     #[test]
+    fn matched_blocks_for_worker_credits_prefill_member_urls() {
+        let logical = worker_with_prefill_members(
+            "http://pd-proxy:30000",
+            "tiny",
+            WorkerBackend::SglangProxy,
+            1000,
+            vec!["http://prefill-0:30000".into()],
+        );
+        let unrelated = worker("http://other-proxy:30000", "tiny");
+        let matched_urls = HashSet::from(["http://prefill-0:30000"]);
+
+        assert_eq!(matched_blocks_for_worker(&logical, 3, &matched_urls), 3);
+        assert_eq!(matched_blocks_for_worker(&unrelated, 3, &matched_urls), 0);
+    }
+
+    #[test]
     fn candidate_aware_selection_does_not_count_bypassable_long_work() {
         let policy = lmetric_policy(TtftScoreMode::LmetricCandidateAware);
         let w0 = worker("http://w0:30000", "tiny");
@@ -3016,6 +3077,57 @@ mod tests {
         assert!(
             rendered.contains(r#"sgl_router_remote_cache_state_query_total{outcome="hit"} 1"#),
             "remote hit must be counted; got:\n{rendered}",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_cache_state_member_match_selects_logical_pd_proxy() {
+        let service = Arc::new(crate::cache_state::CacheStateService::with_empty_tree());
+        let (base_url, server) = start_cache_state_service(Arc::clone(&service)).await;
+
+        let registry = tokenizer_registry_with_tiny();
+        let text = "hello world hello world hello world";
+        let (ids, hashes) = tiny_ids_and_hashes(&registry, text);
+        service.insert(&CacheStateInsertRequest {
+            model_id: "tiny".into(),
+            worker_url: "http://prefill-0:30000".into(),
+            dp_rank: 0,
+            parent_hash: None,
+            block_hashes: hashes,
+        });
+        let client = Arc::new(RemoteCacheStateClient::new(
+            base_url,
+            std::time::Duration::from_millis(500),
+        ));
+        let metrics = MetricsRegistry::new();
+        let policy = ttft_remote_policy(
+            registry,
+            Arc::new(HashTree::new()),
+            client,
+            Arc::clone(&metrics),
+        );
+        let logical = worker_with_prefill_members(
+            "http://pd-proxy:30000",
+            "tiny",
+            WorkerBackend::SglangProxy,
+            1000,
+            vec!["http://prefill-0:30000".into()],
+        );
+        let member = worker("http://prefill-0:30000", "tiny");
+        let cold = worker("http://cold-proxy:30000", "tiny");
+        logical.set_reported_load(10);
+        member.set_reported_load(0);
+        cold.set_reported_load(0);
+        let workers = vec![Arc::clone(&logical), Arc::clone(&member), Arc::clone(&cold)];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&workers, &ctx).expect("must pick");
+
+        server.abort();
+        assert_eq!(
+            chosen.url, "http://pd-proxy:30000",
+            "cache credit should select the logical proxy; physical Prefill stays only in cache-state"
         );
     }
 

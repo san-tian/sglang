@@ -118,6 +118,7 @@ fn build_test_context(cfg: Config, local_worker_url: String) -> Arc<AppContext> 
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         })
         .unwrap();
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());

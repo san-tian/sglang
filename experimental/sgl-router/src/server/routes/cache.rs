@@ -301,6 +301,7 @@ mod tests {
                     tier: Default::default(),
                     routes: crate::discovery::WorkerRouteSet::all(),
                     prefill_capacity_milli: 1000,
+                    prefill_members: Vec::new(),
                 })
                 .expect("worker accepted");
         }
@@ -323,6 +324,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .expect("worker accepted");
         Arc::new(ctx)
@@ -457,6 +459,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .expect("prefill accepted");
         ctx.registry
@@ -473,6 +476,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .expect("decode accepted");
 

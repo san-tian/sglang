@@ -85,6 +85,7 @@ async fn non_streaming_request_times_out_when_worker_hangs() {
         tier: Default::default(),
         routes: Default::default(),
         prefill_capacity_milli: 1000,
+        prefill_members: Vec::new(),
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(Duration::from_millis(200)).unwrap());
