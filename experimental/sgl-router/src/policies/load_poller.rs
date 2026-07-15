@@ -34,8 +34,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::policies::active_load::JanitorHandle;
 use crate::workers::worker::{
-    CandidatePrefillLoad, PrefillLoadRole, PrefillLoadSnapshot, PrefillPriorityLoad,
-    REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET,
+    CandidatePrefillLoad, MemberPrefillLoadSnapshot, PrefillLoadRole, PrefillLoadSnapshot,
+    PrefillPriorityLoad, REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET,
 };
 use crate::workers::WorkerRegistry;
 
@@ -44,6 +44,8 @@ use crate::workers::WorkerRegistry;
 /// Unknown fields are ignored; routing needs the request pressure.
 #[derive(Debug, Deserialize)]
 struct GetLoadEntry {
+    #[serde(default)]
+    worker_url: Option<String>,
     #[serde(default)]
     num_reqs: i64,
     #[serde(default)]
@@ -54,6 +56,8 @@ struct GetLoadEntry {
     num_waiting_uncached_tokens: Option<i64>,
     #[serde(default)]
     load_role: Option<String>,
+    #[serde(default)]
+    prefill_capacity_milli: Option<usize>,
     #[serde(default)]
     prefill_queue: Option<PrefillQueueEntry>,
 }
@@ -78,10 +82,18 @@ struct PrefillQueueEntry {
     priority_ahead_uncached_tokens: Vec<Vec<i64>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct V1LoadsResponse {
+    #[serde(default)]
+    logical_request_pressure: Option<i64>,
+    loads: Vec<GetLoadEntry>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct ParsedWorkerLoad {
     request_pressure: i64,
     prefill: Option<PrefillLoadSnapshot>,
+    prefill_members: Vec<MemberPrefillLoadSnapshot>,
 }
 
 /// Sum active plus waiting requests across all dp ranks reported by one worker.
@@ -130,6 +142,108 @@ fn parse_worker_load(body: &str) -> Option<ParsedWorkerLoad> {
     Some(ParsedWorkerLoad {
         request_pressure,
         prefill,
+        prefill_members: Vec::new(),
+    })
+}
+
+fn parse_v1_worker_load(
+    body: &str,
+    worker: &crate::workers::worker::Worker,
+) -> Option<ParsedWorkerLoad> {
+    let response: V1LoadsResponse = serde_json::from_str(body).ok()?;
+    if worker.backend() == crate::discovery::WorkerBackend::SglangProxy {
+        return parse_proxy_v1_load(response, worker);
+    }
+
+    let request_pressure = response.loads.iter().fold(0i64, |total, entry| {
+        total.saturating_add(
+            entry
+                .num_running_reqs
+                .unwrap_or_default()
+                .max(0)
+                .saturating_add(entry.num_waiting_reqs.max(0)),
+        )
+    });
+    let role = match worker.mode() {
+        crate::discovery::WorkerMode::Plain => Some(PrefillLoadRole::Integrated),
+        crate::discovery::WorkerMode::Prefill => Some(PrefillLoadRole::Prefill),
+        crate::discovery::WorkerMode::Decode => None,
+    };
+    let prefill = role.and_then(|role| snapshot_from_entries(&response.loads, role));
+    Some(ParsedWorkerLoad {
+        request_pressure,
+        prefill,
+        prefill_members: Vec::new(),
+    })
+}
+
+fn parse_proxy_v1_load(
+    response: V1LoadsResponse,
+    worker: &crate::workers::worker::Worker,
+) -> Option<ParsedWorkerLoad> {
+    let configured = worker.prefill_members().iter().collect::<HashSet<_>>();
+    let mut seen = HashSet::new();
+    let mut members = Vec::with_capacity(response.loads.len());
+    for entry in &response.loads {
+        let member_url = entry.worker_url.as_ref()?;
+        if entry.load_role.as_deref() != Some("prefill")
+            || !configured.contains(member_url)
+            || !seen.insert(member_url)
+        {
+            return None;
+        }
+        let capacity = entry.prefill_capacity_milli.filter(|value| *value > 0)?;
+        let snapshot =
+            snapshot_from_entries(std::slice::from_ref(entry), PrefillLoadRole::Prefill)?;
+        members.push(MemberPrefillLoadSnapshot {
+            worker_url: member_url.clone(),
+            prefill_capacity_milli: capacity,
+            snapshot,
+        });
+    }
+    if members.is_empty() {
+        return None;
+    }
+    let request_pressure = response.logical_request_pressure.unwrap_or_else(|| {
+        response.loads.iter().fold(0i64, |total, entry| {
+            total.saturating_add(
+                entry
+                    .num_running_reqs
+                    .unwrap_or_default()
+                    .max(0)
+                    .saturating_add(entry.num_waiting_reqs.max(0)),
+            )
+        })
+    });
+    Some(ParsedWorkerLoad {
+        request_pressure: request_pressure.max(0),
+        prefill: None,
+        prefill_members: members,
+    })
+}
+
+fn snapshot_from_entries(
+    entries: &[GetLoadEntry],
+    role: PrefillLoadRole,
+) -> Option<PrefillLoadSnapshot> {
+    if entries.is_empty()
+        || entries.iter().any(|entry| {
+            entry.num_running_reqs.is_none() || entry.num_waiting_uncached_tokens.is_none()
+        })
+    {
+        return None;
+    }
+    Some(PrefillLoadSnapshot {
+        role,
+        running_requests: entries
+            .iter()
+            .map(|entry| entry.num_running_reqs.unwrap_or_default().max(0) as usize)
+            .fold(0usize, usize::saturating_add),
+        total_waiting_uncached_tokens: entries
+            .iter()
+            .map(|entry| entry.num_waiting_uncached_tokens.unwrap_or_default().max(0) as usize)
+            .fold(0usize, usize::saturating_add),
+        candidate: aggregate_candidate_prefill(entries),
     })
 }
 
@@ -251,6 +365,7 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
     if !worker.backend().supports_sglang_load() {
         worker.set_reported_load(REPORTED_LOAD_UNSET);
         worker.set_reported_prefill_load(None);
+        worker.set_reported_prefill_members(Vec::new());
         tracing::debug!(
             worker_url = %worker.url,
             backend = ?worker.backend(),
@@ -259,15 +374,32 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
         return;
     }
     let base = worker.url.trim_end_matches('/');
-    let load_url = format!("{base}/get_load");
+    let v1_loads_url = format!("{base}/v1/loads?include=core,prefill_queue");
+    let legacy_load_url = format!("{base}/get_load");
     let health_url = format!("{base}/health");
     let load_probe = async {
-        let resp = worker_get(client, worker, &load_url).send().await.ok()?;
-        if !resp.status().is_success() {
+        let resp = worker_get(client, worker, &v1_loads_url)
+            .send()
+            .await
+            .ok()?;
+        if resp.status().is_success() {
+            let body = resp.text().await.ok()?;
+            return parse_v1_worker_load(&body, worker);
+        }
+        if !matches!(
+            resp.status(),
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+        ) {
             return None;
         }
-        let body = resp.text().await.ok()?;
-        parse_worker_load(&body)
+        let legacy = worker_get(client, worker, &legacy_load_url)
+            .send()
+            .await
+            .ok()?;
+        if !legacy.status().is_success() {
+            return None;
+        }
+        parse_worker_load(&legacy.text().await.ok()?)
     };
     let health_probe = async {
         let resp = match worker_get(client, worker, &health_url).send().await {
@@ -281,10 +413,12 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
         (Some(load), true) => {
             worker.set_reported_load(load.request_pressure);
             worker.set_reported_prefill_load(load.prefill);
+            worker.set_reported_prefill_members(load.prefill_members);
         }
         (load, health_ok) => {
             worker.set_reported_load(REPORTED_LOAD_FAILED);
             worker.set_reported_prefill_load(None);
+            worker.set_reported_prefill_members(Vec::new());
             tracing::debug!(
                 worker_url = %worker.url,
                 load_ok = load.is_some(),
@@ -506,6 +640,101 @@ mod tests {
         assert_eq!(parsed.prefill, None);
     }
 
+    #[test]
+    fn parses_direct_engine_v1_loads_envelope() {
+        let worker = test_worker(
+            "direct",
+            "http://direct",
+            WorkerMode::Plain,
+            WorkerBackend::Sglang,
+            Vec::new(),
+        );
+        let parsed = parse_v1_worker_load(
+            r#"{
+              "timestamp":"2026-07-15T00:00:00Z",
+              "loads":[{
+                "dp_rank":0,
+                "num_running_reqs":2,
+                "num_waiting_reqs":3,
+                "num_waiting_uncached_tokens":900,
+                "prefill_queue":null
+              }]
+            }"#,
+            &worker,
+        )
+        .expect("v1 loads parses");
+        assert_eq!(parsed.request_pressure, 5);
+        assert!(parsed.prefill_members.is_empty());
+        let snapshot = parsed.prefill.expect("integrated snapshot");
+        assert_eq!(snapshot.role, PrefillLoadRole::Integrated);
+        assert_eq!(snapshot.running_requests, 2);
+        assert_eq!(snapshot.total_waiting_uncached_tokens, 900);
+    }
+
+    #[test]
+    fn parses_proxy_member_snapshots_without_summing_members() {
+        let worker = test_worker(
+            "proxy",
+            "http://proxy",
+            WorkerMode::Plain,
+            WorkerBackend::SglangProxy,
+            vec!["http://p0".into(), "http://p1".into()],
+        );
+        let parsed = parse_v1_worker_load(
+            r#"{
+              "logical_request_pressure":7,
+              "loads":[
+                {
+                  "worker_url":"http://p0","dp_rank":0,"load_role":"prefill",
+                  "prefill_capacity_milli":1000,"num_running_reqs":1,
+                  "num_waiting_reqs":2,"num_waiting_uncached_tokens":300
+                },
+                {
+                  "worker_url":"http://p1","dp_rank":1,"load_role":"prefill",
+                  "prefill_capacity_milli":2000,"num_running_reqs":2,
+                  "num_waiting_reqs":4,"num_waiting_uncached_tokens":900
+                }
+              ]
+            }"#,
+            &worker,
+        )
+        .expect("proxy v1 loads parses");
+        assert_eq!(parsed.request_pressure, 7);
+        assert_eq!(parsed.prefill, None);
+        assert_eq!(parsed.prefill_members.len(), 2);
+        assert_eq!(parsed.prefill_members[0].worker_url, "http://p0");
+        assert_eq!(
+            parsed.prefill_members[0]
+                .snapshot
+                .total_waiting_uncached_tokens,
+            300
+        );
+        assert_eq!(parsed.prefill_members[1].prefill_capacity_milli, 2000);
+        assert_eq!(
+            parsed.prefill_members[1]
+                .snapshot
+                .total_waiting_uncached_tokens,
+            900
+        );
+    }
+
+    #[test]
+    fn proxy_v1_loads_rejects_unknown_or_duplicate_member_identity() {
+        let worker = test_worker(
+            "proxy",
+            "http://proxy",
+            WorkerMode::Plain,
+            WorkerBackend::SglangProxy,
+            vec!["http://p0".into()],
+        );
+        for body in [
+            r#"{"loads":[{"worker_url":"http://unknown","prefill_capacity_milli":1000,"num_running_reqs":0,"num_waiting_uncached_tokens":0}]}"#,
+            r#"{"loads":[{"worker_url":"http://p0","prefill_capacity_milli":1000,"num_running_reqs":0,"num_waiting_uncached_tokens":0},{"worker_url":"http://p0","prefill_capacity_milli":1000,"num_running_reqs":0,"num_waiting_uncached_tokens":0}]}"#,
+        ] {
+            assert_eq!(parse_v1_worker_load(body, &worker), None);
+        }
+    }
+
     #[tokio::test]
     async fn poll_round_skips_vllm_worker_without_get_load() {
         let registry = Arc::new(WorkerRegistry::default());
@@ -636,6 +865,129 @@ mod tests {
         assert_eq!(snapshot.running_requests, 3);
         assert_eq!(snapshot.total_waiting_uncached_tokens, 1600);
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_round_reads_member_snapshots_from_proxy_v1_loads() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/v1/loads",
+                get(|| async {
+                    Json(json!({
+                        "logical_request_pressure": 4,
+                        "loads": [{
+                            "worker_url": "http://p0",
+                            "dp_rank": 0,
+                            "load_role": "prefill",
+                            "prefill_capacity_milli": 1500,
+                            "num_running_reqs": 1,
+                            "num_waiting_reqs": 2,
+                            "num_waiting_uncached_tokens": 700
+                        }]
+                    }))
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let id = WorkerId("sglang-proxy-v1".into());
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: worker_url,
+                mode: WorkerMode::Plain,
+                model_ids: vec![ModelId("m".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: WorkerBackend::SglangProxy,
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
+                prefill_members: vec!["http://p0".into()],
+            })
+            .unwrap();
+        let worker = registry.get(&id).unwrap();
+
+        poll_round(&reqwest::Client::new(), &registry).await;
+
+        assert_eq!(worker.reported_load(), 4);
+        assert_eq!(worker.reported_prefill_load(), None);
+        let members = worker.reported_prefill_members();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].worker_url, "http://p0");
+        assert_eq!(members[0].prefill_capacity_milli, 1500);
+        assert_eq!(members[0].snapshot.total_waiting_uncached_tokens, 700);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_round_does_not_fallback_on_v1_auth_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route("/v1/loads", get(|| async { StatusCode::UNAUTHORIZED }))
+            .route(
+                "/get_load",
+                get(|| async { Json(json!([{"num_reqs": 0, "num_waiting_reqs": 0}])) }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let id = WorkerId("auth-failure".into());
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: worker_url,
+                mode: WorkerMode::Plain,
+                model_ids: vec![ModelId("m".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: WorkerBackend::Sglang,
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
+            })
+            .unwrap();
+        let worker = registry.get(&id).unwrap();
+
+        poll_round(&reqwest::Client::new(), &registry).await;
+
+        assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
+        assert!(!worker.introspection_probe_allows_routing());
+        server.abort();
+    }
+
+    fn test_worker(
+        id: &str,
+        url: &str,
+        mode: WorkerMode,
+        backend: WorkerBackend,
+        prefill_members: Vec<String>,
+    ) -> Arc<crate::workers::worker::Worker> {
+        Arc::new(crate::workers::worker::Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: url.into(),
+            mode,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend,
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+            prefill_members,
+        }))
     }
 
     #[tokio::test]
