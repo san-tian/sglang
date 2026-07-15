@@ -146,10 +146,11 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
                 "default" => WorkerTier::Default,
                 "bulk" => WorkerTier::Bulk,
                 "shared" => WorkerTier::Shared,
+                "dedicated" => WorkerTier::Dedicated,
                 other => {
                     return Err(anyhow::anyhow!(
                         "invalid tier in worker URL entry {entry:?}: \
-                         {other:?} is not one of: default, bulk, shared"
+                         {other:?} is not one of: default, bulk, shared, dedicated"
                     ));
                 }
             };
@@ -544,6 +545,14 @@ mod tests {
         assert_eq!(caps.tier, WorkerTier::Bulk);
         assert_eq!(caps.backend, WorkerBackend::Sglang);
         assert_eq!(caps.min_priority, None);
+    }
+
+    #[test]
+    fn parse_entry_extracts_dedicated_tier_suffix() {
+        let (url, caps) =
+            parse_worker_entry("https://rdma06-router.example@tier=dedicated").unwrap();
+        assert_eq!(url, "https://rdma06-router.example");
+        assert_eq!(caps.tier, WorkerTier::Dedicated);
     }
 
     #[test]

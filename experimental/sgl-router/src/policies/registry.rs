@@ -211,12 +211,14 @@ impl PdPoolResolver {
         prefill_url: &str,
         request_priority: i64,
         required_context_tokens: Option<usize>,
+        dedicated_request: bool,
     ) -> Result<Arc<Worker>, PdResolveError> {
         self.decode_with_affinity_avoiding(
             model,
             prefill_url,
             request_priority,
             required_context_tokens,
+            dedicated_request,
             None,
         )
     }
@@ -230,6 +232,7 @@ impl PdPoolResolver {
         prefill_url: &str,
         request_priority: i64,
         required_context_tokens: Option<usize>,
+        dedicated_request: bool,
         excluded: &WorkerId,
     ) -> Result<Arc<Worker>, PdResolveError> {
         self.decode_with_affinity_avoiding(
@@ -237,6 +240,7 @@ impl PdPoolResolver {
             prefill_url,
             request_priority,
             required_context_tokens,
+            dedicated_request,
             Some(excluded),
         )
     }
@@ -247,13 +251,15 @@ impl PdPoolResolver {
         prefill_url: &str,
         request_priority: i64,
         required_context_tokens: Option<usize>,
+        dedicated_request: bool,
         excluded: Option<&WorkerId>,
     ) -> Result<Arc<Worker>, PdResolveError> {
         let mut candidates = self.decode_candidates(model)?;
         if let Some(excluded) = excluded {
             candidates.retain(|worker| &worker.id != excluded);
         }
-        let eligible = filter_eligible(&candidates, request_priority);
+        let dedicated_eligible = filter_dedicated_eligible(&candidates, dedicated_request);
+        let eligible = filter_eligible(&dedicated_eligible.workers, request_priority);
         let context_eligible = filter_context_eligible(&eligible.workers, required_context_tokens);
         select_decode_with_affinity(prefill_url, &context_eligible.workers)
             .ok_or(PdResolveError::NoDecodeWorkersAvailable)
@@ -339,6 +345,37 @@ pub struct EligibleCandidates {
     /// A loud condition — the caller increments `priority_filtered_total
     /// {reason="empty_set_rejected"}` and logs a warning.
     pub excluded_all: bool,
+}
+
+/// Enforce bidirectional isolation between ordinary and dedicated capacity.
+/// Dedicated requests can use only `WorkerTier::Dedicated`; every other
+/// request excludes that tier before policy scoring. An empty result is a
+/// hard rejection, never a spillover to the opposite side.
+pub fn filter_dedicated_eligible(
+    workers: &[Arc<Worker>],
+    dedicated_request: bool,
+) -> EligibleCandidates {
+    let eligible: Vec<Arc<Worker>> = workers
+        .iter()
+        .filter(|worker| {
+            (worker.tier() == crate::discovery::WorkerTier::Dedicated) == dedicated_request
+        })
+        .cloned()
+        .collect();
+
+    if eligible.is_empty() && !workers.is_empty() {
+        return EligibleCandidates {
+            workers: Vec::new(),
+            excluded_any: false,
+            excluded_all: true,
+        };
+    }
+
+    EligibleCandidates {
+        excluded_any: eligible.len() != workers.len(),
+        workers: eligible,
+        excluded_all: false,
+    }
 }
 
 /// Restrict `workers` to those that declare support for a router-facing API
@@ -533,7 +570,7 @@ fn host_of(worker_url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{ModelId, WorkerId, WorkerRouteSet, WorkerSpec};
+    use crate::discovery::{ModelId, WorkerId, WorkerRouteSet, WorkerSpec, WorkerTier};
 
     fn spec(id: &str, mode: WorkerMode, model: &str) -> WorkerSpec {
         WorkerSpec {
@@ -581,6 +618,24 @@ mod tests {
         }))
     }
 
+    fn tier_worker(id: &str, mode: WorkerMode, tier: WorkerTier) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier,
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
+        }))
+    }
+
     fn route_worker(id: &str, routes: WorkerRouteSet) -> Arc<Worker> {
         Arc::new(Worker::new(WorkerSpec {
             id: WorkerId(id.into()),
@@ -606,6 +661,35 @@ mod tests {
         assert_eq!(out.workers.len(), 2);
         assert!(!out.excluded_any);
         assert!(!out.excluded_all);
+    }
+
+    #[test]
+    fn dedicated_filter_is_bidirectional_and_fail_closed() {
+        let ordinary = tier_worker("ordinary", WorkerMode::Plain, WorkerTier::Default);
+        let dedicated = tier_worker("dedicated", WorkerMode::Plain, WorkerTier::Dedicated);
+        let mixed = vec![Arc::clone(&ordinary), Arc::clone(&dedicated)];
+
+        let ordinary_request = filter_dedicated_eligible(&mixed, false);
+        assert_eq!(ordinary_request.workers.len(), 1);
+        assert_eq!(ordinary_request.workers[0].id, ordinary.id);
+        assert!(ordinary_request.excluded_any);
+        assert!(!ordinary_request.excluded_all);
+
+        let dedicated_request = filter_dedicated_eligible(&mixed, true);
+        assert_eq!(dedicated_request.workers.len(), 1);
+        assert_eq!(dedicated_request.workers[0].id, dedicated.id);
+        assert!(dedicated_request.excluded_any);
+        assert!(!dedicated_request.excluded_all);
+
+        let no_dedicated_capacity = filter_dedicated_eligible(&[ordinary], true);
+        assert!(no_dedicated_capacity.workers.is_empty());
+        assert!(no_dedicated_capacity.excluded_all);
+        assert!(!no_dedicated_capacity.excluded_any);
+
+        let no_ordinary_capacity = filter_dedicated_eligible(&[dedicated], false);
+        assert!(no_ordinary_capacity.workers.is_empty());
+        assert!(no_ordinary_capacity.excluded_all);
+        assert!(!no_ordinary_capacity.excluded_any);
     }
 
     #[test]
@@ -967,7 +1051,7 @@ mod tests {
         let prefill_url = "http://host_a:30000";
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None)
+            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None, false)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_a:30001",
@@ -1002,7 +1086,7 @@ mod tests {
         assert!(!d1.breaker.allow(), "d1 breaker must be open");
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
@@ -1030,7 +1114,7 @@ mod tests {
         failed.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
@@ -1082,7 +1166,7 @@ mod tests {
         }
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
             .unwrap();
         assert!(
             chosen.url == "http://host_b:30001" || chosen.url == "http://host_c:30001",
@@ -1118,7 +1202,7 @@ mod tests {
         let _g = d1.load_guard();
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_c:30001",
@@ -1138,7 +1222,7 @@ mod tests {
         )]);
         let resolver = PdPoolResolver::new(r);
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
     }
@@ -1154,7 +1238,7 @@ mod tests {
         ]);
         let resolver = PdPoolResolver::new(r);
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None)
+            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None, false)
             .unwrap();
         // Both d1 and d2 are at load 0 → either is acceptable. The
         // assertion is only that the function returns Some, not None
@@ -1202,7 +1286,7 @@ mod tests {
         // preserves PD shape and decode_with_affinity surfaces the
         // per-pool code.
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
 
