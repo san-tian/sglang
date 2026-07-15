@@ -84,6 +84,35 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         )
         self.assertEqual(receiver.kv_mgr.failures, [])
 
+    def test_retry_refreshes_bootstrap_info_before_metadata_retry(self):
+        receiver = _make_receiver()
+        old_info = _bootstrap_info(38931)
+        receiver.bootstrap_infos = [old_info]
+        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [old_info]
+        refreshed_info = _bootstrap_info(30100)
+
+        with (
+            patch.object(
+                receiver,
+                "_send_multipart_to_bootstrap",
+                side_effect=[zmq.Again(), None],
+            ),
+            patch.object(
+                receiver,
+                "_get_bootstrap_info_from_server",
+                return_value=refreshed_info,
+            ),
+            patch.object(
+                receiver,
+                "_on_bootstrap_info_refreshed",
+                return_value=True,
+            ) as mock_refresh_hook,
+        ):
+            ok = receiver._send_request_multipart_to_bootstrap(old_info, [b"frame"])
+
+        self.assertTrue(ok)
+        mock_refresh_hook.assert_called_once_with(refreshed_info)
+
     def test_retry_failure_records_both_endpoints(self):
         receiver = _make_receiver()
         old_info = _bootstrap_info(38931)

@@ -1075,13 +1075,14 @@ class CommonKVReceiver(BaseKVReceiver):
         """Fetch the bootstrap info from the bootstrap server."""
         url = f"http://{self.bootstrap_addr}/route?prefill_dp_rank={prefill_dp_rank}&prefill_cp_rank={prefill_cp_rank}&target_tp_rank={target_tp_rank}&target_pp_rank={target_pp_rank}"
         last_error = None
-        for attempt in range(3):
+        max_retries = 8
+        for attempt in range(max_retries):
             try:
                 response = requests.get(url, timeout=5)
             except Exception as e:
                 last_error = e
-                if attempt < 2:
-                    time.sleep(0.05 * (attempt + 1))
+                if attempt < max_retries - 1:
+                    time.sleep(min(0.05 * (2**attempt), 1.0))
                     continue
                 logger.error(f"Error fetching prefill info from bootstrap: {e}")
                 return None
@@ -1091,8 +1092,11 @@ class CommonKVReceiver(BaseKVReceiver):
                 return bootstrap_info
 
             last_error = f"{response.status_code}, {response.text}"
-            if response.status_code in (408, 429, 500, 502, 503, 504) and attempt < 2:
-                time.sleep(0.05 * (attempt + 1))
+            if (
+                response.status_code in (408, 429, 500, 502, 503, 504)
+                and attempt < max_retries - 1
+            ):
+                time.sleep(min(0.05 * (2**attempt), 1.0))
                 continue
             logger.error(
                 f"Failed to get prefill server info: {response.status_code}, {response.text}"
@@ -1276,6 +1280,10 @@ class CommonKVReceiver(BaseKVReceiver):
         refreshed["is_dummy"] = bootstrap_info.get("is_dummy", False)
         return refreshed
 
+    def _on_bootstrap_info_refreshed(self, refreshed_bootstrap_info: dict) -> bool:
+        """Hook for backend-specific refresh handling before metadata retry."""
+        return True
+
     def _record_bootstrap_metadata_send_failure(
         self, bootstrap_room: int, failure_reason: str
     ) -> None:
@@ -1307,10 +1315,14 @@ class CommonKVReceiver(BaseKVReceiver):
                         type(error).__name__,
                     )
                     try:
+                        if not self._on_bootstrap_info_refreshed(refreshed):
+                            raise RuntimeError(
+                                "bootstrap info refresh hook returned False"
+                            )
                         self._send_multipart_to_bootstrap(refreshed, frames)
                         self._replace_bootstrap_info(bootstrap_info, refreshed)
                         return True
-                    except (ValueError, zmq.ZMQError) as retry_error:
+                    except (ValueError, zmq.ZMQError, RuntimeError) as retry_error:
                         self._invalidate_bootstrap_connection_pool()
                         failure_reason = (
                             "Failed to send disaggregation metadata to Prefill "
