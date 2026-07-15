@@ -1023,12 +1023,17 @@ fn spawn_cache_state_kafka_consumer_if_configured(
             .unwrap_or(1000)
             .max(1),
     );
+    let poison_record_action = std::env::var("CACHE_STATE_KAFKA_POISON_RECORD_ACTION")
+        .unwrap_or_else(|_| "stop".to_string())
+        .parse::<sgl_router::cache_event_stream::PoisonRecordAction>()
+        .context("parse CACHE_STATE_KAFKA_POISON_RECORD_ACTION")?;
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
     let join = tokio::spawn(async move {
         tracing::info!(
             topic = %topic,
             auto_commit_interval_ms,
+            ?poison_record_action,
             "cache-state Kafka event-stream consumer starting"
         );
         loop {
@@ -1117,15 +1122,51 @@ fn spawn_cache_state_kafka_consumer_if_configured(
                                 }
                             }
                             if !completed {
-                                tracing::error!(
-                                    worker_url = %worker_url,
-                                    dp_rank,
-                                    seq,
-                                    partition,
-                                    offset,
-                                    "stopping Kafka consumer with record offset not checkpointed after bounded retries"
-                                );
-                                break;
+                                let pending_for_disposition = Arc::clone(&pending);
+                                let consumer_for_checkpoint = Arc::clone(&consumer);
+                                match sgl_router::cache_event_stream::handle_exhausted_kafka_record_blocking(
+                                    pending_for_disposition,
+                                    poison_record_action,
+                                    move |pending| consumer_for_checkpoint.checkpoint(pending),
+                                )
+                                .await
+                                {
+                                    Ok(sgl_router::cache_event_stream::ExhaustedRecordDisposition::Continue) => {
+                                        service.record_poison_record(true);
+                                        tracing::error!(
+                                            worker_url = %worker_url,
+                                            dp_rank,
+                                            seq,
+                                            partition,
+                                            offset,
+                                            "quarantined exhausted Kafka record and advanced checkpoint"
+                                        );
+                                    }
+                                    Ok(sgl_router::cache_event_stream::ExhaustedRecordDisposition::Stop) => {
+                                        tracing::error!(
+                                            worker_url = %worker_url,
+                                            dp_rank,
+                                            seq,
+                                            partition,
+                                            offset,
+                                            "stopping Kafka consumer with record offset not checkpointed after bounded retries"
+                                        );
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        service.record_poison_record(false);
+                                        tracing::error!(
+                                            worker_url = %worker_url,
+                                            dp_rank,
+                                            seq,
+                                            partition,
+                                            offset,
+                                            error = ?err,
+                                            "stopping Kafka consumer because exhausted record checkpoint failed"
+                                        );
+                                        break;
+                                    }
+                                }
                             }
                         }
                         Err(err) => {

@@ -230,6 +230,8 @@ struct ReconciliationMetrics {
     stream_apply_checkpoint_success_count: AtomicU64,
     stream_apply_checkpoint_failure_micros: AtomicU64,
     stream_apply_checkpoint_failure_count: AtomicU64,
+    poison_records_skipped: AtomicU64,
+    poison_record_checkpoint_failures: AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -560,6 +562,17 @@ impl CacheStateService {
         count.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn record_poison_record(&self, skipped: bool) {
+        let counter = if skipped {
+            &self.reconciliation_metrics.poison_records_skipped
+        } else {
+            &self
+                .reconciliation_metrics
+                .poison_record_checkpoint_failures
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn reconciliation_metrics_text(&self) -> String {
         let store = self.reconciliation.lock();
         let trusted = store.workers.values().filter(|state| state.trusted).count();
@@ -586,6 +599,9 @@ impl CacheStateService {
                 "sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_count{{outcome=\"success\"}} {}\n",
                 "sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_sum{{outcome=\"failure\"}} {:.6}\n",
                 "sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_count{{outcome=\"failure\"}} {}\n",
+                "# TYPE sgl_router_cache_state_poison_records_total counter\n",
+                "sgl_router_cache_state_poison_records_total{{outcome=\"skipped\"}} {}\n",
+                "sgl_router_cache_state_poison_records_total{{outcome=\"checkpoint_failure\"}} {}\n",
                 "# TYPE sgl_router_cache_state_trusted_worker_ranks gauge\n",
                 "sgl_router_cache_state_trusted_worker_ranks {}\n",
                 "# TYPE sgl_router_cache_state_untrusted_worker_ranks gauge\n",
@@ -618,6 +634,10 @@ impl CacheStateService {
                 / 1_000_000.0,
             metrics
                 .stream_apply_checkpoint_failure_count
+                .load(Ordering::Relaxed),
+            metrics.poison_records_skipped.load(Ordering::Relaxed),
+            metrics
+                .poison_record_checkpoint_failures
                 .load(Ordering::Relaxed),
             trusted,
             untrusted,
@@ -1514,6 +1534,8 @@ mod tests {
         let service = CacheStateService::with_empty_tree();
         service.record_stream_apply_checkpoint(Duration::from_millis(1500), true);
         service.record_stream_apply_checkpoint(Duration::from_millis(250), false);
+        service.record_poison_record(true);
+        service.record_poison_record(false);
 
         let metrics = service.reconciliation_metrics_text();
         assert!(metrics.contains(
@@ -1527,6 +1549,12 @@ mod tests {
         ));
         assert!(metrics.contains(
             r#"sgl_router_cache_state_stream_apply_checkpoint_duration_seconds_count{outcome="failure"} 1"#
+        ));
+        assert!(
+            metrics.contains(r#"sgl_router_cache_state_poison_records_total{outcome="skipped"} 1"#)
+        );
+        assert!(metrics.contains(
+            r#"sgl_router_cache_state_poison_records_total{outcome="checkpoint_failure"} 1"#
         ));
     }
 
