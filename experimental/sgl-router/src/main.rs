@@ -172,6 +172,7 @@ fn env_to_cli_args() -> Vec<OsString> {
     push_env_arg(&mut args, "CACHE_TREE_PAGE_SIZE", "--cache-tree-page-size");
     push_env_flag(&mut args, "CACHE_TREE_BIGRAM", "--cache-tree-bigram");
     push_env_arg(&mut args, "CACHE_TREE_MAX_NODES", "--cache-tree-max-nodes");
+    push_env_arg(&mut args, "CACHE_THRESHOLD", "--cache-threshold");
     push_env_arg(&mut args, "HIT_LOAD_ABS", "--hit-load-abs-threshold");
     push_env_arg(&mut args, "HIT_LOAD_REL", "--hit-load-rel-threshold");
     push_env_arg(&mut args, "CACHE_STATE_URL", "--cache-state-url");
@@ -1330,7 +1331,9 @@ mod tests {
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = ENV_LOCK.lock().expect("env lock");
         std::env::remove_var("TTFT_SCORE_MODE");
+        std::env::remove_var("CACHE_THRESHOLD");
         std::env::set_var("TTFT_SCORE_MODE", "prefill-work-normalized");
+        std::env::set_var("CACHE_THRESHOLD", "0");
 
         let args = env_to_cli_args()
             .into_iter()
@@ -1338,9 +1341,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         std::env::remove_var("TTFT_SCORE_MODE");
+        std::env::remove_var("CACHE_THRESHOLD");
 
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--ttft-score-mode", "prefill-work-normalized"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--cache-threshold", "0"]));
     }
 }

@@ -124,6 +124,8 @@ pub struct Cli {
     pub ttft_first_routing: bool,
     /// TTFT score formula. `additive` preserves the existing behavior;
     /// token-work modes require TTFT-first routing and worker load polling.
+    /// `predicted-ttft` continuously credits every cached token and divides
+    /// known work ahead by the worker's configured prefill capacity.
     #[arg(long, value_enum)]
     pub ttft_score_mode: Option<TtftScoreMode>,
     /// In TTFT-first mode, choose from the least-pressured workers first and
@@ -1783,6 +1785,26 @@ mod tests {
         assert_eq!(
             c.model.cache_aware.unwrap().ttft_score_mode,
             TtftScoreMode::PrefillWorkNormalized
+        );
+    }
+
+    #[test]
+    fn predicted_ttft_score_mode_builds_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000@prefill_capacity=0.5",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "predicted-ttft",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.model.cache_aware.unwrap().ttft_score_mode,
+            TtftScoreMode::PredictedTtft
         );
     }
 

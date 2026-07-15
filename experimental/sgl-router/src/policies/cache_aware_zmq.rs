@@ -59,6 +59,17 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+#[derive(Debug, Clone, Copy)]
+struct PredictedTtftEstimate {
+    candidate_uncached_tokens: usize,
+    reported_work_tokens: Option<usize>,
+    reserved_tokens: usize,
+    work_ahead_tokens: usize,
+    total_work_tokens: usize,
+    normalized_score: usize,
+    load_source: &'static str,
+}
+
 /// Selection policy that scores candidates by tree-overlap with the
 /// request's prefix and falls back to load-based picking when the tree
 /// doesn't have useful signal.
@@ -328,7 +339,10 @@ impl CacheAwareZmqPolicy {
         if block_hashes.is_empty() && score_mode == TtftScoreMode::Additive {
             return self.pick_min_ttft_load(workers);
         }
-        let candidate_priority = if score_mode == TtftScoreMode::LmetricCandidateAware {
+        let candidate_priority = if matches!(
+            score_mode,
+            TtftScoreMode::LmetricCandidateAware | TtftScoreMode::PredictedTtft
+        ) {
             ctx.request_body()
                 .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
                 .as_ref()
@@ -406,12 +420,19 @@ impl CacheAwareZmqPolicy {
             "ttft_min_load_fallback"
         };
         let selected = if let Some(hot) = chosen {
-            let selected =
-                self.apply_ttft_hit_load_guard(hot, workers, matched_blocks, matched_urls);
-            if hot_url.as_deref() != Some(selected.url.as_str()) {
-                reason = "ttft_hit_load_guard_divert";
+            if score_mode == TtftScoreMode::PredictedTtft {
+                // Load and cache work are already expressed in one token-time
+                // score. A request-count guard would override that comparison
+                // with incompatible units.
+                Some(hot)
+            } else {
+                let selected =
+                    self.apply_ttft_hit_load_guard(hot, workers, matched_blocks, matched_urls);
+                if hot_url.as_deref() != Some(selected.url.as_str()) {
+                    reason = "ttft_hit_load_guard_divert";
+                }
+                Some(selected)
             }
-            Some(selected)
         } else {
             self.pick_min_ttft_load(workers)
         };
@@ -495,6 +516,18 @@ impl CacheAwareZmqPolicy {
         candidate_priority: i64,
         score_mode: TtftScoreMode,
     ) -> Option<usize> {
+        if score_mode == TtftScoreMode::PredictedTtft {
+            return Some(
+                self.predicted_ttft_estimate(
+                    worker,
+                    matched_blocks,
+                    candidate_tokens,
+                    block_size,
+                    candidate_priority,
+                )
+                .normalized_score,
+            );
+        }
         let snapshot = worker.reported_prefill_load()?;
         let candidate_uncached =
             candidate_tokens.saturating_sub(matched_blocks.saturating_mul(block_size));
@@ -504,6 +537,7 @@ impl CacheAwareZmqPolicy {
                 snapshot.total_waiting_uncached_tokens
             }
             TtftScoreMode::PrefillWorkNormalized => snapshot.total_waiting_uncached_tokens,
+            TtftScoreMode::PredictedTtft => unreachable!("handled above"),
             TtftScoreMode::LmetricCandidateAware => snapshot
                 .candidate
                 .as_ref()
@@ -536,7 +570,67 @@ impl CacheAwareZmqPolicy {
         Some(prefill_factor.saturating_mul(batch_factor))
     }
 
+    fn predicted_ttft_estimate(
+        &self,
+        worker: &Worker,
+        matched_blocks: usize,
+        candidate_tokens: usize,
+        block_size: usize,
+        candidate_priority: i64,
+    ) -> PredictedTtftEstimate {
+        let candidate_uncached_tokens =
+            candidate_tokens.saturating_sub(matched_blocks.saturating_mul(block_size));
+        let snapshot = worker.reported_prefill_load();
+        let candidate_aware_work = snapshot.as_ref().and_then(|snapshot| {
+            snapshot.candidate.as_ref().and_then(|candidate| {
+                candidate.work_ahead_tokens(candidate_priority, candidate_uncached_tokens)
+            })
+        });
+        let (reported_work_tokens, load_source) = if let Some(work) = candidate_aware_work {
+            (Some(work), "candidate-aware-snapshot")
+        } else if let Some(snapshot) = snapshot.as_ref() {
+            (
+                Some(snapshot.total_waiting_uncached_tokens),
+                "waiting-token-snapshot",
+            )
+        } else {
+            (None, "reservation-only")
+        };
+        let reserved_tokens = worker
+            .pending_token_load()
+            .saturating_add(worker.global_pending_token_load());
+        // Worker snapshots and router reservations describe overlapping work.
+        // Taking the maximum bridges poll lag without counting an admitted
+        // request twice for its full lifetime.
+        let work_ahead_tokens = reported_work_tokens.unwrap_or(0).max(reserved_tokens);
+        let total_work_tokens = candidate_uncached_tokens.saturating_add(work_ahead_tokens);
+        let probe_failed =
+            self.config.use_reported_load && !worker.introspection_probe_allows_routing();
+        let normalized_score = if probe_failed {
+            usize::MAX / 2
+        } else {
+            normalize_prefill_work(total_work_tokens, worker.prefill_capacity_milli())
+        };
+
+        PredictedTtftEstimate {
+            candidate_uncached_tokens,
+            reported_work_tokens,
+            reserved_tokens,
+            work_ahead_tokens,
+            total_work_tokens,
+            normalized_score,
+            load_source: if probe_failed {
+                "probe-failed"
+            } else {
+                load_source
+            },
+        }
+    }
+
     fn compatible_score_mode(&self, workers: &[Arc<Worker>]) -> TtftScoreMode {
+        if self.config.ttft_score_mode == TtftScoreMode::PredictedTtft {
+            return TtftScoreMode::PredictedTtft;
+        }
         if self.config.ttft_score_mode == TtftScoreMode::Additive
             || !workers
                 .iter()
@@ -559,6 +653,9 @@ impl CacheAwareZmqPolicy {
 
     #[cfg(test)]
     fn compatible_score_mode_for_worker(&self, worker: &Worker) -> TtftScoreMode {
+        if self.config.ttft_score_mode == TtftScoreMode::PredictedTtft {
+            return TtftScoreMode::PredictedTtft;
+        }
         if self.config.ttft_score_mode == TtftScoreMode::Additive
             || !self.supports_token_score(worker, self.config.ttft_score_mode)
         {
@@ -576,6 +673,9 @@ impl CacheAwareZmqPolicy {
     }
 
     fn supports_token_score(&self, worker: &Worker, score_mode: TtftScoreMode) -> bool {
+        if score_mode == TtftScoreMode::PredictedTtft {
+            return true;
+        }
         if worker.backend() != WorkerBackend::Sglang {
             return false;
         }
@@ -594,6 +694,7 @@ impl CacheAwareZmqPolicy {
                 (WorkerMode::Plain, PrefillLoadRole::Integrated)
                     | (WorkerMode::Prefill, PrefillLoadRole::Prefill)
             ),
+            TtftScoreMode::PredictedTtft => true,
             TtftScoreMode::Lmetric | TtftScoreMode::LmetricCandidateAware => {
                 worker.mode() == WorkerMode::Plain && snapshot.role == PrefillLoadRole::Integrated
             }
@@ -719,11 +820,23 @@ impl CacheAwareZmqPolicy {
         let candidate_uncached =
             candidate_tokens.saturating_sub(matched_blocks.saturating_mul(block_size));
         let snapshot = worker.reported_prefill_load();
+        let predicted_estimate = (score_mode == TtftScoreMode::PredictedTtft).then(|| {
+            self.predicted_ttft_estimate(
+                worker,
+                matched_blocks,
+                candidate_tokens,
+                block_size,
+                candidate_priority,
+            )
+        });
         let existing_work_tokens = snapshot.as_ref().map(|snapshot| match score_mode {
             TtftScoreMode::Additive => 0,
             TtftScoreMode::PrefillWorkOnly
             | TtftScoreMode::PrefillWorkNormalized
             | TtftScoreMode::Lmetric => snapshot.total_waiting_uncached_tokens,
+            TtftScoreMode::PredictedTtft => predicted_estimate
+                .and_then(|estimate| estimate.reported_work_tokens)
+                .unwrap_or(0),
             TtftScoreMode::LmetricCandidateAware => snapshot
                 .candidate
                 .as_ref()
@@ -738,16 +851,24 @@ impl CacheAwareZmqPolicy {
         let reserved_requests = worker
             .pending_load()
             .saturating_add(worker.global_pending_load());
-        let prefill_factor_tokens = existing_work_tokens.map(|existing| {
-            candidate_uncached
-                .saturating_add(existing)
-                .saturating_add(reserved_tokens)
-        });
-        let batch_factor = snapshot.as_ref().map(|snapshot| {
-            1usize
-                .saturating_add(snapshot.running_requests)
-                .saturating_add(reserved_requests)
-        });
+        let prefill_factor_tokens = if let Some(estimate) = predicted_estimate {
+            Some(estimate.total_work_tokens)
+        } else {
+            existing_work_tokens.map(|existing| {
+                candidate_uncached
+                    .saturating_add(existing)
+                    .saturating_add(reserved_tokens)
+            })
+        };
+        let batch_factor = if score_mode == TtftScoreMode::PredictedTtft {
+            None
+        } else {
+            snapshot.as_ref().map(|snapshot| {
+                1usize
+                    .saturating_add(snapshot.running_requests)
+                    .saturating_add(reserved_requests)
+            })
+        };
         json!({
             "score_mode": format!("{:?}", score_mode),
             "total_blocks": total_blocks,
@@ -762,6 +883,16 @@ impl CacheAwareZmqPolicy {
             "prefill_capacity_milli": worker.prefill_capacity_milli(),
             "normalized_prefill_score": prefill_factor_tokens
                 .map(|work| normalize_prefill_work(work, worker.prefill_capacity_milli())),
+            "predicted_ttft": predicted_estimate.map(|estimate| json!({
+                "load_source": estimate.load_source,
+                "reported_work_tokens": estimate.reported_work_tokens,
+                "reserved_tokens": estimate.reserved_tokens,
+                "work_ahead_tokens": estimate.work_ahead_tokens,
+                "candidate_uncached_tokens": estimate.candidate_uncached_tokens,
+                "total_work_tokens": estimate.total_work_tokens,
+                "prefill_capacity_milli": worker.prefill_capacity_milli(),
+                "normalized_score": estimate.normalized_score,
+            })),
             "batch_factor": batch_factor,
             "additive_pressure": worker.effective_ttft_load(
                 self.config.use_reported_load,
@@ -1027,11 +1158,14 @@ impl CacheAwareZmqPolicy {
             m.observe_overlap_blocks(ctx.model().0.as_str(), matched.matched_blocks as u64);
         }
         if self.config.ttft_first_routing {
-            let matched_urls: HashSet<&str> = if match_rate > self.config.cache_threshold {
-                matched.worker_urls.iter().map(|url| url.as_str()).collect()
-            } else {
-                HashSet::new()
-            };
+            let continuous_cache_score =
+                self.config.ttft_score_mode == TtftScoreMode::PredictedTtft;
+            let matched_urls: HashSet<&str> =
+                if continuous_cache_score || match_rate > self.config.cache_threshold {
+                    matched.worker_urls.iter().map(|url| url.as_str()).collect()
+                } else {
+                    HashSet::new()
+                };
             let ttft_matched_blocks = if matched_urls.is_empty() {
                 0
             } else {
@@ -2854,6 +2988,174 @@ mod tests {
         assert_eq!(policy.ttft_score(&baseline, 25, 0, 60_000, 4, 0), 70_000);
         assert_eq!(policy.ttft_score(&mi300x, 25, 0, 60_000, 4, 0), 140_000);
         assert_eq!(policy.ttft_score(&france, 25, 0, 60_000, 4, 0), 14_000);
+    }
+
+    #[test]
+    fn predicted_ttft_uses_reservations_without_token_snapshot() {
+        let policy = lmetric_policy(TtftScoreMode::PredictedTtft);
+        let baseline = worker_with_backend_and_capacity(
+            "http://baseline:30000",
+            "tiny",
+            WorkerBackend::Sglang,
+            1000,
+        );
+        let fast = worker_with_backend_and_capacity(
+            "http://fast-proxy:30000",
+            "tiny",
+            WorkerBackend::SglangProxy,
+            2000,
+        );
+        let _baseline_reservation = baseline.pending_guard_with_tokens(600);
+        let _fast_reservation = fast.pending_guard_with_tokens(600);
+
+        assert_eq!(
+            policy.compatible_score_mode(&[Arc::clone(&baseline), Arc::clone(&fast)]),
+            TtftScoreMode::PredictedTtft,
+        );
+        assert_eq!(policy.ttft_score(&baseline, 25, 0, 100, 4, 0), 700);
+        assert_eq!(policy.ttft_score(&fast, 25, 0, 100, 4, 0), 350);
+    }
+
+    #[test]
+    fn predicted_ttft_does_not_double_count_snapshot_and_reservation() {
+        let policy = lmetric_policy(TtftScoreMode::PredictedTtft);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_prefill_load(Some(prefill_snapshot(1, 1000, None)));
+        let _reservation = w.pending_guard_with_tokens(600);
+
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 1100);
+    }
+
+    #[test]
+    fn predicted_ttft_uses_priority_aware_work_ahead() {
+        let policy = lmetric_policy(TtftScoreMode::PredictedTtft);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_prefill_load(Some(prefill_snapshot(
+            1,
+            10_500,
+            Some(CandidatePrefillLoad {
+                chunked_remaining_uncached_tokens: 50,
+                work_bucket_bounds: vec![256, 1024],
+                priority_scheduling_enabled: true,
+                schedule_low_priority_values_first: false,
+                priorities: vec![
+                    PrefillPriorityLoad {
+                        priority: 0,
+                        total_uncached_tokens: 10_000,
+                        ahead_uncached_tokens: vec![100, 10_000],
+                    },
+                    PrefillPriorityLoad {
+                        priority: 10,
+                        total_uncached_tokens: 500,
+                        ahead_uncached_tokens: vec![50, 500],
+                    },
+                ],
+            }),
+        )));
+
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 750);
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 10), 200);
+    }
+
+    #[test]
+    fn predicted_ttft_credits_cache_below_configured_threshold() {
+        let tree = Arc::new(HashTree::new());
+        let registry = tokenizer_registry_with_tiny();
+        let ids = vec![7u32; 12];
+        let hashes = compute_block_hashes(&ids, 4);
+        assert_eq!(hashes.len(), 3);
+        tree.insert(
+            &KvWorkerId::new("http://cached:30000".into(), 0),
+            None,
+            &hashes[..1],
+        );
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.5,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                hit_load_abs_threshold: 0,
+                hit_load_rel_threshold: f32::INFINITY,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Zmq,
+                ttft_first_routing: true,
+                ttft_score_mode: TtftScoreMode::PredictedTtft,
+                ttft_idle_first_routing: false,
+                ttft_token_scale: 4,
+                ttft_cache_score_margin: 0,
+            },
+            tree,
+            registry,
+            oracle_for_tests(4),
+        );
+        let workers = vec![
+            worker("http://cached:30000", "tiny"),
+            worker("http://cold:30000", "tiny"),
+        ];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&workers, &ctx).expect("must pick");
+
+        assert_eq!(chosen.url, "http://cached:30000");
+    }
+
+    #[test]
+    fn predicted_ttft_is_not_overridden_by_request_count_hit_guard() {
+        let tree = Arc::new(HashTree::new());
+        let registry = tokenizer_registry_with_tiny();
+        let ids = vec![7u32; 12];
+        let hashes = compute_block_hashes(&ids, 4);
+        tree.insert(
+            &KvWorkerId::new("http://cached:30000".into(), 0),
+            None,
+            &hashes,
+        );
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.5,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                hit_load_abs_threshold: 0,
+                hit_load_rel_threshold: 1.0,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Zmq,
+                ttft_first_routing: true,
+                ttft_score_mode: TtftScoreMode::PredictedTtft,
+                ttft_idle_first_routing: false,
+                ttft_token_scale: 4,
+                ttft_cache_score_margin: 0,
+            },
+            tree,
+            registry,
+            oracle_for_tests(4),
+        );
+        let cached = worker("http://cached:30000", "tiny");
+        let cold = worker("http://cold:30000", "tiny");
+        cached.set_reported_load(2);
+        cold.set_reported_load(0);
+        let workers = vec![cached, cold];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&workers, &ctx).expect("must pick");
+
+        assert_eq!(chosen.url, "http://cached:30000");
+    }
+
+    #[test]
+    fn predicted_ttft_does_not_select_probe_failed_cache_worker() {
+        let policy = lmetric_policy(TtftScoreMode::PredictedTtft);
+        let failed = worker("http://failed:30000", "tiny");
+        let healthy = worker("http://healthy:30000", "tiny");
+        failed.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
+        healthy.set_reported_load(0);
+
+        assert_eq!(
+            policy.ttft_score(&failed, 25, 25, 100, 4, 0),
+            usize::MAX / 2,
+        );
+        assert_eq!(policy.ttft_score(&healthy, 25, 0, 100, 4, 0), 100);
     }
 
     #[test]
