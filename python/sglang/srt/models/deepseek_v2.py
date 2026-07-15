@@ -1993,7 +1993,12 @@ class DeepseekV2AttentionMLA(
     def rebuild_cp_kv_cache(self, latent_cache, forward_batch, k_nope, k_pe):
         # support allgather+rerrange
         latent_cache[..., : self.kv_lora_rank] = k_nope.squeeze(1)
-        latent_cache[..., self.kv_lora_rank :] = k_pe.squeeze(1)
+        # The RoPE path can return k_pe as a view into latent_cache.  A direct
+        # slice assignment then has overlapping source/destination storage (and
+        # can also carry an internally overlapping ROCm view), which aborts the
+        # Prefill scheduler.  The RoPE dimension is small, so copy only this
+        # potentially aliased input before rebuilding the CP cache.
+        latent_cache[..., self.kv_lora_rank :] = k_pe.squeeze(1).clone()
         latent_cache_output = cp_all_gather_rerange_output(
             latent_cache.contiguous(),
             self.cp_size,
