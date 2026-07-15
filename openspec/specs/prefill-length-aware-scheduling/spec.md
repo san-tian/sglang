@@ -1,7 +1,7 @@
 # prefill-length-aware-scheduling Specification
 
 ## Purpose
-Define the opt-in worker policy that lowers short-request Prefill latency using live uncached work while preserving priority, bounding same-priority starvation, and exporting phase-aware load summaries.
+Define the opt-in worker policy that lowers short-request Prefill latency using live uncached work while preserving priority, providing deterministic 1:3 fairness for older requests, and exporting phase-aware load summaries.
 
 ## Requirements
 ### Requirement: Length-aware Prefill scheduling is opt-in
@@ -12,7 +12,7 @@ The worker SHALL preserve its configured existing scheduling behavior unless `pr
 - **THEN** it SHALL retain its configured existing waiting-prefill ordering
 
 ### Requirement: Waiting order uses current uncached work
-The worker SHALL refresh prefix-cache matches before each eligible scheduling round and SHALL order non-overdue requests within a business-priority class by aged remaining uncached input work.
+The worker SHALL refresh prefix-cache matches before each eligible scheduling round and SHALL order each business-priority class by repeatedly selecting one earliest-arrived request followed by up to three requests with the fewest current uncached input tokens.
 
 #### Scenario: A prefix becomes cached while a request waits
 - **WHEN** an earlier request creates a reusable prefix before the next scheduling round
@@ -26,16 +26,16 @@ The worker SHALL refresh prefix-cache matches before each eligible scheduling ro
 - **WHEN** priority scheduling is enabled and requests have different business priorities
 - **THEN** configured business-priority direction SHALL take precedence over prompt length
 
-### Requirement: Same-priority starvation is bounded
-The worker SHALL reduce effective work by a configurable finite aging rate and SHALL move requests past a configurable maximum wait into a same-priority FCFS overdue class ahead of non-overdue requests.
+### Requirement: Same-priority fairness is bounded
+The worker SHALL revisit the earliest-arrived remaining request after every group of at most three short requests, so a long request cannot be bypassed by an unbounded number of later short requests.
 
-#### Scenario: Aging promotes an older long request
-- **WHEN** aging reduces an older request's effective work below a newer request's effective work
-- **THEN** the older request SHALL be ordered first within the same business priority
+#### Scenario: An older long request is revisited
+- **WHEN** an older long request remains after three shorter requests are selected
+- **THEN** it SHALL be selected before the next group of short requests in the same business priority
 
-#### Scenario: Maximum wait is exceeded
-- **WHEN** multiple requests in one business-priority class exceed maximum wait
-- **THEN** they SHALL precede non-overdue requests in that class and SHALL be ordered by queue-entry time
+#### Scenario: Fewer than three short requests remain
+- **WHEN** fewer than three requests remain after selecting the oldest request
+- **THEN** all remaining requests SHALL be selected by current uncached-token count and queue-entry time
 
 ### Requirement: Existing Prefill execution constraints remain authoritative
 The policy SHALL only reorder requests still in the waiting queue and SHALL preserve chunked-prefill continuation and all existing admission constraints.
@@ -78,13 +78,5 @@ Worker load reporting SHALL identify integrated, native Prefill, and Decode-only
 - **WHEN** a Decode-only worker is configured with `prefill-length-aware`
 - **THEN** startup validation SHALL reject the configuration
 
-### Requirement: Length-aware tunables fail fast
-The worker SHALL reject non-finite or negative aging rates and SHALL reject non-finite or non-positive maximum-wait values before model loading.
-
-#### Scenario: Aging rate is invalid
-- **WHEN** the aging rate is NaN, infinite, or negative
-- **THEN** worker argument validation SHALL fail
-
-#### Scenario: Maximum wait is invalid
-- **WHEN** maximum wait is NaN, infinite, zero, or negative
-- **THEN** worker argument validation SHALL fail
+### Requirement: Legacy length-aware tunables remain parse-compatible
+The worker SHALL continue accepting the historical aging-rate and maximum-wait arguments for deployment compatibility, but SHALL not use them to determine request order.

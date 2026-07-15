@@ -724,11 +724,11 @@ class ServerArgs:
     ] = "fcfs"
     prefill_length_aware_aging_rate: A[
         float,
-        "Uncached prefill tokens removed from a waiting request's scheduling work score per second when --schedule-policy prefill-length-aware is selected.",
+        "Deprecated compatibility option. It no longer affects --schedule-policy prefill-length-aware.",
     ] = 256.0
     prefill_length_aware_max_wait_seconds: A[
         float,
-        "Maximum queue wait before a request enters the same-priority FCFS overdue class when --schedule-policy prefill-length-aware is selected.",
+        "Deprecated compatibility option. It no longer affects --schedule-policy prefill-length-aware.",
     ] = 30.0
     enable_priority_scheduling: A[
         bool,

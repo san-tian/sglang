@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 import os
 import random
-import time
 from collections import Counter, defaultdict
 from contextlib import contextmanager
 from enum import Enum, auto
@@ -167,18 +166,34 @@ PREFILL_WORK_BUCKET_BOUNDS = (
 PREFILL_QUEUE_PRIORITY_GROUP_LIMIT = 32
 
 
-def prefill_length_aware_request_state(
-    req: Req,
-    now: float,
-    aging_rate: float,
-    max_wait_seconds: float,
-) -> tuple[int, float, bool]:
-    """Return uncached tokens, aged work, and overdue status for one request."""
-    uncached_tokens = max(0, req.seqlen - req.num_matched_prefix_tokens)
-    entry_time = req.time_stats.wait_queue_entry_time
-    wait_seconds = max(0.0, now - entry_time) if entry_time > 0 else 0.0
-    effective_work = max(0.0, uncached_tokens - aging_rate * wait_seconds)
-    return uncached_tokens, effective_work, wait_seconds >= max_wait_seconds
+def prefill_one_oldest_three_shortest_order(
+    states: list[tuple[int, float, int]],
+) -> list[int]:
+    """Return indices ordered by repeating one oldest then three shortest.
+
+    Each state is ``(uncached_tokens, queue_entry_time, stable_index)``. The
+    stable index makes ties deterministic without depending on request IDs.
+    """
+    remaining = list(range(len(states)))
+    ordered = []
+    while remaining:
+        oldest = min(remaining, key=lambda index: (states[index][1], states[index][2]))
+        remaining.remove(oldest)
+        ordered.append(oldest)
+
+        shortest = sorted(
+            remaining,
+            key=lambda index: (
+                states[index][0],
+                states[index][1],
+                states[index][2],
+            ),
+        )[:3]
+        shortest_set = set(shortest)
+        ordered.extend(shortest)
+        remaining = [index for index in remaining if index not in shortest_set]
+
+    return ordered
 
 
 class SchedulePolicy:
@@ -407,26 +422,32 @@ class SchedulePolicy:
         )
 
     def _sort_by_prefill_length_aware(self, waiting_queue: List[Req]) -> None:
-        now = time.perf_counter()
-
-        def sort_key(req: Req):
-            _, effective_work, overdue = prefill_length_aware_request_state(
-                req,
-                now,
-                self.prefill_length_aware_aging_rate,
-                self.prefill_length_aware_max_wait_seconds,
-            )
+        groups = defaultdict(list)
+        for stable_index, req in enumerate(waiting_queue):
             priority = (
-                (req.priority if req.priority is not None else 0) * self.priority_sign
-                if self.enable_priority_scheduling
+                req.priority
+                if self.enable_priority_scheduling and req.priority is not None
                 else 0
             )
-            entry_time = req.time_stats.wait_queue_entry_time
-            if overdue:
-                return (priority, 0, entry_time, 0.0)
-            return (priority, 1, effective_work, entry_time)
+            groups[priority].append((stable_index, req))
 
-        waiting_queue.sort(key=sort_key)
+        ordered = []
+        for priority in sorted(groups, key=lambda value: value * self.priority_sign):
+            group = groups[priority]
+            states = [
+                (
+                    max(0, req.seqlen - req.num_matched_prefix_tokens),
+                    req.time_stats.wait_queue_entry_time,
+                    stable_index,
+                )
+                for stable_index, req in group
+            ]
+            ordered.extend(
+                group[index][1]
+                for index in prefill_one_oldest_three_shortest_order(states)
+            )
+
+        waiting_queue[:] = ordered
 
     @staticmethod
     def _sort_by_routing_key(

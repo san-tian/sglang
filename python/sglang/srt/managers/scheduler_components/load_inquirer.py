@@ -19,7 +19,7 @@ from sglang.srt.managers.io_struct import (
 from sglang.srt.managers.schedule_policy import (
     PREFILL_QUEUE_PRIORITY_GROUP_LIMIT,
     PREFILL_WORK_BUCKET_BOUNDS,
-    prefill_length_aware_request_state,
+    prefill_one_oldest_three_shortest_order,
 )
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ def build_prefill_queue_metrics(
     priority_scheduling_enabled: bool,
     schedule_low_priority_values_first: bool,
 ) -> PrefillQueueMetrics:
-    """Compress waiting work into bounded priority and effective-work buckets."""
+    """Compress waiting work into bounded priority and candidate-work buckets."""
     groups = {}
     detail_complete = True
     for req in waiting_queue:
@@ -60,16 +60,31 @@ def build_prefill_queue_metrics(
                 detail_complete = False
                 groups.clear()
                 break
-            groups[priority] = [0, [0] * len(PREFILL_WORK_BUCKET_BOUNDS)]
+            groups[priority] = [0, [], [0] * len(PREFILL_WORK_BUCKET_BOUNDS)]
 
-        uncached_tokens, effective_work, overdue = prefill_length_aware_request_state(
-            req, now, aging_rate, max_wait_seconds
-        )
+        uncached_tokens = max(0, req.seqlen - req.num_matched_prefix_tokens)
         group = groups[priority]
         group[0] += uncached_tokens
-        for index, upper_bound in enumerate(PREFILL_WORK_BUCKET_BOUNDS):
-            if overdue or effective_work <= upper_bound:
-                group[1][index] += uncached_tokens
+        group[1].append(
+            (
+                uncached_tokens,
+                req.time_stats.wait_queue_entry_time,
+                len(group[1]),
+            )
+        )
+
+    if detail_complete:
+        for group in groups.values():
+            states = group[1]
+            for bucket_index, upper_bound in enumerate(PREFILL_WORK_BUCKET_BOUNDS):
+                candidate_index = len(states)
+                candidate_state = (upper_bound, float("inf"), candidate_index)
+                order = prefill_one_oldest_three_shortest_order(
+                    states + [candidate_state]
+                )
+                group[2][bucket_index] = sum(
+                    states[index][0] for index in order[: order.index(candidate_index)]
+                )
 
     priority_values = tuple(sorted(groups)) if detail_complete else ()
     chunked_remaining = (
@@ -86,7 +101,7 @@ def build_prefill_queue_metrics(
         priority_values=priority_values,
         priority_total_uncached_tokens=tuple(groups[p][0] for p in priority_values),
         priority_ahead_uncached_tokens=tuple(
-            tuple(groups[p][1]) for p in priority_values
+            tuple(groups[p][2]) for p in priority_values
         ),
     )
 
