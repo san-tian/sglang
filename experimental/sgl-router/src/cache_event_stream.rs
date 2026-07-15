@@ -10,11 +10,13 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
 use parking_lot::Mutex;
 use rdkafka::client::ClientContext;
 use rdkafka::config::ClientConfig;
@@ -29,6 +31,14 @@ use std::time::Duration;
 
 const SCHEMA_VERSION: u32 = 1;
 const DEFAULT_KAFKA_AUTO_COMMIT_INTERVAL_MS: u32 = 1_000;
+// Header: magic | worker_len:u16 | model_len:u16 | dp_rank:u32 | seq:i64
+//         observed_at_ms:u64 | payload_len:u32. Body: worker | model | raw payload.
+const KAFKA_BINARY_MAGIC: &[u8; 8] = b"SGLKV2\0\0";
+const KAFKA_BINARY_HEADER_BYTES: usize = KAFKA_BINARY_MAGIC.len()
+    + size_of::<u16>() * 2
+    + size_of::<u32>() * 2
+    + size_of::<i64>()
+    + size_of::<u64>();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KvEventStreamRecord {
@@ -218,7 +228,7 @@ impl KafkaKvEventProducer {
 
     pub async fn send(&self, record: &KvEventStreamRecord) -> Result<()> {
         let key = format!("{}:{}", record.worker_url, record.dp_rank);
-        let payload = serde_json::to_string(record).context("serialize Kafka KV event record")?;
+        let payload = encode_kafka_record(record)?;
         self.producer
             .send(
                 FutureRecord::to(self.topic.as_str())
@@ -514,7 +524,106 @@ fn decode_kafka_record(message: &BorrowedMessage<'_>) -> Result<KvEventStreamRec
     let payload = message
         .payload()
         .ok_or_else(|| anyhow!("Kafka KV event message has empty payload"))?;
-    serde_json::from_slice(payload).context("decode Kafka KV event record")
+    decode_kafka_payload(payload)
+}
+
+fn encode_kafka_record(record: &KvEventStreamRecord) -> Result<Vec<u8>> {
+    let worker_url = record.worker_url.as_bytes();
+    let model_id = record.model_id.as_bytes();
+    let payload = base64::engine::general_purpose::STANDARD
+        .decode(record.payload_b64.as_bytes())
+        .context("decode KV event payload before compact Kafka serialization")?;
+    let worker_url_len = u16::try_from(worker_url.len())
+        .context("worker URL is too long for compact Kafka KV event record")?;
+    let model_id_len = u16::try_from(model_id.len())
+        .context("model ID is too long for compact Kafka KV event record")?;
+    let payload_len = u32::try_from(payload.len())
+        .context("payload is too large for compact Kafka KV event record")?;
+    let encoded_len = KAFKA_BINARY_HEADER_BYTES
+        .checked_add(worker_url.len())
+        .and_then(|size| size.checked_add(model_id.len()))
+        .and_then(|size| size.checked_add(payload.len()))
+        .ok_or_else(|| anyhow!("compact Kafka KV event record size overflow"))?;
+
+    let mut encoded = Vec::with_capacity(encoded_len);
+    encoded.extend_from_slice(KAFKA_BINARY_MAGIC);
+    encoded.extend_from_slice(&worker_url_len.to_be_bytes());
+    encoded.extend_from_slice(&model_id_len.to_be_bytes());
+    encoded.extend_from_slice(&record.dp_rank.to_be_bytes());
+    encoded.extend_from_slice(&record.seq.to_be_bytes());
+    encoded.extend_from_slice(&record.observed_at_ms.to_be_bytes());
+    encoded.extend_from_slice(&payload_len.to_be_bytes());
+    encoded.extend_from_slice(worker_url);
+    encoded.extend_from_slice(model_id);
+    encoded.extend_from_slice(&payload);
+    Ok(encoded)
+}
+
+fn decode_kafka_payload(payload: &[u8]) -> Result<KvEventStreamRecord> {
+    if !payload.starts_with(KAFKA_BINARY_MAGIC) {
+        return serde_json::from_slice(payload).context("decode legacy JSON Kafka KV event record");
+    }
+    if payload.len() < KAFKA_BINARY_HEADER_BYTES {
+        return Err(anyhow!("compact Kafka KV event record is truncated"));
+    }
+
+    let worker_url_len = u16::from_be_bytes(
+        payload[8..10]
+            .try_into()
+            .expect("fixed-width worker URL length"),
+    ) as usize;
+    let model_id_len = u16::from_be_bytes(
+        payload[10..12]
+            .try_into()
+            .expect("fixed-width model ID length"),
+    ) as usize;
+    let dp_rank = u32::from_be_bytes(payload[12..16].try_into().expect("fixed-width DP rank"));
+    let seq = i64::from_be_bytes(payload[16..24].try_into().expect("fixed-width sequence"));
+    let observed_at_ms = u64::from_be_bytes(
+        payload[24..32]
+            .try_into()
+            .expect("fixed-width observation timestamp"),
+    );
+    let payload_len = u32::from_be_bytes(
+        payload[32..36]
+            .try_into()
+            .expect("fixed-width payload length"),
+    ) as usize;
+    let worker_url_end = KAFKA_BINARY_HEADER_BYTES
+        .checked_add(worker_url_len)
+        .ok_or_else(|| anyhow!("compact Kafka KV event worker URL length overflow"))?;
+    let model_id_end = worker_url_end
+        .checked_add(model_id_len)
+        .ok_or_else(|| anyhow!("compact Kafka KV event model ID length overflow"))?;
+    let payload_end = model_id_end
+        .checked_add(payload_len)
+        .ok_or_else(|| anyhow!("compact Kafka KV event payload length overflow"))?;
+    if payload_end != payload.len() {
+        return Err(anyhow!(
+            "compact Kafka KV event record length mismatch: header declares {payload_end} bytes, got {}",
+            payload.len()
+        ));
+    }
+
+    let worker_url = std::str::from_utf8(&payload[KAFKA_BINARY_HEADER_BYTES..worker_url_end])
+        .context("compact Kafka KV event worker URL is not UTF-8")?
+        .to_string();
+    let model_id = std::str::from_utf8(&payload[worker_url_end..model_id_end])
+        .context("compact Kafka KV event model ID is not UTF-8")?
+        .to_string();
+    let raw_payload = &payload[model_id_end..payload_end];
+    let mut hasher = Sha256::new();
+    hasher.update(raw_payload);
+    Ok(KvEventStreamRecord {
+        schema_version: SCHEMA_VERSION,
+        worker_url,
+        model_id,
+        dp_rank,
+        seq,
+        observed_at_ms,
+        payload_hash: format!("{:x}", hasher.finalize()),
+        payload_b64: encode_base64(raw_payload),
+    })
 }
 
 fn env_string(name: &str) -> Option<String> {
@@ -575,6 +684,85 @@ mod tests {
         let stats = stream.append(&record).unwrap();
         assert_eq!(stats.records_after_compaction, 1);
         assert_eq!(stream.read_all().unwrap(), vec![record]);
+    }
+
+    #[test]
+    fn compact_kafka_record_round_trips_binary_payload() {
+        let payload = (0u8..=u8::MAX).cycle().take(4_097).collect::<Vec<_>>();
+        let mut record = KvEventStreamRecord::from_payload(
+            "model/with-ascii".into(),
+            "http://worker:30000".into(),
+            7,
+            42,
+            &payload,
+        );
+        record.observed_at_ms = 1_234_567_890;
+
+        let encoded = encode_kafka_record(&record).unwrap();
+
+        assert!(encoded.starts_with(KAFKA_BINARY_MAGIC));
+        assert_eq!(decode_kafka_payload(&encoded).unwrap(), record);
+    }
+
+    #[test]
+    fn kafka_decoder_remains_compatible_with_legacy_json_records() {
+        let record = KvEventStreamRecord::from_payload(
+            "model".into(),
+            "http://worker:30000".into(),
+            0,
+            8,
+            b"legacy",
+        );
+        let encoded = serde_json::to_vec(&record).unwrap();
+
+        assert!(!encoded.starts_with(KAFKA_BINARY_MAGIC));
+        assert_eq!(decode_kafka_payload(&encoded).unwrap(), record);
+    }
+
+    #[test]
+    fn compact_kafka_record_keeps_observed_large_batch_below_broker_limit() {
+        let payload = vec![0xa5; 753_713];
+        let record = KvEventStreamRecord::from_payload(
+            "zai-org/GLM-5.2-FP8".into(),
+            "http://worker:30100".into(),
+            0,
+            41,
+            &payload,
+        );
+
+        let legacy_json = serde_json::to_vec(&record).unwrap();
+        let compact = encode_kafka_record(&record).unwrap();
+
+        assert!(legacy_json.len() > 1_000_000);
+        assert!(compact.len() < 900_000);
+        assert_eq!(decode_kafka_payload(&compact).unwrap(), record);
+    }
+
+    #[test]
+    fn compact_kafka_decoder_rejects_truncated_and_trailing_records() {
+        let record = KvEventStreamRecord::from_payload(
+            "model".into(),
+            "http://worker:30000".into(),
+            0,
+            8,
+            b"payload",
+        );
+        let encoded = encode_kafka_record(&record).unwrap();
+
+        assert!(decode_kafka_payload(KAFKA_BINARY_MAGIC)
+            .unwrap_err()
+            .to_string()
+            .contains("truncated"));
+        assert!(decode_kafka_payload(&encoded[..encoded.len() - 1])
+            .unwrap_err()
+            .to_string()
+            .contains("length mismatch"));
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert!(decode_kafka_payload(&trailing)
+            .unwrap_err()
+            .to_string()
+            .contains("length mismatch"));
     }
 
     #[test]
