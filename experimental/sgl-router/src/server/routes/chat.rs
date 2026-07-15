@@ -421,6 +421,17 @@ async fn chat_completions_inner(
     // with 503 rather than spilled onto a gated worker — keeping long
     // internal requests off the small-context worker even under degradation.
     let request_priority = crate::policies::priority_from_value(probe.priority.as_ref());
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-")
+        .to_string();
+    let route_decision_log = crate::server::route_decision::context_from_headers(
+        &headers,
+        &request_id,
+        "/v1/chat/completions",
+        request_priority,
+    );
     let eligible = filter_eligible(&workers, request_priority);
     if eligible.excluded_all {
         tracing::warn!(
@@ -510,7 +521,8 @@ async fn chat_completions_inner(
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty());
     let selection_ctx = SelectionContext::with_routing_key(&model_id, Some(&body), routing_key)
-        .with_request_tokens(request_tokens.as_ref().map(|t| t.ids.as_slice()));
+        .with_request_tokens(request_tokens.as_ref().map(|t| t.ids.as_slice()))
+        .with_route_decision_log(route_decision_log);
     let (worker, pending_guard) = {
         let _selection_guard = ctx.selection_lock.lock().await;
         let worker = policy.select(&workers, &selection_ctx).ok_or_else(|| {
@@ -518,6 +530,14 @@ async fn chat_completions_inner(
                 model: model_str.clone(),
             }
         })?;
+        if !policy.logs_route_decisions() {
+            crate::server::route_decision::log_generic_selection(
+                &selection_ctx,
+                &workers,
+                worker.as_ref(),
+                policy.as_ref(),
+            );
+        }
         let pending_tokens = request_tokens
             .as_ref()
             .map(|t| t.ids.len().max(1))
@@ -927,10 +947,6 @@ async fn chat_completions_inner(
     // X-Request-Id (echoed end-to-end); `worker` is the engine the policy
     // selected. The cache-aware routing rationale is logged separately at
     // DEBUG by the policy.
-    let request_id = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("-");
     let http_status = match &result {
         Ok(resp) => resp.status().as_u16(),
         Err(e) => e.status_code().as_u16(),
