@@ -549,6 +549,7 @@ mod tests {
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }
     }
 
@@ -576,6 +577,7 @@ mod tests {
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }))
     }
 
@@ -593,6 +595,7 @@ mod tests {
             tier: Default::default(),
             routes,
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }))
     }
 
@@ -708,6 +711,7 @@ mod tests {
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }))
     }
 
@@ -944,6 +948,7 @@ mod tests {
             tier: Default::default(),
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }
     }
 

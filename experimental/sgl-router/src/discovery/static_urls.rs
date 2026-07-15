@@ -41,8 +41,9 @@ const TIER_TOKEN: &str = "@tier=";
 const ROUTES_TOKEN: &str = "@routes=";
 const PREFILL_CAPACITY_TOKEN: &str = "@prefill_capacity=";
 const PREFILL_PROFILE_TOKEN: &str = "@prefill_profile=";
+const PREFILL_MEMBERS_TOKEN: &str = "@prefill_members=";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorkerCapabilities {
     pub min_priority: Option<i64>,
     pub max_context_tokens: Option<usize>,
@@ -50,6 +51,7 @@ pub(crate) struct WorkerCapabilities {
     pub tier: WorkerTier,
     pub routes: WorkerRouteSet,
     pub prefill_capacity_milli: usize,
+    pub prefill_members: Vec<String>,
 }
 
 impl Default for WorkerCapabilities {
@@ -61,6 +63,7 @@ impl Default for WorkerCapabilities {
             tier: WorkerTier::Default,
             routes: WorkerRouteSet::all(),
             prefill_capacity_milli: default_prefill_capacity_milli(),
+            prefill_members: Vec::new(),
         }
     }
 }
@@ -95,6 +98,7 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
             ROUTES_TOKEN,
             PREFILL_CAPACITY_TOKEN,
             PREFILL_PROFILE_TOKEN,
+            PREFILL_MEMBERS_TOKEN,
         ]
         .into_iter()
         .filter_map(|token| base.rfind(token).map(|pos| (pos, token)))
@@ -160,7 +164,7 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
             }
             saw_prefill_capacity = true;
             caps.prefill_capacity_milli = parse_prefill_capacity_milli(value.trim(), entry)?;
-        } else {
+        } else if token == PREFILL_PROFILE_TOKEN {
             if saw_prefill_capacity {
                 return Err(anyhow::anyhow!(
                     "invalid worker URL entry {entry:?}: \
@@ -169,9 +173,36 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
             }
             saw_prefill_profile = true;
             caps.prefill_capacity_milli = prefill_profile_capacity_milli(value.trim(), entry)?;
+        } else {
+            caps.prefill_members = parse_prefill_members(value.trim(), entry)?;
         }
     }
     Ok((base.to_string(), caps))
+}
+
+fn parse_prefill_members(value: &str, entry: &str) -> Result<Vec<String>> {
+    if value.is_empty() {
+        return Err(anyhow::anyhow!(
+            "invalid prefill_members in worker URL entry {entry:?}: value must not be empty"
+        ));
+    }
+
+    let mut members = Vec::new();
+    for raw_member in value.split(',') {
+        let member = raw_member.trim();
+        if member.is_empty() {
+            return Err(anyhow::anyhow!(
+                "invalid prefill_members in worker URL entry {entry:?}: empty member URL"
+            ));
+        }
+        members.push(normalize_worker_url(member).map_err(|e| {
+            anyhow::anyhow!(
+                "invalid prefill_members in worker URL entry {entry:?}: member {member:?} is invalid: {e}"
+            )
+        })?);
+    }
+
+    Ok(members)
 }
 
 fn prefill_profile_capacity_milli(value: &str, entry: &str) -> Result<usize> {
@@ -326,6 +357,7 @@ pub(crate) fn build_worker_specs(cfg: &StaticUrlsDiscoveryConfig) -> Result<Vec<
                 tier: caps.tier,
                 routes: caps.routes,
                 prefill_capacity_milli: caps.prefill_capacity_milli,
+                prefill_members: caps.prefill_members,
             })
         })
         .collect()
@@ -538,6 +570,44 @@ mod tests {
     }
 
     #[test]
+    fn parse_entry_extracts_prefill_members_suffix() {
+        let (url, caps) = parse_worker_entry(
+            "http://pd-proxy:30000@backend=sglang_proxy@routes=chat@prefill_members=http://prefill-0:30000/,http://prefill-1:30000",
+        )
+        .unwrap();
+
+        assert_eq!(url, "http://pd-proxy:30000");
+        assert_eq!(caps.backend, WorkerBackend::SglangProxy);
+        assert_eq!(
+            caps.prefill_members,
+            vec![
+                "http://prefill-0:30000".to_string(),
+                "http://prefill-1:30000".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn build_worker_specs_propagates_prefill_members() {
+        let specs = build_worker_specs(&StaticUrlsDiscoveryConfig {
+            urls: vec![
+                "http://pd-proxy:30000@prefill_members=http://prefill-0:30000,http://prefill-1:30000"
+                    .into(),
+            ],
+            bearer_keys: Vec::new(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            specs[0].prefill_members,
+            vec![
+                "http://prefill-0:30000".to_string(),
+                "http://prefill-1:30000".to_string(),
+            ],
+        );
+    }
+
+    #[test]
     fn parse_entry_strips_tier_suffix() {
         let (url, caps) = parse_worker_entry("http://b200-01:10100@tier=shared").unwrap();
         assert_eq!(url, "http://b200-01:10100");
@@ -589,6 +659,16 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(err.contains("prefill_capacity"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn parse_entry_rejects_invalid_prefill_members() {
+        for value in ["", "http://prefill-0:30000,", "not-a-url"] {
+            let err = parse_worker_entry(&format!("http://w:30000@prefill_members={value}"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("prefill_members"), "got: {err}");
         }
     }
 

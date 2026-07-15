@@ -87,6 +87,7 @@ fn build_sticky_ctx(header_name: &str, worker_urls: &[String]) -> Arc<AppContext
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         });
     }
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
@@ -321,6 +322,7 @@ async fn adding_a_worker_does_not_redistribute_existing_key() {
             tier: Default::default(),
             routes: Default::default(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         })
         .unwrap();
     // Guard the premise: w2 really is an eligible candidate now, so the

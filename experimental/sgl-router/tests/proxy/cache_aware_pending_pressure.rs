@@ -139,6 +139,7 @@ fn worker_spec(id: &str, url: &str, min_priority: Option<i64>) -> WorkerSpec {
         tier: Default::default(),
         routes: Default::default(),
         prefill_capacity_milli: 1000,
+        prefill_members: Vec::new(),
     }
 }
 

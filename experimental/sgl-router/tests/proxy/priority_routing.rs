@@ -117,6 +117,7 @@ fn spec_with_backend(
         tier: WorkerTier::Default,
         routes: Default::default(),
         prefill_capacity_milli: 1000,
+        prefill_members: Vec::new(),
     }
 }
 
@@ -467,6 +468,7 @@ async fn unknown_model_with_gated_worker_is_404_not_503() {
         tier: Default::default(),
         routes: Default::default(),
         prefill_capacity_milli: 1000,
+        prefill_members: Vec::new(),
     };
     let ctx = build_ctx(vec![spec]);
 

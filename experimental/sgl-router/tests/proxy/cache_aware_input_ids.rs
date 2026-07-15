@@ -98,6 +98,7 @@ fn build_ctx(url: String) -> Arc<AppContext> {
         tier: Default::default(),
         routes: Default::default(),
         prefill_capacity_milli: 1000,
+        prefill_members: Vec::new(),
     });
     // Use the real loaded tokenizers (not the empty-registry test default) so
     // the cache-aware policy can tokenize at ingress.

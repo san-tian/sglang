@@ -145,6 +145,7 @@ fn extract_workers(es: &EndpointSlice, mode: WorkerMode) -> Vec<WorkerSpec> {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: crate::discovery::default_prefill_capacity_milli(),
+                prefill_members: Vec::new(),
             });
         }
     }

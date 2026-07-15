@@ -354,13 +354,15 @@ fn reconcile_unresolved_workers(
         // `register_one` re-resolves them from `/server_info`; current
         // mode + bootstrap_port as the seed (`register_one` re-applies
         // any `/server_info` override). `min_priority`, `max_context_tokens`,
-        // backend, tier, and capacity are config-time facts that `/server_info`
-        // never carries, so they MUST be carried over from the live worker.
+        // backend, tier, capacity, and prefill_members are config-time facts
+        // that `/server_info` never carries, so they MUST be carried over from
+        // the live worker.
         // Dropping min_priority here would
         // let a priority-gated worker silently start accepting priority-0
         // traffic; dropping backend would make a vLLM worker retry through
         // SGLang-only endpoints; dropping tier would break tiered spillover;
-        // dropping capacity would erase heterogeneous routing normalization.
+        // dropping capacity would erase heterogeneous routing normalization;
+        // dropping prefill_members would erase logical PD cache credit.
         let spec = WorkerSpec {
             id: id.clone(),
             url: worker.url.clone(),
@@ -374,6 +376,7 @@ fn reconcile_unresolved_workers(
             tier: worker.tier(),
             routes: worker.routes(),
             prefill_capacity_milli: worker.prefill_capacity_milli(),
+            prefill_members: worker.prefill_members().to_vec(),
         };
         // `debug!` not `info!`: this fires every interval for each
         // still-unresolved worker, so info-level would spam for a worker
@@ -566,6 +569,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 500,
+            prefill_members: Vec::new(),
         };
         let cb = cb_config_for_spec(&spec, &cfg).expect("model has cb config");
         assert_eq!(cb.threshold.get(), 5);
@@ -662,6 +666,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 500,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -712,6 +717,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 500,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -770,6 +776,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -832,6 +839,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -892,6 +900,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -947,6 +956,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -1003,6 +1013,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             };
             tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
             let registered = tokio::time::timeout(Duration::from_secs(2), async {
@@ -1080,6 +1091,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait until the manager has both registered the worker AND
@@ -1188,6 +1200,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait for the manager to land the registry write so the
@@ -1275,6 +1288,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -1385,6 +1399,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
 
@@ -1474,6 +1489,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 500,
+            prefill_members: Vec::new(),
         };
         tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
 
@@ -1615,6 +1631,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }))
         .await
         .unwrap();
@@ -1749,6 +1766,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }))
         .await
         .unwrap();
@@ -1827,6 +1845,7 @@ mod tests {
             tier: Default::default(),
             routes: crate::discovery::WorkerRouteSet::all(),
             prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
         }))
         .await
         .unwrap();

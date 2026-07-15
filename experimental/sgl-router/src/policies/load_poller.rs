@@ -524,6 +524,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -560,6 +561,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -618,6 +620,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -667,6 +670,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
@@ -723,6 +727,7 @@ mod tests {
                 tier: Default::default(),
                 routes: crate::discovery::WorkerRouteSet::all(),
                 prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .unwrap();
         let worker = registry.get(&id).unwrap();
