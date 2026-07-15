@@ -1687,6 +1687,7 @@ class MoriKVReceiver(CommonKVReceiver):
         kv_item_len: bytes,
         packed_state_item_lens: bytes,
         packed_state_dim_per_tensor: bytes,
+        retry_with_fresh_bootstrap_info: bool = True,
     ) -> bool:
         return self._send_request_multipart_to_bootstrap(
             bootstrap_info,
@@ -1706,10 +1707,45 @@ class MoriKVReceiver(CommonKVReceiver):
                 packed_state_item_lens,
                 packed_state_dim_per_tensor,
             ],
+            retry_with_fresh_bootstrap_info=retry_with_fresh_bootstrap_info,
         )
 
     def _ensure_kv_args_registered(self):
         self._register_kv_args()
+
+    def _on_bootstrap_info_refreshed(self, refreshed_bootstrap_info: dict) -> bool:
+        if self.bootstrap_infos is None:
+            return False
+
+        engine_desc_blob = self.kv_mgr.engine_desc.pack()
+        packed_kv_descs = _pack_mem_desc_list(self.kv_mgr.kv_mem_descs)
+        packed_aux_descs = _pack_mem_desc_list(self.kv_mgr.aux_mem_descs)
+        packed_state_descs = _pack_mem_desc_lists(self.kv_mgr.state_mem_descs)
+        gpu_id = str(self.kv_mgr.kv_args.gpu_id).encode("ascii")
+        decode_tp_size = str(self.kv_mgr.attn_tp_size).encode("ascii")
+        decode_tp_rank = str(self.kv_mgr.kv_args.engine_rank).encode("ascii")
+        kv_item_len = str(self.kv_mgr.kv_args.kv_item_lens[0]).encode("ascii")
+        packed_state_item_lens = pack_int_lists(
+            self.kv_mgr.kv_args.state_item_lens, "I"
+        )
+        packed_state_dim_per_tensor = pack_int_lists(
+            self.kv_mgr.kv_args.state_dim_per_tensor, "I"
+        )
+
+        return self._register_kv_args_to_bootstrap_info(
+            refreshed_bootstrap_info,
+            engine_desc_blob,
+            packed_kv_descs,
+            packed_aux_descs,
+            packed_state_descs,
+            gpu_id,
+            decode_tp_size,
+            decode_tp_rank,
+            kv_item_len,
+            packed_state_item_lens,
+            packed_state_dim_per_tensor,
+            retry_with_fresh_bootstrap_info=False,
+        )
 
     def send_metadata(
         self,
