@@ -1744,6 +1744,11 @@ class MoriKVReceiver(CommonKVReceiver):
             retry_with_fresh_bootstrap_info=False,
         )
 
+    def _should_reregister_kv_args_on_cache_hit(self) -> bool:
+        # A restarted Prefill loses its per-process Mori remote-engine table even
+        # when Decode can reuse the cached rank endpoint.
+        return True
+
     def send_metadata(
         self,
         kv_indices: npt.NDArray[np.int32],

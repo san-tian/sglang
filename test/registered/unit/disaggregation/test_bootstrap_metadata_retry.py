@@ -34,8 +34,13 @@ class _TestKVReceiver(CommonKVReceiver):
         raise NotImplementedError
 
 
-def _make_receiver():
-    receiver = _TestKVReceiver.__new__(_TestKVReceiver)
+class _ReregisteringTestKVReceiver(_TestKVReceiver):
+    def _should_reregister_kv_args_on_cache_hit(self):
+        return True
+
+
+def _make_receiver(receiver_cls=_TestKVReceiver):
+    receiver = receiver_cls.__new__(receiver_cls)
     receiver.bootstrap_room = 123
     receiver.bootstrap_addr = "10.60.0.8:8998"
     receiver.kv_mgr = _FakeKVManager()
@@ -240,7 +245,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         self.assertIn("tcp://10.60.0.8:37251", reason)
 
     def test_cached_bootstrap_infos_still_registers_kv_args(self):
-        receiver = _make_receiver()
+        receiver = _make_receiver(_ReregisteringTestKVReceiver)
         cached_info = _bootstrap_info(30100)
         receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [cached_info]
         receiver.prefill_dp_rank = 0
@@ -253,6 +258,22 @@ class TestBootstrapMetadataRetry(CustomTestCase):
             receiver._setup_bootstrap_infos()
 
         mock_register.assert_called_once_with()
+        self.assertEqual(receiver.bootstrap_infos, [cached_info])
+
+    def test_cached_bootstrap_infos_do_not_register_by_default(self):
+        receiver = _make_receiver()
+        cached_info = _bootstrap_info(30100)
+        receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [cached_info]
+        receiver.prefill_dp_rank = 0
+        receiver.target_cp_ranks = [0]
+        receiver.target_tp_rank = 0
+        receiver.target_tp_ranks = [0]
+        receiver.target_pp_ranks = [0]
+
+        with patch.object(receiver, "_register_kv_args") as mock_register:
+            receiver._setup_bootstrap_infos()
+
+        mock_register.assert_not_called()
         self.assertEqual(receiver.bootstrap_infos, [cached_info])
 
     def test_get_bootstrap_info_retries_transient_route_failure(self):

@@ -1057,12 +1057,10 @@ class CommonKVReceiver(BaseKVReceiver):
                     return
             else:
                 self.bootstrap_infos = self.kv_mgr.connection_pool[bootstrap_key]
-                # The endpoint cache is shared across requests, but the decode peer
-                # registration is per decode engine. Re-send it on cache hits; prefill
-                # treats duplicate peer registrations as idempotent.
-                self._register_kv_args()
-                if self.conclude_state == KVPoll.Failed:
-                    return
+                if self._should_reregister_kv_args_on_cache_hit():
+                    self._register_kv_args()
+                    if self.conclude_state == KVPoll.Failed:
+                        return
 
             assert len(self.bootstrap_infos) > 0
             all_bootstrap_infos.extend(self.bootstrap_infos)
@@ -1283,6 +1281,9 @@ class CommonKVReceiver(BaseKVReceiver):
     def _on_bootstrap_info_refreshed(self, refreshed_bootstrap_info: dict) -> bool:
         """Hook for backend-specific refresh handling before metadata retry."""
         return True
+
+    def _should_reregister_kv_args_on_cache_hit(self) -> bool:
+        return False
 
     def _record_bootstrap_metadata_send_failure(
         self, bootstrap_room: int, failure_reason: str
