@@ -40,7 +40,7 @@ class TestPrefillQueueMetrics(CustomTestCase):
             SchedulerLoadInquirer.get_num_waiting_uncached_tokens(inquirer), 425
         )
 
-    def test_builds_priority_bucket_cumulative_work_and_chunk_remainder(self):
+    def test_builds_candidate_work_ahead_and_chunk_remainder(self):
         metrics = build_prefill_queue_metrics(
             [
                 _req(tokens=100, priority=0),
