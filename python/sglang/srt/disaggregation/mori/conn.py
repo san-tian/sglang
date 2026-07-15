@@ -1710,7 +1710,14 @@ class MoriKVReceiver(CommonKVReceiver):
             retry_with_fresh_bootstrap_info=retry_with_fresh_bootstrap_info,
         )
 
-    def _on_bootstrap_info_refreshed(self, refreshed_bootstrap_info: dict) -> bool:
+    def _on_bootstrap_info_refreshed(
+        self, refreshed_bootstrap_info: dict, frames: List[bytes]
+    ) -> bool:
+        # The common retry sends the original frames after this hook. If those
+        # frames already carry the peer registration, sending another copy here
+        # would create a second failure point on the refreshed endpoint.
+        if len(frames) > 1 and frames[0] == MORI_GUARD and frames[1] == b"None":
+            return True
         if self.bootstrap_infos is None:
             return False
 

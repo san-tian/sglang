@@ -1278,7 +1278,9 @@ class CommonKVReceiver(BaseKVReceiver):
         refreshed["is_dummy"] = bootstrap_info.get("is_dummy", False)
         return refreshed
 
-    def _on_bootstrap_info_refreshed(self, refreshed_bootstrap_info: dict) -> bool:
+    def _on_bootstrap_info_refreshed(
+        self, refreshed_bootstrap_info: dict, frames: List[bytes]
+    ) -> bool:
         """Hook for backend-specific refresh handling before metadata retry."""
         return True
 
@@ -1316,7 +1318,7 @@ class CommonKVReceiver(BaseKVReceiver):
                         type(error).__name__,
                     )
                     try:
-                        if not self._on_bootstrap_info_refreshed(refreshed):
+                        if not self._on_bootstrap_info_refreshed(refreshed, frames):
                             raise RuntimeError(
                                 "bootstrap info refresh hook returned False"
                             )

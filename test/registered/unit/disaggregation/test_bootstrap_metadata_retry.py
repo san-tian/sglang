@@ -108,8 +108,11 @@ class TestBootstrapMetadataRetry(CustomTestCase):
             if info is old_info:
                 raise zmq.Again()
 
-        def refresh_hook(info):
+        frames = [b"frame"]
+
+        def refresh_hook(info, received_frames):
             events.append(("register", info))
+            self.assertIs(received_frames, frames)
             return True
 
         with (
@@ -129,10 +132,10 @@ class TestBootstrapMetadataRetry(CustomTestCase):
                 side_effect=refresh_hook,
             ) as mock_refresh_hook,
         ):
-            ok = receiver._send_request_multipart_to_bootstrap(old_info, [b"frame"])
+            ok = receiver._send_request_multipart_to_bootstrap(old_info, frames)
 
         self.assertTrue(ok)
-        mock_refresh_hook.assert_called_once_with(refreshed_info)
+        mock_refresh_hook.assert_called_once_with(refreshed_info, frames)
         self.assertEqual(
             events,
             [
@@ -144,7 +147,7 @@ class TestBootstrapMetadataRetry(CustomTestCase):
 
     def test_mori_refresh_hook_registers_peer_without_nested_refresh(self):
         try:
-            from sglang.srt.disaggregation.mori.conn import MoriKVReceiver
+            from sglang.srt.disaggregation.mori.conn import MORI_GUARD, MoriKVReceiver
         except ImportError as error:
             self.skipTest(f"Mori runtime is unavailable: {error}")
 
@@ -180,13 +183,36 @@ class TestBootstrapMetadataRetry(CustomTestCase):
             "_register_kv_args_to_bootstrap_info",
             return_value=True,
         ) as mock_register:
-            ok = receiver._on_bootstrap_info_refreshed(refreshed_info)
+            ok = receiver._on_bootstrap_info_refreshed(
+                refreshed_info, [MORI_GUARD, b"123"]
+            )
 
         self.assertTrue(ok)
         self.assertIs(mock_register.call_args.args[0], refreshed_info)
         self.assertFalse(
             mock_register.call_args.kwargs["retry_with_fresh_bootstrap_info"]
         )
+
+    def test_mori_registration_retry_is_not_duplicated_by_refresh_hook(self):
+        try:
+            from sglang.srt.disaggregation.mori.conn import MORI_GUARD, MoriKVReceiver
+        except ImportError as error:
+            self.skipTest(f"Mori runtime is unavailable: {error}")
+
+        receiver = MoriKVReceiver.__new__(MoriKVReceiver)
+        receiver.bootstrap_infos = [_bootstrap_info(30100)]
+
+        with patch.object(
+            receiver,
+            "_register_kv_args_to_bootstrap_info",
+            return_value=True,
+        ) as mock_register:
+            ok = receiver._on_bootstrap_info_refreshed(
+                receiver.bootstrap_infos[0], [MORI_GUARD, b"None"]
+            )
+
+        self.assertTrue(ok)
+        mock_register.assert_not_called()
 
     def test_mori_metadata_does_not_duplicate_peer_registration(self):
         try:
