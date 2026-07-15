@@ -4,6 +4,7 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import zmq
 
 from sglang.srt.disaggregation.common.conn import CommonKVReceiver
@@ -182,6 +183,36 @@ class TestBootstrapMetadataRetry(CustomTestCase):
             mock_register.call_args.kwargs["retry_with_fresh_bootstrap_info"]
         )
 
+    def test_mori_metadata_does_not_duplicate_peer_registration(self):
+        try:
+            from sglang.srt.disaggregation.mori.conn import MoriKVReceiver
+        except ImportError as error:
+            self.skipTest(f"Mori runtime is unavailable: {error}")
+
+        receiver = MoriKVReceiver.__new__(MoriKVReceiver)
+        receiver.bootstrap_infos = [_bootstrap_info(30100)]
+        receiver.bootstrap_room = 123
+        receiver.required_dst_info_num = 1
+        receiver.init_time = None
+        receiver.kv_mgr = SimpleNamespace(
+            local_ip="10.60.0.37",
+            rank_port=39001,
+            engine_desc=SimpleNamespace(key="decode-engine"),
+        )
+
+        with (
+            patch.object(receiver, "_register_kv_args") as mock_register,
+            patch.object(
+                receiver,
+                "_send_request_multipart_to_bootstrap",
+                return_value=True,
+            ) as mock_send,
+        ):
+            receiver.send_metadata(np.asarray([1, 2], dtype=np.int32))
+
+        mock_register.assert_not_called()
+        mock_send.assert_called_once()
+
     def test_retry_failure_records_both_endpoints(self):
         receiver = _make_receiver()
         old_info = _bootstrap_info(38931)
@@ -258,6 +289,22 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         self.assertEqual(info, {"rank_ip": "x"})
         self.assertEqual(mock_get.call_count, 2)
         mock_sleep.assert_called_once()
+
+    def test_get_bootstrap_info_stops_after_three_attempts(self):
+        receiver = _make_receiver()
+
+        with (
+            patch(
+                "sglang.srt.disaggregation.common.conn.requests.get",
+                side_effect=ConnectionRefusedError("refused"),
+            ) as mock_get,
+            patch("sglang.srt.disaggregation.common.conn.time.sleep") as mock_sleep,
+        ):
+            info = receiver._get_bootstrap_info_from_server(0, 0, 0, 0)
+
+        self.assertIsNone(info)
+        self.assertEqual(mock_get.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
 
 
 if __name__ == "__main__":

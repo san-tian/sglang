@@ -1075,14 +1075,14 @@ class CommonKVReceiver(BaseKVReceiver):
         """Fetch the bootstrap info from the bootstrap server."""
         url = f"http://{self.bootstrap_addr}/route?prefill_dp_rank={prefill_dp_rank}&prefill_cp_rank={prefill_cp_rank}&target_tp_rank={target_tp_rank}&target_pp_rank={target_pp_rank}"
         last_error = None
-        max_retries = 8
-        for attempt in range(max_retries):
+        max_attempts = 3
+        for attempt in range(max_attempts):
             try:
                 response = requests.get(url, timeout=5)
             except Exception as e:
                 last_error = e
-                if attempt < max_retries - 1:
-                    time.sleep(min(0.05 * (2**attempt), 1.0))
+                if attempt < max_attempts - 1:
+                    time.sleep(0.05 * (2**attempt))
                     continue
                 logger.error(f"Error fetching prefill info from bootstrap: {e}")
                 return None
@@ -1094,9 +1094,9 @@ class CommonKVReceiver(BaseKVReceiver):
             last_error = f"{response.status_code}, {response.text}"
             if (
                 response.status_code in (408, 429, 500, 502, 503, 504)
-                and attempt < max_retries - 1
+                and attempt < max_attempts - 1
             ):
-                time.sleep(min(0.05 * (2**attempt), 1.0))
+                time.sleep(0.05 * (2**attempt))
                 continue
             logger.error(
                 f"Failed to get prefill server info: {response.status_code}, {response.text}"

@@ -1710,9 +1710,6 @@ class MoriKVReceiver(CommonKVReceiver):
             retry_with_fresh_bootstrap_info=retry_with_fresh_bootstrap_info,
         )
 
-    def _ensure_kv_args_registered(self):
-        self._register_kv_args()
-
     def _on_bootstrap_info_refreshed(self, refreshed_bootstrap_info: dict) -> bool:
         if self.bootstrap_infos is None:
             return False
@@ -1755,10 +1752,6 @@ class MoriKVReceiver(CommonKVReceiver):
         decode_prefix_len: Optional[int] = None,
     ):
         if self.bootstrap_infos is None or self.bootstrap_room is None:
-            return
-
-        self._ensure_kv_args_registered()
-        if self.conclude_state == KVPoll.Failed:
             return
 
         kv_indices_bytes = (
