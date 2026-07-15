@@ -28,8 +28,13 @@ class _FakeKVManager:
         self.status_updates.append((bootstrap_room, status))
 
 
+class _TestKVReceiver(CommonKVReceiver):
+    def poll(self):
+        raise NotImplementedError
+
+
 def _make_receiver():
-    receiver = CommonKVReceiver.__new__(CommonKVReceiver)
+    receiver = _TestKVReceiver.__new__(_TestKVReceiver)
     receiver.bootstrap_room = 123
     receiver.bootstrap_addr = "10.60.0.8:8998"
     receiver.kv_mgr = _FakeKVManager()
@@ -90,12 +95,22 @@ class TestBootstrapMetadataRetry(CustomTestCase):
         receiver.bootstrap_infos = [old_info]
         receiver.kv_mgr.connection_pool["10.60.0.8:8998_0_0_0"] = [old_info]
         refreshed_info = _bootstrap_info(30100)
+        events = []
+
+        def send(info, _frames):
+            events.append(("send", info))
+            if info is old_info:
+                raise zmq.Again()
+
+        def refresh_hook(info):
+            events.append(("register", info))
+            return True
 
         with (
             patch.object(
                 receiver,
                 "_send_multipart_to_bootstrap",
-                side_effect=[zmq.Again(), None],
+                side_effect=send,
             ),
             patch.object(
                 receiver,
@@ -105,13 +120,67 @@ class TestBootstrapMetadataRetry(CustomTestCase):
             patch.object(
                 receiver,
                 "_on_bootstrap_info_refreshed",
-                return_value=True,
+                side_effect=refresh_hook,
             ) as mock_refresh_hook,
         ):
             ok = receiver._send_request_multipart_to_bootstrap(old_info, [b"frame"])
 
         self.assertTrue(ok)
         mock_refresh_hook.assert_called_once_with(refreshed_info)
+        self.assertEqual(
+            events,
+            [
+                ("send", old_info),
+                ("register", refreshed_info),
+                ("send", refreshed_info),
+            ],
+        )
+
+    def test_mori_refresh_hook_registers_peer_without_nested_refresh(self):
+        try:
+            from sglang.srt.disaggregation.mori.conn import MoriKVReceiver
+        except ImportError as error:
+            self.skipTest(f"Mori runtime is unavailable: {error}")
+
+        class _Packed:
+            def __init__(self, value):
+                self.value = value
+
+            def pack(self):
+                return self.value
+
+        receiver = MoriKVReceiver.__new__(MoriKVReceiver)
+        refreshed_info = _bootstrap_info(30100)
+        receiver.bootstrap_infos = [refreshed_info]
+        receiver.kv_mgr = SimpleNamespace(
+            engine_desc=_Packed(b"engine"),
+            kv_mem_descs=[],
+            aux_mem_descs=[],
+            state_mem_descs=[],
+            local_ip="10.60.0.37",
+            rank_port=39001,
+            attn_tp_size=4,
+            kv_args=SimpleNamespace(
+                gpu_id=0,
+                engine_rank=2,
+                kv_item_lens=[128],
+                state_item_lens=[],
+                state_dim_per_tensor=[],
+            ),
+        )
+
+        with patch.object(
+            receiver,
+            "_register_kv_args_to_bootstrap_info",
+            return_value=True,
+        ) as mock_register:
+            ok = receiver._on_bootstrap_info_refreshed(refreshed_info)
+
+        self.assertTrue(ok)
+        self.assertIs(mock_register.call_args.args[0], refreshed_info)
+        self.assertFalse(
+            mock_register.call_args.kwargs["retry_with_fresh_bootstrap_info"]
+        )
 
     def test_retry_failure_records_both_endpoints(self):
         receiver = _make_receiver()
