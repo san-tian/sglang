@@ -11,6 +11,15 @@ use std::borrow::Cow;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
+/// Merge router-local reservations with the shared snapshot without counting
+/// this router's own reservations twice. The shared snapshot is an aggregate
+/// that normally already includes the local process; `local` can nevertheless
+/// be newer while the snapshot poll is in flight, so taking the maximum keeps
+/// the local bridge without adding overlapping values.
+pub(crate) fn merge_pending_load(local: usize, global: usize) -> usize {
+    local.max(global)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrefillPriorityLoad {
     pub priority: i64,
@@ -517,9 +526,7 @@ impl Worker {
     /// before the first successful poll (`REPORTED_LOAD_UNSET`) fall back to
     /// in-flight plus pending so a just-started router still routes sanely.
     pub fn effective_load(&self, use_reported: bool) -> usize {
-        let pending = self
-            .pending_load()
-            .saturating_add(self.global_pending_load());
+        let pending = merge_pending_load(self.pending_load(), self.global_pending_load());
         if !use_reported {
             return self.active_load().saturating_add(pending);
         }
@@ -536,9 +543,8 @@ impl Worker {
     /// request-count local pending term with token-weighted pressure units.
     pub fn effective_ttft_load(&self, use_reported: bool, token_scale: usize) -> usize {
         let scale = token_scale.max(1);
-        let pending_tokens = self
-            .pending_token_load()
-            .saturating_add(self.global_pending_token_load());
+        let pending_tokens =
+            merge_pending_load(self.pending_token_load(), self.global_pending_token_load());
         let token_units = pending_tokens.saturating_add(scale - 1) / scale;
         if !use_reported {
             return self.active_load().saturating_add(token_units);
@@ -769,6 +775,44 @@ mod tests {
         assert_eq!(w.effective_load(false), 3);
         assert_eq!(w.effective_load(true), 5);
         assert_eq!(w.effective_ttft_load(true, 64), 5);
+    }
+
+    #[test]
+    fn effective_load_does_not_double_count_local_and_overlay_pending() {
+        let mut w = Worker::new(WorkerSpec {
+            id: WorkerId("w".into()),
+            url: "http://x".into(),
+            mode: WorkerMode::Plain,
+            model_ids: vec![],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
+        });
+        let overlay = RouterStateLoadOverlay::new();
+        overlay.update(RouterStateSnapshotResponse {
+            workers: [(
+                "http://x".to_string(),
+                RouterStateWorkerLoad {
+                    pending_requests: 1,
+                    pending_tokens: 130,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        });
+        w.attach_router_state_overlay(overlay);
+        w.set_reported_load(0);
+        let pending = w.pending_guard_with_tokens(130);
+
+        assert_eq!(w.effective_load(true), 1);
+        assert_eq!(w.effective_ttft_load(true, 64), 3);
+        drop(pending);
     }
 
     #[test]
