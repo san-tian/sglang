@@ -51,7 +51,7 @@ use crate::server::metrics::{
     MetricsRegistry, RemoteCacheStateFeedOutcome, RemoteCacheStateQueryOutcome,
 };
 use crate::tokenizer::TokenizerRegistry;
-use crate::workers::worker::PrefillLoadRole;
+use crate::workers::worker::{merge_pending_load, PrefillLoadRole};
 use crate::workers::Worker;
 use serde_json::json;
 use std::collections::HashMap;
@@ -564,12 +564,12 @@ impl CacheAwareZmqPolicy {
                 })
                 .unwrap_or(snapshot.total_waiting_uncached_tokens),
         };
-        let reserved_tokens = worker
-            .pending_token_load()
-            .saturating_add(worker.global_pending_token_load());
-        let reserved_requests = worker
-            .pending_load()
-            .saturating_add(worker.global_pending_load());
+        let reserved_tokens = merge_pending_load(
+            worker.pending_token_load(),
+            worker.global_pending_token_load(),
+        );
+        let reserved_requests =
+            merge_pending_load(worker.pending_load(), worker.global_pending_load());
         let prefill_factor = candidate_uncached
             .saturating_add(existing_work)
             .saturating_add(reserved_tokens);
@@ -684,9 +684,10 @@ impl CacheAwareZmqPolicy {
         } else {
             (None, "reservation-only")
         };
-        let reserved_tokens = worker
-            .pending_token_load()
-            .saturating_add(worker.global_pending_token_load());
+        let reserved_tokens = merge_pending_load(
+            worker.pending_token_load(),
+            worker.global_pending_token_load(),
+        );
         // Worker snapshots and router reservations describe overlapping work.
         // Taking the maximum bridges poll lag without counting an admitted
         // request twice for its full lifetime.
@@ -973,12 +974,12 @@ impl CacheAwareZmqPolicy {
                 })
                 .unwrap_or(snapshot.total_waiting_uncached_tokens),
         });
-        let reserved_tokens = worker
-            .pending_token_load()
-            .saturating_add(worker.global_pending_token_load());
-        let reserved_requests = worker
-            .pending_load()
-            .saturating_add(worker.global_pending_load());
+        let reserved_tokens = merge_pending_load(
+            worker.pending_token_load(),
+            worker.global_pending_token_load(),
+        );
+        let reserved_requests =
+            merge_pending_load(worker.pending_load(), worker.global_pending_load());
         let prefill_factor_tokens = if let Some(estimate) = predicted_estimate.as_ref() {
             Some(estimate.total_work_tokens)
         } else {
@@ -3167,6 +3168,27 @@ mod tests {
         let _reservation = w.pending_guard_with_tokens(600);
 
         assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 1100);
+    }
+
+    #[test]
+    fn predicted_ttft_does_not_double_count_local_and_global_reservation() {
+        let policy = lmetric_policy(TtftScoreMode::PredictedTtft);
+        let overlay = RouterStateLoadOverlay::new();
+        overlay.update(RouterStateSnapshotResponse {
+            workers: [(
+                "http://w0:30000".to_string(),
+                RouterStateWorkerLoad {
+                    pending_requests: 1,
+                    pending_tokens: 600,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        });
+        let w = worker_with_router_state_overlay("http://w0:30000", "tiny", overlay);
+        let _reservation = w.pending_guard_with_tokens(600);
+
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 700);
     }
 
     #[test]

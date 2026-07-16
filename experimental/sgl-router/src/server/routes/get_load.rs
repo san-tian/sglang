@@ -5,7 +5,7 @@
 
 use crate::discovery::{ModelId, WorkerMode};
 use crate::server::app_context::AppContext;
-use crate::workers::worker::REPORTED_LOAD_UNSET;
+use crate::workers::worker::{merge_pending_load, REPORTED_LOAD_UNSET};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -58,17 +58,15 @@ pub(crate) fn decode_load_entries(ctx: &AppContext) -> Vec<GetLoadEntry> {
         .map(|(dp_rank, (worker, num_reqs))| GetLoadEntry {
             dp_rank,
             num_reqs,
-            num_waiting_reqs: saturating_i64(
-                worker
-                    .pending_load()
-                    .saturating_add(worker.global_pending_load()),
-            ),
+            num_waiting_reqs: saturating_i64(merge_pending_load(
+                worker.pending_load(),
+                worker.global_pending_load(),
+            )),
             num_tokens: 0,
-            num_pending_tokens: saturating_i64(
-                worker
-                    .pending_token_load()
-                    .saturating_add(worker.global_pending_token_load()),
-            ),
+            num_pending_tokens: saturating_i64(merge_pending_load(
+                worker.pending_token_load(),
+                worker.global_pending_token_load(),
+            )),
         })
         .collect()
 }
