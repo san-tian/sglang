@@ -234,6 +234,10 @@ pub struct Worker {
     /// of the candidate set before policy selection. Carried from
     /// `WorkerSpec`; see [`crate::discovery::WorkerSpec::min_priority`].
     min_priority: Option<i64>,
+    /// Minimum total context this worker accepts. Requests whose prompt plus
+    /// requested output budget is below this value are removed before policy
+    /// scoring. `None` leaves the lower side unbounded.
+    min_context_tokens: Option<usize>,
     /// Maximum total context this worker can safely serve. Requests whose
     /// prompt plus output budget exceeds this value are removed before
     /// policy scoring. `None` leaves validation to the engine.
@@ -321,6 +325,7 @@ impl Worker {
             bootstrap_host,
             bootstrap_port: spec.bootstrap_port,
             min_priority: spec.min_priority,
+            min_context_tokens: spec.min_context_tokens,
             max_context_tokens: spec.max_context_tokens,
             backend: spec.backend,
             tier: spec.tier,
@@ -361,6 +366,10 @@ impl Worker {
 
     pub fn max_context_tokens(&self) -> Option<usize> {
         self.max_context_tokens
+    }
+
+    pub fn min_context_tokens(&self) -> Option<usize> {
+        self.min_context_tokens
     }
 
     pub fn backend(&self) -> WorkerBackend {
@@ -628,6 +637,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -656,6 +666,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -710,6 +721,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -748,6 +760,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -786,6 +799,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -825,6 +839,7 @@ mod tests {
                 model_ids: vec![],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: Default::default(),
@@ -846,6 +861,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -870,6 +886,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: Some(8997),
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -890,6 +907,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -910,6 +928,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: Some(8997),
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -930,6 +949,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: Some(8997),
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -954,6 +974,7 @@ mod tests {
             model_ids: vec![],
             bootstrap_port: Some(8997),
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),

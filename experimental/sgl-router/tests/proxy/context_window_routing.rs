@@ -80,6 +80,7 @@ fn worker_spec_for_model(
         model_ids: vec![ModelId(model.into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens,
         bearer_token: None,
         backend: Default::default(),
@@ -88,6 +89,17 @@ fn worker_spec_for_model(
         prefill_capacity_milli: 1000,
         prefill_members: Vec::new(),
     }
+}
+
+fn ranged_worker_spec(
+    id: &str,
+    url: &str,
+    min_context_tokens: Option<usize>,
+    max_context_tokens: Option<usize>,
+) -> WorkerSpec {
+    let mut spec = worker_spec(id, url, max_context_tokens);
+    spec.min_context_tokens = min_context_tokens;
+    spec
 }
 
 fn build_ctx(specs: Vec<WorkerSpec>) -> Arc<AppContext> {
@@ -149,6 +161,36 @@ async fn over_limit_completion_only_hits_unlimited_worker() {
         .metrics
         .render()
         .contains(r#"sgl_router_context_filtered_total{reason="worker_excluded_over_limit"} 4"#));
+}
+
+#[tokio::test]
+async fn below_minimum_completion_only_hits_unbounded_worker() {
+    let long_only = MockWorker::start(vec![]).await;
+    let fallback = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![
+        ranged_worker_spec("long-only", &long_only.url, Some(500_000), None),
+        ranged_worker_spec("fallback", &fallback.url, None, None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "prompt":"hello",
+                "max_tokens":8,
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!was_hit(&long_only));
+    assert!(was_hit(&fallback));
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="worker_excluded_below_minimum"} 1"#
+    ));
 }
 
 #[tokio::test]

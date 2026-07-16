@@ -199,11 +199,13 @@ pub struct Cli {
     /// (or absent, treated as `0`) priority requests never route to it.
     /// Use this to keep heterogeneous/low-context workers (e.g. RTX-6000)
     /// serving only short high-priority production traffic.
-    /// `@max_context_tokens=N` declares the worker's safe prompt-plus-output
-    /// context ceiling; requests that cannot be proven to fit are excluded
-    /// from that worker before policy scoring. Suffixes may be combined. A
-    /// malformed suffix fails startup. Omit a capability when it does not
-    /// apply to that worker.
+    /// `@min_context_tokens=N` and `@max_context_tokens=N` declare an inclusive
+    /// prompt-plus-output context range. Requests that cannot be proven to fit
+    /// are excluded from bounded workers before policy scoring. For example,
+    /// pair `@max_context_tokens=65535` with `@min_context_tokens=65536` to
+    /// split short and long requests across two worker pools. Suffixes may be
+    /// combined. A malformed or empty range fails startup. Omit both bounds to
+    /// preserve legacy eligibility for every request length.
     #[arg(long, num_args = 1..)]
     pub worker_urls: Vec<String>,
 

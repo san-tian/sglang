@@ -181,6 +181,11 @@ pub struct WorkerSpec {
     /// mode/bootstrap) nor dropped on reconcile re-introspection.
     #[serde(default)]
     pub min_priority: Option<i64>,
+    /// Minimum total context (prompt plus requested output tokens) this
+    /// worker accepts. `None` leaves the lower side unbounded. Static URL
+    /// discovery seeds this from `url@min_context_tokens=N`.
+    #[serde(default)]
+    pub min_context_tokens: Option<usize>,
     /// Maximum total context (prompt plus requested output tokens) this
     /// worker can safely serve. `None` leaves context validation to the
     /// engine. Static URL discovery seeds this from
@@ -262,6 +267,7 @@ mod tests {
             model_ids: vec![ModelId("qwen".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,
@@ -284,6 +290,7 @@ mod tests {
             model_ids: vec![ModelId("qwen".into())],
             bootstrap_port: Some(8997),
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,
@@ -307,6 +314,7 @@ mod tests {
             model_ids: vec![ModelId("glm".into())],
             bootstrap_port: None,
             min_priority: Some(100),
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,
@@ -351,6 +359,19 @@ mod tests {
     }
 
     #[test]
+    fn worker_spec_with_min_context_tokens_round_trip() {
+        let mut w: WorkerSpec = serde_json::from_str(
+            r#"{"id":"nvidia","url":"http://10.0.0.9:30000","mode":"plain","model_ids":["glm"]}"#,
+        )
+        .unwrap();
+        w.min_context_tokens = Some(65_536);
+        let s = serde_json::to_string(&w).unwrap();
+        assert!(s.contains("\"min_context_tokens\":65536"));
+        let d: WorkerSpec = serde_json::from_str(&s).unwrap();
+        assert_eq!(w, d);
+    }
+
+    #[test]
     fn worker_spec_deserializes_with_missing_backend() {
         let json = r#"{"id":"w","url":"http://x","mode":"plain","model_ids":["m"]}"#;
         let w: WorkerSpec = serde_json::from_str(json).unwrap();
@@ -373,6 +394,7 @@ mod tests {
             model_ids: vec![ModelId("glm".into())],
             bootstrap_port: None,
             min_priority: Some(100),
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Vllm,
@@ -423,6 +445,7 @@ mod tests {
             model_ids: vec![ModelId("m1".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: WorkerBackend::Sglang,

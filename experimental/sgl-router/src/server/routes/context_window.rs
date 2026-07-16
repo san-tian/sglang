@@ -78,11 +78,23 @@ pub fn enforce_context_eligibility(
 
     let reason = filtered.reason.expect("excluded workers carry a reason");
     let outcome = match (filtered.excluded_all, reason) {
+        (false, ContextFilterReason::BelowMinimum) => {
+            ContextFilterOutcome::WorkerExcludedBelowMinimum
+        }
         (false, ContextFilterReason::OverLimit) => ContextFilterOutcome::WorkerExcludedOverLimit,
+        (false, ContextFilterReason::OutsideRange) => {
+            ContextFilterOutcome::WorkerExcludedOutsideRange
+        }
         (false, ContextFilterReason::UnknownLength) => {
             ContextFilterOutcome::WorkerExcludedUnknownLength
         }
+        (true, ContextFilterReason::BelowMinimum) => {
+            ContextFilterOutcome::EmptySetRejectedBelowMinimum
+        }
         (true, ContextFilterReason::OverLimit) => ContextFilterOutcome::EmptySetRejectedOverLimit,
+        (true, ContextFilterReason::OutsideRange) => {
+            ContextFilterOutcome::EmptySetRejectedOutsideRange
+        }
         (true, ContextFilterReason::UnknownLength) => {
             ContextFilterOutcome::EmptySetRejectedUnknownLength
         }

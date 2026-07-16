@@ -190,18 +190,26 @@ impl PriorityFilterOutcome {
 /// Outcome of per-worker context-window eligibility filtering.
 #[derive(Debug, Clone, Copy)]
 pub enum ContextFilterOutcome {
+    WorkerExcludedBelowMinimum,
     WorkerExcludedOverLimit,
+    WorkerExcludedOutsideRange,
     WorkerExcludedUnknownLength,
+    EmptySetRejectedBelowMinimum,
     EmptySetRejectedOverLimit,
+    EmptySetRejectedOutsideRange,
     EmptySetRejectedUnknownLength,
 }
 
 impl ContextFilterOutcome {
     fn as_str(self) -> &'static str {
         match self {
+            Self::WorkerExcludedBelowMinimum => "worker_excluded_below_minimum",
             Self::WorkerExcludedOverLimit => "worker_excluded_over_limit",
+            Self::WorkerExcludedOutsideRange => "worker_excluded_outside_range",
             Self::WorkerExcludedUnknownLength => "worker_excluded_unknown_length",
+            Self::EmptySetRejectedBelowMinimum => "empty_set_rejected_below_minimum",
             Self::EmptySetRejectedOverLimit => "empty_set_rejected_over_limit",
+            Self::EmptySetRejectedOutsideRange => "empty_set_rejected_outside_range",
             Self::EmptySetRejectedUnknownLength => "empty_set_rejected_unknown_length",
         }
     }
@@ -1254,7 +1262,7 @@ impl MetricsRegistry {
 
         // context_filtered_total
         out.push_str(
-            "# HELP sgl_router_context_filtered_total Requests affected by per-worker context-window eligibility filtering. Limited workers are excluded when the prompt-plus-output budget exceeds their ceiling or cannot be computed reliably; empty_set variants indicate a 503 rejection.\n",
+            "# HELP sgl_router_context_filtered_total Requests affected by per-worker context-range eligibility filtering. Bounded workers are excluded when the prompt-plus-output budget is outside their range or cannot be computed reliably; empty_set variants indicate a 503 rejection.\n",
         );
         out.push_str("# TYPE sgl_router_context_filtered_total counter\n");
         let guard = self.context_filtered_total.lock();
@@ -1565,15 +1573,23 @@ mod tests {
     #[test]
     fn context_filtered_counts_distinct_reasons() {
         let reg = MetricsRegistry::new();
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedBelowMinimum);
         reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedOutsideRange);
         reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedUnknownLength);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedBelowMinimum);
         reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedOutsideRange);
         reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedUnknownLength);
         let out = reg.render();
         for reason in [
+            "worker_excluded_below_minimum",
             "worker_excluded_over_limit",
+            "worker_excluded_outside_range",
             "worker_excluded_unknown_length",
+            "empty_set_rejected_below_minimum",
             "empty_set_rejected_over_limit",
+            "empty_set_rejected_outside_range",
             "empty_set_rejected_unknown_length",
         ] {
             assert!(

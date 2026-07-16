@@ -133,6 +133,7 @@ fn worker_spec(id: &str, url: &str, min_priority: Option<i64>) -> WorkerSpec {
         model_ids: vec![ModelId(MODEL.into())],
         bootstrap_port: None,
         min_priority,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),

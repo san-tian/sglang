@@ -269,8 +269,12 @@ impl PdPoolResolver {
 /// Why context-window filtering removed one or more workers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextFilterReason {
+    /// The request's known prompt-plus-output budget is below a worker limit.
+    BelowMinimum,
     /// The request's known prompt-plus-output budget exceeds a worker limit.
     OverLimit,
+    /// Different workers were excluded on opposite sides of their ranges.
+    OutsideRange,
     /// The request shape could not be tokenized exactly enough to prove that
     /// it fits. Limited workers are excluded conservatively.
     UnknownLength,
@@ -287,37 +291,65 @@ pub struct ContextEligibleCandidates {
 
 /// Whether at least one candidate declares a router-enforced context limit.
 pub fn has_context_limited_worker(workers: &[Arc<Worker>]) -> bool {
-    workers.iter().any(|w| w.max_context_tokens().is_some())
+    workers
+        .iter()
+        .any(|w| w.min_context_tokens().is_some() || w.max_context_tokens().is_some())
 }
 
 /// Remove workers that cannot safely serve the request's total context.
 ///
-/// Workers without `max_context_tokens` remain eligible and defer validation
-/// to their engine. A limited worker is eligible only when the router has a
-/// reliable prompt-plus-output token count and that count is within the
-/// declared limit. Unknown request length never spills onto a limited worker.
+/// Workers without either context bound remain eligible and defer validation
+/// to their engine. A bounded worker is eligible only when the router has a
+/// reliable prompt-plus-output token count within its inclusive range.
+/// Unknown request length never spills onto a bounded worker.
 pub fn filter_context_eligible(
     workers: &[Arc<Worker>],
     required_context_tokens: Option<usize>,
 ) -> ContextEligibleCandidates {
-    let reason = required_context_tokens
-        .map(|_| ContextFilterReason::OverLimit)
-        .unwrap_or(ContextFilterReason::UnknownLength);
-    let eligible: Vec<Arc<Worker>> = workers
-        .iter()
-        .filter(|worker| match worker.max_context_tokens() {
+    let mut excluded_below = false;
+    let mut excluded_above = false;
+    let mut excluded_unknown = false;
+    let mut eligible = Vec::with_capacity(workers.len());
+    for worker in workers {
+        let min = worker.min_context_tokens();
+        let max = worker.max_context_tokens();
+        let include = match required_context_tokens {
+            None if min.is_some() || max.is_some() => {
+                excluded_unknown = true;
+                false
+            }
             None => true,
-            Some(limit) => required_context_tokens.is_some_and(|required| required <= limit),
-        })
-        .cloned()
-        .collect();
+            Some(required) => {
+                let below = min.is_some_and(|limit| required < limit);
+                let above = max.is_some_and(|limit| required > limit);
+                excluded_below |= below;
+                excluded_above |= above;
+                !below && !above
+            }
+        };
+        if include {
+            eligible.push(Arc::clone(worker));
+        }
+    }
     let excluded = eligible.len() != workers.len();
+    let reason = if !excluded {
+        None
+    } else if excluded_unknown {
+        Some(ContextFilterReason::UnknownLength)
+    } else {
+        match (excluded_below, excluded_above) {
+            (true, false) => Some(ContextFilterReason::BelowMinimum),
+            (false, true) => Some(ContextFilterReason::OverLimit),
+            (true, true) => Some(ContextFilterReason::OutsideRange),
+            (false, false) => None,
+        }
+    };
 
     ContextEligibleCandidates {
         excluded_all: excluded && eligible.is_empty(),
         excluded_any: excluded && !eligible.is_empty(),
         workers: eligible,
-        reason: excluded.then_some(reason),
+        reason,
     }
 }
 
@@ -580,6 +612,7 @@ mod tests {
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -608,6 +641,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -626,6 +660,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -644,6 +679,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -789,6 +825,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens,
             bearer_token: None,
             backend: Default::default(),
@@ -843,6 +880,67 @@ mod tests {
             assert!(out.excluded_all);
             assert!(!out.excluded_any);
         }
+    }
+
+    fn range_worker(
+        id: &str,
+        min_context_tokens: Option<usize>,
+        max_context_tokens: Option<usize>,
+    ) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode: WorkerMode::Plain,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            min_context_tokens,
+            max_context_tokens,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
+        }))
+    }
+
+    #[test]
+    fn context_filter_routes_exact_64k_boundary_between_ranges() {
+        let amd = range_worker("amd", None, Some(65_535));
+        let nvidia = range_worker("nvidia", Some(65_536), None);
+        let workers = [Arc::clone(&amd), Arc::clone(&nvidia)];
+
+        let short = filter_context_eligible(&workers, Some(65_535));
+        assert_eq!(
+            short
+                .workers
+                .iter()
+                .map(|w| w.id.0.as_str())
+                .collect::<Vec<_>>(),
+            ["amd"]
+        );
+        assert_eq!(short.reason, Some(ContextFilterReason::BelowMinimum));
+
+        let long = filter_context_eligible(&workers, Some(65_536));
+        assert_eq!(
+            long.workers
+                .iter()
+                .map(|w| w.id.0.as_str())
+                .collect::<Vec<_>>(),
+            ["nvidia"]
+        );
+        assert_eq!(long.reason, Some(ContextFilterReason::OverLimit));
+    }
+
+    #[test]
+    fn context_filter_keeps_unbounded_fallback_below_lower_bound() {
+        let nvidia = range_worker("nvidia", Some(65_536), None);
+        let fallback = range_worker("fallback", None, None);
+        let out = filter_context_eligible(&[nvidia, fallback], Some(1));
+        assert_eq!(out.workers.len(), 1);
+        assert_eq!(out.workers[0].id.0, "fallback");
+        assert_eq!(out.reason, Some(ContextFilterReason::BelowMinimum));
     }
 
     /// Model with only Plain workers → Plain partition.
@@ -1026,6 +1124,7 @@ mod tests {
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
