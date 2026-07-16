@@ -212,6 +212,7 @@ fn parse_total_request_pressure(body: &str) -> Option<i64> {
 
 fn parse_worker_load(body: &str) -> Option<ParsedWorkerLoad> {
     let entries: Vec<GetLoadEntry> = serde_json::from_str(body).ok()?;
+    let prefill_work = parse_prefill_work_entries(&entries);
     let request_pressure = entries.iter().fold(0i64, |total, entry| {
         total.saturating_add(
             entry
@@ -246,7 +247,7 @@ fn parse_worker_load(body: &str) -> Option<ParsedWorkerLoad> {
         request_pressure,
         prefill,
         prefill_members: Vec::new(),
-        prefill_work: None,
+        prefill_work,
         prefill_member_work: Vec::new(),
     })
 }
@@ -275,13 +276,7 @@ fn parse_v1_worker_load(
         crate::discovery::WorkerMode::Decode => None,
     };
     let prefill = role.and_then(|role| snapshot_from_entries(&response.loads, role));
-    let prefill_work = merge_prefill_work_entries(
-        response
-            .loads
-            .iter()
-            .filter_map(|entry| entry.prefill_work.as_ref())
-            .filter_map(parse_prefill_work),
-    );
+    let prefill_work = role.and_then(|_| parse_prefill_work_entries(&response.loads));
     Some(ParsedWorkerLoad {
         request_pressure,
         prefill,
@@ -313,6 +308,17 @@ fn merge_prefill_work_entries(
         merged.overflow_summary.extend(right.overflow_summary);
     }
     Some(merged)
+}
+
+fn parse_prefill_work_entries(entries: &[GetLoadEntry]) -> Option<PrefillWorkSnapshot> {
+    if entries.is_empty() {
+        return None;
+    }
+    let snapshots = entries
+        .iter()
+        .map(|entry| parse_prefill_work(entry.prefill_work.as_ref()?))
+        .collect::<Option<Vec<_>>>()?;
+    merge_prefill_work_entries(snapshots)
 }
 
 fn parse_proxy_v1_load(
@@ -531,6 +537,25 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
     let legacy_load_url = format!("{base}/get_load");
     let health_url = format!("{base}/health");
     let load_probe = async {
+        if worker.prefill_members().is_empty() {
+            let Ok(legacy) = worker_get(client, worker, &legacy_load_url).send().await else {
+                return (None, false);
+            };
+            if matches!(
+                legacy.status(),
+                reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+            ) {
+                return (None, true);
+            }
+            if !legacy.status().is_success() {
+                return (None, false);
+            }
+            let parsed = match legacy.text().await {
+                Ok(body) => parse_worker_load(&body),
+                Err(_) => None,
+            };
+            return (parsed, false);
+        }
         let v1 = worker_get(client, worker, &v1_loads_url).send().await.ok();
         if let Some(resp) = v1 {
             if resp.status().is_success() {
@@ -917,6 +942,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_request_level_prefill_work_from_legacy_array() {
+        let parsed = parse_worker_load(
+            r#"[{
+                "num_reqs":1,
+                "num_running_reqs":0,
+                "num_waiting_reqs":1,
+                "num_waiting_uncached_tokens":256,
+                "load_role":"integrated",
+                "prefill_work":{
+                    "schema_version":1,
+                    "snapshot_id":8,
+                    "generated_at_ms":1000,
+                    "worker_boot_id":"boot-a",
+                    "detail_complete":true,
+                    "truncated":false,
+                    "waiting_prefill":[{
+                        "request_id":"legacy-request",
+                        "priority":0,
+                        "total_uncached_tokens":256
+                    }]
+                }
+            }]"#,
+        )
+        .expect("legacy load parses");
+
+        let work = parsed.prefill_work.expect("request-level work");
+        assert_eq!(work.snapshot_id, 8);
+        assert_eq!(work.waiting_prefill[0].request_id, "legacy-request");
+    }
+
+    #[test]
     fn parses_proxy_member_snapshots_without_summing_members() {
         let worker = test_worker(
             "proxy",
@@ -1220,15 +1276,16 @@ mod tests {
         let app = Router::new()
             .route("/health", get(|| async { StatusCode::OK }))
             .route(
-                "/v1/loads",
+                "/get_load",
                 get(move || {
                     let fail = route_fail.load(Ordering::Relaxed);
                     async move {
                         if fail {
                             StatusCode::INTERNAL_SERVER_ERROR.into_response()
                         } else {
-                            Json(json!({
-                                "loads": [{
+                            Json(json!([{
+                                "num_reqs": 0,
+                                "load_role": "integrated",
                                     "num_running_reqs": 0,
                                     "num_waiting_reqs": 1,
                                     "num_waiting_uncached_tokens": 256,
@@ -1245,16 +1302,11 @@ mod tests {
                                             "total_uncached_tokens": 256
                                         }]
                                     }
-                                }]
-                            }))
+                            }]))
                             .into_response()
                         }
                     }
                 }),
-            )
-            .route(
-                "/get_load",
-                get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
             );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 

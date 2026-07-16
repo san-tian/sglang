@@ -111,7 +111,9 @@ class TestLoadsResponse(CustomTestCase):
         ):
             response = asyncio.run(http_server.get_load())
 
-        self.assertEqual(manager.requested_include, ["core", "prefill_queue"])
+        self.assertEqual(
+            manager.requested_include, ["core", "prefill_queue", "prefill_work"]
+        )
         self.assertEqual(response[0]["num_reqs"], 5)
         self.assertEqual(response[0]["num_running_reqs"], 2)
         self.assertEqual(response[0]["num_waiting_uncached_tokens"], 400)
