@@ -36,7 +36,8 @@ use crate::server::routes::alias_fallback::{
 };
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
 use crate::server::routes::context_window::{
-    enforce_context_eligibility, required_context_tokens_with_explicit_output,
+    enforce_context_eligibility, raw_context_tokens_reliable,
+    required_context_tokens_with_explicit_output,
 };
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
@@ -627,10 +628,13 @@ async fn responses_inner(
     let request_tokens: Option<RequestTokens> = responses_routing_value(&body)
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
-    let reliable_prompt_tokens = request_tokens
-        .as_ref()
-        .filter(|tokens| tokens.engine_equivalent)
-        .map(|tokens| tokens.ids.len());
+    let raw_context_safe = ctx.config.allow_raw_context_tokens
+        && serde_json::from_slice::<Value>(&body)
+            .ok()
+            .is_some_and(|value| raw_context_tokens_reliable(&value));
+    let reliable_prompt_tokens = request_tokens.as_ref().and_then(|tokens| {
+        (tokens.engine_equivalent || raw_context_safe).then_some(tokens.ids.len())
+    });
     let required_context_tokens = required_context_tokens_with_explicit_output(
         reliable_prompt_tokens,
         &[probe.max_output_tokens.as_ref()],

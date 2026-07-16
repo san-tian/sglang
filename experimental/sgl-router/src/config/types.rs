@@ -54,6 +54,9 @@ pub struct Config {
     /// upstream. The upstream credential is injected at the gateway and
     /// always replaces the client credential before proxying.
     pub external_model: Option<ExternalModelConfig>,
+    /// Opt in to raw prompt token counts for context-range routing when an
+    /// engine-equivalent chat encoder is unavailable. Disabled by default.
+    pub allow_raw_context_tokens: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]

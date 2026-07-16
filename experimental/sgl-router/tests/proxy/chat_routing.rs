@@ -57,6 +57,7 @@ fn config_for(_worker_url: &str) -> Config {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 

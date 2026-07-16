@@ -57,6 +57,11 @@ pub struct Cli {
     /// as the repo id (download honors `HF_TOKEN` / `HF_HOME`).
     #[arg(long)]
     pub tokenizer_path: Option<String>,
+    /// Use raw prompt tokenization for context-range routing when no
+    /// engine-equivalent chat template is available. This is approximate and
+    /// intended for explicitly opted-in debug deployments.
+    #[arg(long, env = "ALLOW_RAW_CONTEXT_TOKENS")]
+    pub allow_raw_context_tokens: bool,
     /// Routing policy.
     #[arg(long, value_enum, default_value = "round_robin")]
     pub policy: PolicyKind,
@@ -853,6 +858,7 @@ impl Cli {
             cache_state_timeout_ms: self.cache_state_timeout_ms,
             alias_fallback,
             external_model,
+            allow_raw_context_tokens: self.allow_raw_context_tokens,
         };
         config.validate()?;
         Ok(config)
@@ -1029,6 +1035,18 @@ mod tests {
         assert_eq!(c.model.id, "qwen3-0.6b");
         assert_eq!(c.proxy.request_timeout_secs, 300);
         assert_eq!(c.active_load.stale_request_timeout_secs, 600);
+        assert!(!c.allow_raw_context_tokens);
+    }
+
+    #[test]
+    fn opt_in_raw_context_tokens_flag_is_forwarded() {
+        let c = into_config_owned(with_model(&[
+            "--allow-raw-context-tokens",
+            "--worker-urls",
+            "http://10.0.0.1:30000",
+        ]))
+        .unwrap();
+        assert!(c.allow_raw_context_tokens);
     }
 
     #[test]

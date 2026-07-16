@@ -62,6 +62,7 @@ fn alias_config(primary_url: &str, fallback_url: &str) -> Config {
             fallback_bearer_token: None,
         }),
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 

@@ -156,6 +156,7 @@ async fn static_urls_pd_role_resolved_end_to_end() {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     };
 
     let registry = Arc::new(WorkerRegistry::default());

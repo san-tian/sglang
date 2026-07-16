@@ -43,6 +43,50 @@ pub fn required_context_tokens_with_explicit_output(
     required_context_tokens_with_default(prompt_tokens, output_fields, None)
 }
 
+/// Whether raw text tokenization is conservative enough for an explicitly
+/// opted-in context-range decision. This rejects request features whose
+/// engine-side prompt construction cannot be represented by raw text.
+pub fn raw_context_tokens_reliable(value: &Value) -> bool {
+    let nonempty = |key: &str| {
+        value.get(key).is_some_and(|v| match v {
+            Value::Array(items) => !items.is_empty(),
+            Value::Null => false,
+            _ => true,
+        })
+    };
+    if nonempty("tools")
+        || nonempty("functions")
+        || value.get("input_ids").is_some_and(|v| !v.is_null())
+        || value.get("chat_template").is_some_and(|v| !v.is_null())
+        || value
+            .get("chat_template_kwargs")
+            .is_some_and(|v| !v.is_null())
+        || value.get("reasoning").is_some_and(|v| !v.is_null())
+        || value.get("reasoning_effort").is_some_and(|v| !v.is_null())
+        || value.get("task").is_some_and(|v| !v.is_null())
+        || value.get("continue_final_message").and_then(Value::as_bool) == Some(true)
+    {
+        return false;
+    }
+    if value
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages
+                .iter()
+                .any(|message| matches!(message.get("content"), Some(Value::Array(_))))
+                || messages
+                    .last()
+                    .and_then(|message| message.get("role"))
+                    .and_then(Value::as_str)
+                    == Some("assistant")
+        })
+    {
+        return false;
+    }
+    true
+}
+
 fn required_context_tokens_with_default(
     prompt_tokens: Option<usize>,
     output_fields: &[Option<&Value>],
@@ -177,6 +221,23 @@ mod tests {
             ),
             Some(491_024),
         );
+    }
+
+    #[test]
+    fn raw_context_reliability_rejects_unsupported_shapes() {
+        assert!(raw_context_tokens_reliable(&json!({
+            "messages": [{"role": "user", "content": "hello"}]
+        })));
+        assert!(!raw_context_tokens_reliable(&json!({
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{"type": "function"}]
+        })));
+        assert!(!raw_context_tokens_reliable(&json!({
+            "messages": [{"role": "user", "content": [{"type": "image_url"}]}]
+        })));
+        assert!(!raw_context_tokens_reliable(&json!({
+            "messages": [{"role": "assistant", "content": "partial"}]
+        })));
     }
 
     #[test]

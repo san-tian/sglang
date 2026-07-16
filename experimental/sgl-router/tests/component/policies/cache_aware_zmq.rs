@@ -103,6 +103,7 @@ async fn zmq_indexer_routes_to_publishing_worker_e2e() {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     };
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
 

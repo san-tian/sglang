@@ -141,6 +141,11 @@ fn env_to_cli_args() -> Vec<OsString> {
     push_env_arg_or_fallback_default(&mut args, "PORT", "ROUTER_PORT", "--port", "8080");
     push_env_arg(&mut args, "ROUTER_MODE", "--mode");
     push_env_arg(&mut args, "MODEL_ID", "--model-id");
+    push_env_flag(
+        &mut args,
+        "ALLOW_RAW_CONTEXT_TOKENS",
+        "--allow-raw-context-tokens",
+    );
     push_env_arg(&mut args, "POLICY", "--policy");
     push_env_arg(&mut args, "REQUEST_TIMEOUT_SECS", "--request-timeout-secs");
     push_env_arg(

@@ -72,6 +72,7 @@ fn base_config(external_url: String) -> Config {
             base_url: external_url,
             bearer_token: PROVIDER_TOKEN.into(),
         }),
+        allow_raw_context_tokens: false,
     }
 }
 

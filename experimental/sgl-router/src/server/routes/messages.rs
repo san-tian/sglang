@@ -29,7 +29,9 @@ use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
-use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
+use crate::server::routes::context_window::{
+    enforce_context_eligibility, raw_context_tokens_reliable, required_context_tokens,
+};
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::reasoning_compat::{normalize_reasoning_request, ReasoningEndpoint};
@@ -737,10 +739,13 @@ async fn messages_inner(
     let request_tokens: Option<RequestTokens> = routing_value
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
-    let reliable_prompt_tokens = request_tokens
-        .as_ref()
-        .filter(|tokens| tokens.engine_equivalent)
-        .map(|tokens| tokens.ids.len());
+    let raw_context_safe = ctx.config.allow_raw_context_tokens
+        && serde_json::from_slice::<Value>(&body)
+            .ok()
+            .is_some_and(|value| raw_context_tokens_reliable(&value));
+    let reliable_prompt_tokens = request_tokens.as_ref().and_then(|tokens| {
+        (tokens.engine_equivalent || raw_context_safe).then_some(tokens.ids.len())
+    });
     let required_context_tokens = (forward_path == "/v1/messages")
         .then(|| required_context_tokens(reliable_prompt_tokens, &[probe.max_tokens.as_ref()]))
         .flatten();
@@ -1220,6 +1225,7 @@ mod tests {
             cache_state_timeout_ms: 20,
             alias_fallback: None,
             external_model: None,
+            allow_raw_context_tokens: false,
         };
         let registry = TokenizerRegistry::load_from_config(&cfg).unwrap();
         registry.attach_chat_template_for_test(

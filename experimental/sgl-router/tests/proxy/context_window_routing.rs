@@ -60,6 +60,7 @@ fn config_for_model(model: &str) -> Config {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 
@@ -104,6 +105,12 @@ fn ranged_worker_spec(
 
 fn build_ctx(specs: Vec<WorkerSpec>) -> Arc<AppContext> {
     build_ctx_with_config(config(), specs)
+}
+
+fn build_raw_context_ctx(specs: Vec<WorkerSpec>) -> Arc<AppContext> {
+    let mut cfg = config();
+    cfg.allow_raw_context_tokens = true;
+    build_ctx_with_config(cfg, specs)
 }
 
 fn build_ctx_with_config(cfg: Config, specs: Vec<WorkerSpec>) -> Arc<AppContext> {
@@ -188,6 +195,66 @@ async fn below_minimum_completion_only_hits_unbounded_worker() {
     assert_eq!(response.status(), StatusCode::OK);
     assert!(!was_hit(&long_only));
     assert!(was_hit(&fallback));
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="worker_excluded_below_minimum"} 1"#
+    ));
+}
+
+#[tokio::test]
+async fn default_chat_without_chat_encoder_fails_closed_for_bounded_pool() {
+    let short = MockWorker::start(vec![]).await;
+    let long = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![
+        ranged_worker_spec("short", &short.url, None, Some(65_535)),
+        ranged_worker_spec("long", &long.url, Some(65_536), None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_tokens":8,
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!was_hit(&short));
+    assert!(!was_hit(&long));
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="empty_set_rejected_unknown_length"} 1"#
+    ));
+}
+
+#[tokio::test]
+async fn raw_context_opt_in_chat_routes_short_request_to_short_worker() {
+    let short = MockWorker::start(vec![]).await;
+    let long = MockWorker::start(vec![]).await;
+    let ctx = build_raw_context_ctx(vec![
+        ranged_worker_spec("short", &short.url, None, Some(65_535)),
+        ranged_worker_spec("long", &long.url, Some(65_536), None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_tokens":8,
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(was_hit(&short));
+    assert!(!was_hit(&long));
     assert!(ctx.metrics.render().contains(
         r#"sgl_router_context_filtered_total{reason="worker_excluded_below_minimum"} 1"#
     ));
