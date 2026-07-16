@@ -46,19 +46,30 @@ use crate::policies::kv_events::tree::KvWorkerId;
 use crate::policies::kv_events::{
     compute_block_hashes, compute_block_hashes_bigram, BlockSizeOracle, HashTree,
 };
+use crate::policies::prefill_score::PrefillScoreProfiles;
 use crate::policies::{effective_priority, request_tokens_for, Policy, SelectionContext};
 use crate::server::metrics::{
     CacheSelectionOutcome, MetricsRegistry, RemoteCacheStateFeedOutcome,
     RemoteCacheStateQueryOutcome,
 };
 use crate::tokenizer::TokenizerRegistry;
-use crate::workers::worker::{merge_pending_load, PrefillLoadRole};
+use crate::workers::worker::{merge_pending_load, PrefillLoadRole, PrefillWorkSnapshot};
 use crate::workers::Worker;
 use serde_json::json;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
+
+fn snapshot_age_ms(snapshot: &PrefillWorkSnapshot) -> Option<u64> {
+    (snapshot.generated_at_ms != 0).then(|| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        now.saturating_sub(snapshot.generated_at_ms)
+    })
+}
 
 #[derive(Debug, Clone)]
 struct PredictedTtftEstimate {
@@ -69,6 +80,15 @@ struct PredictedTtftEstimate {
     work_ahead_tokens: usize,
     total_work_tokens: usize,
     normalized_score: usize,
+    raw_queue_micros: usize,
+    effective_queue_micros: usize,
+    raw_prefill_micros: usize,
+    effective_prefill_micros: usize,
+    prefill_speed_coefficient_milli: usize,
+    curve_source: &'static str,
+    snapshot_id: Option<u64>,
+    snapshot_age_ms: Option<u64>,
+    fallback_reason: Option<&'static str>,
     load_source: &'static str,
     prefill_capacity_milli: usize,
     selected_prefill_member: Option<String>,
@@ -104,6 +124,8 @@ pub struct CacheAwareZmqPolicy {
     /// from collapsing onto one stable worker while preserving cache affinity
     /// whenever a worker has a strictly better overlap or score.
     fair_tie_cursor: AtomicUsize,
+    prefill_score_profiles: Arc<PrefillScoreProfiles>,
+    prefill_score_stale_grace_ms: u64,
 }
 
 impl std::fmt::Debug for CacheAwareZmqPolicy {
@@ -130,11 +152,28 @@ impl CacheAwareZmqPolicy {
             metrics: OnceLock::new(),
             remote_cache_state: None,
             fair_tie_cursor: AtomicUsize::new(0),
+            prefill_score_profiles: Arc::new(PrefillScoreProfiles::from_env()),
+            prefill_score_stale_grace_ms: std::env::var("PREFILL_SCORE_STALE_GRACE_MS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(10_000),
         }
     }
 
     pub fn with_remote_cache_state(mut self, client: Arc<RemoteCacheStateClient>) -> Self {
         self.remote_cache_state = Some(client);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_prefill_score_profiles(mut self, profiles: PrefillScoreProfiles) -> Self {
+        self.prefill_score_profiles = Arc::new(profiles);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_prefill_score_stale_grace_ms(mut self, stale_grace_ms: u64) -> Self {
+        self.prefill_score_stale_grace_ms = stale_grace_ms;
         self
     }
 
@@ -845,28 +884,148 @@ impl CacheAwareZmqPolicy {
         prefill_capacity_milli: usize,
         selected_prefill_member: Option<String>,
     ) -> PredictedTtftEstimate {
-        let candidate_aware_work = snapshot.and_then(|snapshot| {
+        let stale_grace_ms = self.prefill_score_stale_grace_ms;
+        let snapshot_usable = snapshot.filter(|_| {
+            !worker.reported_load_circuit_open()
+                && (!worker.reported_load_stale()
+                    || worker
+                        .reported_prefill_load_age_ms()
+                        .is_some_and(|age| age <= stale_grace_ms))
+        });
+        let enhanced_work = selected_prefill_member
+            .as_deref()
+            .and_then(|member| worker.reported_prefill_member_work(member))
+            .or_else(|| worker.reported_prefill_work())
+            .filter(|candidate| {
+                !worker.reported_load_circuit_open()
+                    && (!worker.reported_load_stale()
+                        || worker
+                            .reported_prefill_load_age_ms()
+                            .is_some_and(|age| age <= stale_grace_ms)
+                        || snapshot_age_ms(candidate).is_some_and(|age| age <= stale_grace_ms))
+            });
+        let is_pd_prefill =
+            selected_prefill_member.is_some() || matches!(worker.mode(), WorkerMode::Prefill);
+        let selector = selected_prefill_member
+            .as_deref()
+            .unwrap_or(worker.url.as_str());
+        let candidate_time = self.prefill_score_profiles.estimate(
+            selector,
+            candidate_uncached_tokens,
+            prefill_capacity_milli,
+            is_pd_prefill,
+        );
+        let candidate_aware_work = snapshot_usable.and_then(|snapshot| {
             snapshot.candidate.as_ref().and_then(|candidate| {
                 candidate.work_ahead_tokens(candidate_priority, candidate_uncached_tokens)
             })
         });
-        let (reported_work_tokens, load_source) = if let Some(work) = candidate_aware_work {
-            (Some(work), "candidate-aware-snapshot")
-        } else if let Some(snapshot) = snapshot {
-            (
-                Some(snapshot.total_waiting_uncached_tokens),
-                "waiting-token-snapshot",
-            )
-        } else {
-            (None, "reservation-only")
-        };
         let reserved_tokens = merge_pending_load(
             worker.pending_token_load(),
             worker.global_pending_token_load(),
         );
-        // Worker snapshots and router reservations describe overlapping work.
-        // Taking the maximum bridges poll lag without counting an admitted
-        // request twice for its full lifetime.
+        let local_reservations = worker.pending_prefill_reservations();
+        let mut raw_queue_micros = 0usize;
+        let mut effective_queue_micros = 0usize;
+        let mut curve_source = "fixed-throughput";
+        let mut load_source = "reservation-only";
+        let mut fallback_reason = None;
+        let mut reported_work_tokens = None;
+        let mut covered_request_ids = HashSet::new();
+
+        if let Some(work) = enhanced_work.as_ref() {
+            if let Some((raw, effective, ids, source)) = self.enhanced_work_time(
+                work,
+                selector,
+                prefill_capacity_milli,
+                candidate_priority,
+                is_pd_prefill,
+            ) {
+                raw_queue_micros = raw;
+                effective_queue_micros = effective;
+                covered_request_ids = ids;
+                curve_source = source;
+                load_source = if selected_prefill_member.is_some() {
+                    "member-request-level-snapshot"
+                } else {
+                    "request-level-snapshot"
+                };
+                reported_work_tokens = work.work_ahead_tokens(candidate_priority);
+            } else {
+                fallback_reason = Some("schema-or-boot-mismatch");
+            }
+        }
+
+        if reported_work_tokens.is_none() {
+            if let Some(work) = candidate_aware_work {
+                reported_work_tokens = Some(work);
+                load_source = "candidate-aware-snapshot";
+            } else if let Some(snapshot) = snapshot_usable {
+                reported_work_tokens = Some(snapshot.total_waiting_uncached_tokens);
+                load_source = "waiting-token-snapshot";
+            }
+            if let Some(tokens) = reported_work_tokens {
+                raw_queue_micros = self
+                    .prefill_score_profiles
+                    .fixed_micros(tokens, prefill_capacity_milli);
+                effective_queue_micros = raw_queue_micros;
+            }
+        }
+
+        let local_raw = local_reservations
+            .iter()
+            .filter(|reservation| !covered_request_ids.contains(&reservation.request_id))
+            .filter(|reservation| {
+                enhanced_work.as_ref().map_or(true, |work| {
+                    work.priority_blocks(reservation.priority, candidate_priority)
+                })
+            })
+            .map(|reservation| {
+                self.prefill_score_profiles.estimate(
+                    selector,
+                    reservation.tokens,
+                    prefill_capacity_milli,
+                    is_pd_prefill,
+                )
+            })
+            .fold((0usize, 0usize), |(raw, effective), estimate| {
+                (
+                    raw.saturating_add(estimate.raw_micros),
+                    effective.saturating_add(estimate.effective_micros),
+                )
+            });
+        raw_queue_micros = raw_queue_micros.saturating_add(local_raw.0);
+        effective_queue_micros = effective_queue_micros.saturating_add(local_raw.1);
+
+        let local_aggregate = self
+            .prefill_score_profiles
+            .fixed_micros(worker.pending_token_load(), prefill_capacity_milli);
+        raw_queue_micros = raw_queue_micros.max(local_aggregate);
+        effective_queue_micros = effective_queue_micros.max(local_aggregate);
+
+        // Shared RouterState is aggregate-only. Convert it with the linear
+        // fallback and take max against the exact local/snapshot union.
+        let shared_raw = self
+            .prefill_score_profiles
+            .fixed_micros(worker.global_pending_token_load(), prefill_capacity_milli);
+        raw_queue_micros = raw_queue_micros.max(shared_raw);
+        effective_queue_micros = effective_queue_micros.max(shared_raw);
+        if worker.reported_load_stale() && !worker.reported_load_circuit_open() {
+            if let Some(age_ms) = worker.reported_prefill_load_age_ms() {
+                if age_ms <= stale_grace_ms && stale_grace_ms > 0 {
+                    let penalty = effective_queue_micros
+                        .saturating_mul(age_ms as usize)
+                        .saturating_div(stale_grace_ms as usize);
+                    effective_queue_micros = effective_queue_micros.saturating_add(penalty);
+                    fallback_reason.get_or_insert("stale-last-good-snapshot");
+                }
+            }
+        }
+        if load_source == "reservation-only"
+            && (reserved_tokens > 0 || !local_reservations.is_empty())
+        {
+            fallback_reason.get_or_insert("snapshot-unavailable");
+        }
         let work_ahead_tokens = reported_work_tokens.unwrap_or(0).max(reserved_tokens);
         let total_work_tokens = candidate_uncached_tokens.saturating_add(work_ahead_tokens);
         let probe_failed =
@@ -874,7 +1033,7 @@ impl CacheAwareZmqPolicy {
         let normalized_score = if probe_failed {
             usize::MAX / 2
         } else {
-            normalize_prefill_work(total_work_tokens, prefill_capacity_milli)
+            effective_queue_micros.saturating_add(candidate_time.effective_micros)
         };
 
         PredictedTtftEstimate {
@@ -885,10 +1044,24 @@ impl CacheAwareZmqPolicy {
             work_ahead_tokens,
             total_work_tokens,
             normalized_score,
+            raw_queue_micros,
+            effective_queue_micros,
+            raw_prefill_micros: candidate_time.raw_micros,
+            effective_prefill_micros: candidate_time.effective_micros,
+            prefill_speed_coefficient_milli: candidate_time.beta_milli,
+            curve_source: if candidate_time.source == "profile-curve" {
+                candidate_time.source
+            } else {
+                curve_source
+            },
+            snapshot_id: enhanced_work.as_ref().map(|work| work.snapshot_id),
+            snapshot_age_ms: enhanced_work.as_ref().and_then(snapshot_age_ms),
+            fallback_reason,
             load_source: if probe_failed {
                 "probe-failed"
             } else if selected_prefill_member.is_some() {
                 match load_source {
+                    "request-level-snapshot" => "member-request-level-snapshot",
                     "candidate-aware-snapshot" => "member-candidate-aware-snapshot",
                     "waiting-token-snapshot" => "member-waiting-token-snapshot",
                     _ => load_source,
@@ -899,6 +1072,72 @@ impl CacheAwareZmqPolicy {
             prefill_capacity_milli: prefill_capacity_milli.max(1),
             selected_prefill_member,
         }
+    }
+
+    fn enhanced_work_time(
+        &self,
+        work: &PrefillWorkSnapshot,
+        selector: &str,
+        capacity: usize,
+        candidate_priority: i64,
+        is_pd_prefill: bool,
+    ) -> Option<(usize, usize, HashSet<String>, &'static str)> {
+        if work.schema_version != 1 || work.worker_boot_id.is_empty() {
+            return None;
+        }
+        let mut raw = 0usize;
+        let mut effective = 0usize;
+        let mut ids = HashSet::new();
+        let mut source = "fixed-throughput";
+        for request in &work.waiting_prefill {
+            if !work.priority_blocks(request.priority, candidate_priority) {
+                continue;
+            }
+            let estimate = self.prefill_score_profiles.estimate(
+                selector,
+                request.total_uncached_tokens,
+                capacity,
+                is_pd_prefill,
+            );
+            raw = raw.saturating_add(estimate.raw_micros);
+            effective = effective.saturating_add(estimate.effective_micros);
+            source = estimate.source;
+            if !request.request_id.is_empty() {
+                ids.insert(request.request_id.clone());
+            }
+        }
+        for request in &work.running_prefill {
+            let processed = request
+                .processed_uncached_tokens
+                .min(request.total_uncached_tokens);
+            let boundary = request
+                .current_chunk_end_tokens
+                .max(processed)
+                .min(request.total_uncached_tokens);
+            let begin =
+                self.prefill_score_profiles
+                    .estimate(selector, processed, capacity, is_pd_prefill);
+            let end =
+                self.prefill_score_profiles
+                    .estimate(selector, boundary, capacity, is_pd_prefill);
+            raw = raw.saturating_add(end.raw_micros.saturating_sub(begin.raw_micros));
+            effective = effective
+                .saturating_add(end.effective_micros.saturating_sub(begin.effective_micros));
+            source = end.source;
+            if !request.request_id.is_empty() {
+                ids.insert(request.request_id.clone());
+            }
+        }
+        for overflow in &work.overflow_summary {
+            if work.priority_blocks(overflow.priority, candidate_priority) {
+                let value = self
+                    .prefill_score_profiles
+                    .fixed_micros(overflow.total_uncached_tokens, capacity);
+                raw = raw.saturating_add(value);
+                effective = effective.saturating_add(value);
+            }
+        }
+        Some((raw, effective, ids, source))
     }
 
     fn compatible_score_mode(&self, workers: &[Arc<Worker>]) -> TtftScoreMode {
@@ -1199,6 +1438,12 @@ impl CacheAwareZmqPolicy {
                 )),
             "predicted_ttft": predicted_estimate.as_ref().map(|estimate| json!({
                 "load_source": estimate.load_source,
+                "snapshot_id": estimate.snapshot_id,
+                "snapshot_age_ms": estimate.snapshot_age_ms.or_else(|| worker.reported_prefill_load_age_ms()),
+                "load_snapshot_stale": worker.reported_load_stale(),
+                "consecutive_load_failures": worker.reported_load_failures(),
+                "load_circuit_open": worker.reported_load_circuit_open(),
+                "fallback_reason": estimate.fallback_reason,
                 "selected_prefill_member": estimate.selected_prefill_member,
                 "reported_work_tokens": estimate.reported_work_tokens,
                 "reserved_tokens": estimate.reserved_tokens,
@@ -1207,6 +1452,12 @@ impl CacheAwareZmqPolicy {
                 "total_work_tokens": estimate.total_work_tokens,
                 "prefill_capacity_milli": estimate.prefill_capacity_milli,
                 "normalized_score": estimate.normalized_score,
+                "raw_queue_micros": estimate.raw_queue_micros,
+                "effective_queue_micros": estimate.effective_queue_micros,
+                "raw_prefill_micros": estimate.raw_prefill_micros,
+                "effective_prefill_micros": estimate.effective_prefill_micros,
+                "prefill_speed_coefficient_milli": estimate.prefill_speed_coefficient_milli,
+                "curve_source": estimate.curve_source,
             })),
             "batch_factor": batch_factor,
             "additive_pressure": worker.effective_ttft_load(
@@ -1232,6 +1483,20 @@ impl CacheAwareZmqPolicy {
                 "candidate_aware": snapshot.candidate.is_some(),
             })),
             "reported_prefill_member_count": worker.reported_prefill_members().len(),
+            "reported_load_stale": worker.reported_load_stale(),
+            "reported_prefill_work": worker.reported_prefill_work().map(|work| json!({
+                "schema_version": work.schema_version,
+                "snapshot_id": work.snapshot_id,
+                "generated_at_ms": work.generated_at_ms,
+                "worker_boot_id": work.worker_boot_id,
+                "priority_scheduling_enabled": work.priority_scheduling_enabled,
+                "schedule_low_priority_values_first": work.schedule_low_priority_values_first,
+                "detail_complete": work.detail_complete,
+                "truncated": work.truncated,
+                "waiting_count": work.waiting_prefill.len(),
+                "running_count": work.running_prefill.len(),
+                "overflow_count": work.overflow_summary.len(),
+            })),
         })
     }
 
@@ -1680,7 +1945,7 @@ mod tests {
     use crate::tokenizer::adapter;
     use crate::workers::worker::{
         CandidatePrefillLoad, MemberPrefillLoadSnapshot, PrefillLoadRole, PrefillLoadSnapshot,
-        PrefillPriorityLoad,
+        PrefillPriorityLoad, PrefillWorkRequestSnapshot,
     };
 
     async fn start_cache_state_service(
@@ -3332,8 +3597,8 @@ mod tests {
             policy.compatible_score_mode(&[Arc::clone(&baseline), Arc::clone(&fast)]),
             TtftScoreMode::PredictedTtft,
         );
-        assert_eq!(policy.ttft_score(&baseline, 25, 0, 100, 4, 0), 700);
-        assert_eq!(policy.ttft_score(&fast, 25, 0, 100, 4, 0), 350);
+        assert_eq!(policy.ttft_score(&baseline, 25, 0, 100, 4, 0), 700_000);
+        assert_eq!(policy.ttft_score(&fast, 25, 0, 100, 4, 0), 350_000);
     }
 
     #[test]
@@ -3343,7 +3608,112 @@ mod tests {
         w.set_reported_prefill_load(Some(prefill_snapshot(1, 1000, None)));
         let _reservation = w.pending_guard_with_tokens(600);
 
-        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 1100);
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 1_100_000);
+    }
+
+    #[test]
+    fn predicted_ttft_deduplicates_request_id_between_snapshot_and_reservation() {
+        let policy = lmetric_policy(TtftScoreMode::PredictedTtft).with_prefill_score_profiles(
+            PrefillScoreProfiles::from_json(
+                r#"{"profiles":{"http://w0:30000":{"curve_ms":[[1000,1000],[2000,2000]]}}}"#,
+            )
+            .unwrap(),
+        );
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_prefill_work(Some(PrefillWorkSnapshot {
+            schema_version: 1,
+            snapshot_id: 7,
+            generated_at_ms: 0,
+            worker_boot_id: "boot-a".into(),
+            priority_scheduling_enabled: true,
+            schedule_low_priority_values_first: false,
+            detail_complete: true,
+            truncated: false,
+            waiting_prefill: vec![PrefillWorkRequestSnapshot {
+                request_id: "r1".into(),
+                priority: 0,
+                total_uncached_tokens: 100,
+                processed_uncached_tokens: 0,
+                current_chunk_end_tokens: 100,
+            }],
+            running_prefill: vec![],
+            overflow_summary: vec![],
+        }));
+        let _same_request = w.pending_guard_with_request("r1", 0, 100);
+        let _new_request = w.pending_guard_with_request("r2", 0, 100);
+
+        let estimate = policy.predicted_ttft_estimate(&w, 0, 10, 4, 0);
+        assert_eq!(estimate.effective_queue_micros, 200_000);
+        assert_eq!(estimate.effective_prefill_micros, 10_000);
+        assert_eq!(estimate.normalized_score, 210_000);
+    }
+
+    #[test]
+    fn predicted_ttft_applies_length_dependent_pd_speed_coefficient() {
+        let profiles = PrefillScoreProfiles::from_json(
+            r#"{
+                "profiles": {
+                    "default": {
+                        "curve_ms": [[100,100],[1000,1000],[2000,3000]],
+                        "pd_beta": [[100,1],[1000,2],[2000,3]]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        let policy =
+            lmetric_policy(TtftScoreMode::PredictedTtft).with_prefill_score_profiles(profiles);
+        let integrated = worker("http://integrated:30000", "tiny");
+        let pd = worker("http://pd:30000", "tiny");
+        pd.set_mode(WorkerMode::Prefill);
+
+        let integrated_1k = policy.predicted_ttft_estimate(&integrated, 0, 1000, 1, 0);
+        let pd_1k = policy.predicted_ttft_estimate(&pd, 0, 1000, 1, 0);
+        let pd_2k = policy.predicted_ttft_estimate(&pd, 0, 2000, 1, 0);
+
+        assert_eq!(integrated_1k.prefill_speed_coefficient_milli, 1000);
+        assert_eq!(integrated_1k.effective_prefill_micros, 1_000_000);
+        assert_eq!(pd_1k.prefill_speed_coefficient_milli, 2000);
+        assert_eq!(pd_1k.effective_prefill_micros, 500_000);
+        assert_eq!(pd_2k.prefill_speed_coefficient_milli, 3000);
+        assert_eq!(pd_2k.effective_prefill_micros, 1_000_000);
+    }
+
+    #[test]
+    fn predicted_ttft_expires_stale_snapshot_and_uses_reservations() {
+        let policy =
+            lmetric_policy(TtftScoreMode::PredictedTtft).with_prefill_score_stale_grace_ms(0);
+        let w = worker("http://w0:30000", "tiny");
+        w.set_reported_prefill_load(Some(prefill_snapshot(1, 1000, None)));
+        w.set_reported_prefill_work(Some(PrefillWorkSnapshot {
+            schema_version: 1,
+            snapshot_id: 9,
+            generated_at_ms: 1,
+            worker_boot_id: "boot-a".into(),
+            priority_scheduling_enabled: false,
+            schedule_low_priority_values_first: false,
+            detail_complete: true,
+            truncated: false,
+            waiting_prefill: vec![PrefillWorkRequestSnapshot {
+                request_id: "snapshot-request".into(),
+                priority: 0,
+                total_uncached_tokens: 1000,
+                processed_uncached_tokens: 0,
+                current_chunk_end_tokens: 1000,
+            }],
+            running_prefill: vec![],
+            overflow_summary: vec![],
+        }));
+        let _reservation = w.pending_guard_with_request("local-request", 0, 200);
+        w.set_reported_load_stale(true);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        let estimate = policy.predicted_ttft_estimate(&w, 0, 100, 1, 0);
+
+        assert_eq!(estimate.load_source, "reservation-only");
+        assert_eq!(estimate.fallback_reason, Some("snapshot-unavailable"));
+        assert_eq!(estimate.raw_queue_micros, 200_000);
+        assert_eq!(estimate.normalized_score, 300_000);
     }
 
     #[test]
@@ -3364,7 +3734,7 @@ mod tests {
         let w = worker_with_router_state_overlay("http://w0:30000", "tiny", overlay);
         let _reservation = w.pending_guard_with_tokens(600);
 
-        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 700);
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 700_000);
     }
 
     #[test]
@@ -3394,8 +3764,8 @@ mod tests {
             }),
         )));
 
-        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 750);
-        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 10), 200);
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 0), 750_000);
+        assert_eq!(policy.ttft_score(&w, 25, 0, 100, 4, 10), 200_000);
     }
 
     #[test]
@@ -3432,7 +3802,7 @@ mod tests {
         assert_eq!(estimate.matched_blocks, 0);
         assert_eq!(estimate.candidate_uncached_tokens, 100);
         assert_eq!(estimate.total_work_tokens, 200);
-        assert_eq!(estimate.normalized_score, 100);
+        assert_eq!(estimate.normalized_score, 100_000);
     }
 
     #[test]
@@ -3468,7 +3838,7 @@ mod tests {
         );
         assert_eq!(estimate.matched_blocks, 20);
         assert_eq!(estimate.candidate_uncached_tokens, 20);
-        assert_eq!(estimate.normalized_score, 20);
+        assert_eq!(estimate.normalized_score, 20_000);
     }
 
     #[test]
@@ -3639,7 +4009,7 @@ mod tests {
             policy.ttft_score(&failed, 25, 25, 100, 4, 0),
             usize::MAX / 2,
         );
-        assert_eq!(policy.ttft_score(&healthy, 25, 0, 100, 4, 0), 100);
+        assert_eq!(policy.ttft_score(&healthy, 25, 0, 100, 4, 0), 100_000);
     }
 
     #[test]
