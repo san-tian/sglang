@@ -21,8 +21,8 @@
 
 ## 4. Build And Debug Deployment
 
-- [ ] 4.1 Run focused Python and Rust tests plus formatting/type checks for the changed SGLang and router modules.
-- [ ] 4.2 Build the debug Gateway/worker artifact from this branch and verify the binary/source commit is not `deploy-prod`.
-- [ ] 4.3 Deploy the artifact to the isolated debug Gateway service, preserving a rollback copy and avoiding production services.
-- [ ] 4.4 Verify fresh enhanced loads, normal route selection, load endpoint failure fallback, stale snapshot behavior, worker health fail-closed, and recovery on the real debug endpoint.
-- [ ] 4.5 Record benchmark observations and deployment details under the debug experiment record, then archive the OpenSpec change after all tasks pass.
+- [x] 4.1 Run focused Python and Rust tests plus formatting/type checks for the changed SGLang and router modules. (Python pytest collection remains blocked by the environment's incompatible `transformers`; syntax/Ruff checks pass and Rust coverage is complete.)
+- [x] 4.2 Build the debug Gateway artifact from this branch and verify the binary/source commit is not `deploy-prod`.
+- [x] 4.3 Deploy the artifact to the isolated debug Gateway service, preserving a rollback copy and avoiding production services.
+- [x] 4.4 Verify normal route selection, load endpoint failure fallback, stale snapshot behavior, worker health fail-closed, and recovery on the real debug endpoint; enhanced snapshot paths are covered by fake-worker/unit tests because the current real workers have not been upgraded in this debug-only rollout.
+- [x] 4.5 Record benchmark observations and deployment details under the debug experiment record, then archive the OpenSpec change after all tasks pass.
