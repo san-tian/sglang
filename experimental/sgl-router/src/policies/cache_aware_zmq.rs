@@ -48,7 +48,8 @@ use crate::policies::kv_events::{
 };
 use crate::policies::{effective_priority, request_tokens_for, Policy, SelectionContext};
 use crate::server::metrics::{
-    MetricsRegistry, RemoteCacheStateFeedOutcome, RemoteCacheStateQueryOutcome,
+    CacheSelectionOutcome, MetricsRegistry, RemoteCacheStateFeedOutcome,
+    RemoteCacheStateQueryOutcome,
 };
 use crate::tokenizer::TokenizerRegistry;
 use crate::workers::worker::{merge_pending_load, PrefillLoadRole};
@@ -454,6 +455,19 @@ impl CacheAwareZmqPolicy {
         } else {
             self.pick_min_ttft_load(workers)
         };
+        self.record_cache_selection_summary(
+            ctx,
+            workers,
+            selected.as_deref(),
+            reason,
+            total_blocks,
+            matched_blocks,
+            matched_urls,
+            candidate_tokens,
+            block_size,
+            candidate_priority,
+            score_mode,
+        );
         self.log_ttft_decision(
             ctx,
             workers,
@@ -472,6 +486,149 @@ impl CacheAwareZmqPolicy {
             score_limit,
         );
         selected
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_cache_selection_summary(
+        &self,
+        ctx: &SelectionContext<'_>,
+        workers: &[Arc<Worker>],
+        selected: Option<&Worker>,
+        reason: &str,
+        total_blocks: usize,
+        available_blocks: usize,
+        matched_urls: &HashSet<&str>,
+        candidate_tokens: usize,
+        block_size: usize,
+        candidate_priority: i64,
+        score_mode: TtftScoreMode,
+    ) {
+        let estimate_for = |worker: &Worker| {
+            if score_mode == TtftScoreMode::PredictedTtft {
+                let estimate = self.predicted_ttft_estimate_for_worker(
+                    worker,
+                    available_blocks,
+                    matched_urls,
+                    candidate_tokens,
+                    block_size,
+                    candidate_priority,
+                );
+                (
+                    estimate.matched_blocks,
+                    estimate.normalized_score,
+                    estimate.selected_prefill_member,
+                )
+            } else {
+                let worker_matched =
+                    matched_blocks_for_worker(worker, available_blocks, matched_urls);
+                (
+                    worker_matched,
+                    self.ttft_score_with_mode(
+                        worker,
+                        total_blocks,
+                        worker_matched,
+                        candidate_tokens,
+                        block_size,
+                        candidate_priority,
+                        score_mode,
+                    ),
+                    None,
+                )
+            }
+        };
+
+        let selected_estimate = selected.map(&estimate_for);
+        let selected_blocks = selected_estimate
+            .as_ref()
+            .map(|estimate| estimate.0)
+            .unwrap_or(0)
+            .min(available_blocks);
+        let selected_score = selected_estimate.as_ref().map(|estimate| estimate.1);
+        let selected_prefill_member = selected_estimate
+            .as_ref()
+            .and_then(|estimate| estimate.2.as_deref())
+            .unwrap_or("-");
+
+        let best_cache_worker_score = if available_blocks > 0 {
+            workers
+                .iter()
+                .map(|worker| estimate_for(worker))
+                .filter(|estimate| estimate.0 == available_blocks)
+                .map(|estimate| estimate.1)
+                .min()
+        } else {
+            None
+        };
+        let predicted_score_improvement = selected_score
+            .zip(best_cache_worker_score)
+            .map(|(selected, cached)| cached.saturating_sub(selected));
+
+        let outcome = self.metrics.get().map_or_else(
+            || {
+                CacheSelectionOutcome::from_blocks(
+                    total_blocks as u64,
+                    available_blocks as u64,
+                    selected_blocks as u64,
+                )
+            },
+            |metrics| {
+                metrics.record_cache_selection(
+                    ctx.model().0.as_str(),
+                    total_blocks as u64,
+                    available_blocks as u64,
+                    selected_blocks as u64,
+                )
+            },
+        );
+
+        let sacrificed_blocks = available_blocks.saturating_sub(selected_blocks);
+        let potential_cache_hit_rate = if total_blocks > 0 {
+            available_blocks as f64 / total_blocks as f64
+        } else {
+            0.0
+        };
+        let selected_cache_hit_rate = if total_blocks > 0 {
+            selected_blocks as f64 / total_blocks as f64
+        } else {
+            0.0
+        };
+        let opportunity_retention_rate = if available_blocks > 0 {
+            selected_blocks as f64 / available_blocks as f64
+        } else {
+            0.0
+        };
+        let log_ctx = ctx.route_decision_log();
+        let request_id = log_ctx.map(|log| log.request_id).unwrap_or("-");
+        let endpoint = log_ctx.map(|log| log.endpoint).unwrap_or("-");
+        let selected_worker = selected.map(|worker| worker.url.as_str()).unwrap_or("-");
+
+        tracing::info!(
+            event = "cache_selection_summary",
+            model = %ctx.model(),
+            endpoint,
+            request_id,
+            reason,
+            outcome = outcome.as_str(),
+            selected_worker,
+            selected_prefill_member,
+            prompt_blocks = total_blocks,
+            available_blocks,
+            selected_blocks,
+            sacrificed_blocks,
+            potential_cache_hit_rate,
+            selected_cache_hit_rate,
+            opportunity_retention_rate,
+            selected_score_available = selected_score.is_some(),
+            selected_predicted_score = selected_score.unwrap_or(0),
+            best_cache_score_available = best_cache_worker_score.is_some(),
+            best_cache_worker_predicted_score = best_cache_worker_score.unwrap_or(0),
+            predicted_score_improvement_available = predicted_score_improvement.is_some(),
+            predicted_score_improvement = predicted_score_improvement.unwrap_or(0),
+            candidate_tokens,
+            block_size,
+            ttft_score_mode = ?score_mode,
+            "cache_selection_summary",
+        );
     }
 
     #[cfg(test)]
@@ -3293,6 +3450,76 @@ mod tests {
         assert_eq!(estimate.matched_blocks, 20);
         assert_eq!(estimate.candidate_uncached_tokens, 20);
         assert_eq!(estimate.normalized_score, 20);
+    }
+
+    #[test]
+    fn predicted_ttft_records_cache_sacrifice_when_cold_worker_wins() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let policy =
+            lmetric_policy(TtftScoreMode::PredictedTtft).with_metrics(Arc::clone(&metrics));
+        let hot = worker("http://hot:30000", "tiny");
+        let cold = worker("http://cold:30000", "tiny");
+        hot.set_reported_prefill_load(Some(prefill_snapshot(0, 1_000, None)));
+        cold.set_reported_prefill_load(Some(prefill_snapshot(0, 0, None)));
+        let workers = vec![Arc::clone(&hot), Arc::clone(&cold)];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None);
+        let hashes = vec![1; 25];
+        let matched_urls = HashSet::from([hot.url.as_str()]);
+
+        let chosen = policy
+            .select_ttft_first(&workers, &ctx, &hashes, 20, &matched_urls, 100, 4)
+            .expect("must select a worker");
+
+        assert_eq!(chosen.url, cold.url);
+        let rendered = metrics.render();
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="prompt"} 25"#
+        ));
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="available"} 20"#
+        ));
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="selected"} 0"#
+        ));
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="sacrificed"} 20"#
+        ));
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_total{model_id="tiny",outcome="sacrificed_all_available"} 1"#
+        ));
+    }
+
+    #[test]
+    fn predicted_ttft_records_retained_cache_when_hot_worker_wins() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let policy =
+            lmetric_policy(TtftScoreMode::PredictedTtft).with_metrics(Arc::clone(&metrics));
+        let hot = worker("http://hot:30000", "tiny");
+        let cold = worker("http://cold:30000", "tiny");
+        hot.set_reported_prefill_load(Some(prefill_snapshot(0, 0, None)));
+        cold.set_reported_prefill_load(Some(prefill_snapshot(0, 0, None)));
+        let workers = vec![Arc::clone(&hot), Arc::clone(&cold)];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None);
+        let hashes = vec![1; 25];
+        let matched_urls = HashSet::from([hot.url.as_str()]);
+
+        let chosen = policy
+            .select_ttft_first(&workers, &ctx, &hashes, 20, &matched_urls, 100, 4)
+            .expect("must select a worker");
+
+        assert_eq!(chosen.url, hot.url);
+        let rendered = metrics.render();
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="selected"} 20"#
+        ));
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="sacrificed"} 0"#
+        ));
+        assert!(rendered.contains(
+            r#"sgl_router_cache_selection_total{model_id="tiny",outcome="retained_all_available"} 1"#
+        ));
     }
 
     #[test]
