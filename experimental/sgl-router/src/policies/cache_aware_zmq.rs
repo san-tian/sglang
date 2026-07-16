@@ -577,11 +577,24 @@ impl CacheAwareZmqPolicy {
                     total_blocks as u64,
                     available_blocks as u64,
                     selected_blocks as u64,
+                    candidate_tokens as u64,
+                    block_size as u64,
                 )
             },
         );
 
         let sacrificed_blocks = available_blocks.saturating_sub(selected_blocks);
+        let prompt_tokens_approx = total_blocks
+            .saturating_mul(block_size)
+            .min(candidate_tokens);
+        let available_tokens_approx = available_blocks
+            .saturating_mul(block_size)
+            .min(prompt_tokens_approx);
+        let selected_tokens_approx = selected_blocks
+            .saturating_mul(block_size)
+            .min(available_tokens_approx);
+        let sacrificed_tokens_approx =
+            available_tokens_approx.saturating_sub(selected_tokens_approx);
         let potential_cache_hit_rate = if total_blocks > 0 {
             available_blocks as f64 / total_blocks as f64
         } else {
@@ -612,9 +625,14 @@ impl CacheAwareZmqPolicy {
             selected_worker,
             selected_prefill_member,
             prompt_blocks = total_blocks,
+            prompt_tokens = candidate_tokens,
+            prompt_tokens_approx,
             available_blocks,
+            available_tokens_approx,
             selected_blocks,
+            selected_tokens_approx,
             sacrificed_blocks,
+            sacrificed_tokens_approx,
             potential_cache_hit_rate,
             selected_cache_hit_rate,
             opportunity_retention_rate,
@@ -626,6 +644,7 @@ impl CacheAwareZmqPolicy {
             predicted_score_improvement = predicted_score_improvement.unwrap_or(0),
             candidate_tokens,
             block_size,
+            cache_block_size_tokens = block_size,
             ttft_score_mode = ?score_mode,
             "cache_selection_summary",
         );
