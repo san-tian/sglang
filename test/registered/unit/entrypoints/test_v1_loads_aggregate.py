@@ -174,6 +174,9 @@ class TestGetLoads(CustomTestCase):
             ),
         )
         snapshot = LoadSnapshot(dp_rank=0, prefill_work=work)
+        wire_value = msgspec.to_builtins(work)
+        self.assertIsInstance(wire_value, dict)
+        self.assertIsInstance(wire_value["waiting_prefill"][0], dict)
         path = _temp_path()
         writer = ShmLoadSnapshotWriter(path, dp_size=1, dp_rank=0)
         reader = ShmLoadSnapshotReader(path, dp_size=1)

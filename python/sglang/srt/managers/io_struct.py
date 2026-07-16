@@ -2066,7 +2066,7 @@ class PrefillQueueMetrics(msgspec.Struct, array_like=True):
     priority_ahead_uncached_tokens: Tuple[Tuple[int, ...], ...]
 
 
-class PrefillWorkRequestMetrics(msgspec.Struct, array_like=True):
+class PrefillWorkRequestMetrics(msgspec.Struct):
     """Bounded request-level Prefill work state for Gateway routing."""
 
     request_id: str
@@ -2076,7 +2076,7 @@ class PrefillWorkRequestMetrics(msgspec.Struct, array_like=True):
     current_chunk_end_tokens: int = 0
 
 
-class PrefillWorkOverflowMetrics(msgspec.Struct, array_like=True):
+class PrefillWorkOverflowMetrics(msgspec.Struct):
     """Aggregate for Prefill entries omitted by the response bound."""
 
     priority: int
@@ -2085,7 +2085,7 @@ class PrefillWorkOverflowMetrics(msgspec.Struct, array_like=True):
     total_uncached_tokens: int
 
 
-class PrefillWorkMetrics(msgspec.Struct, array_like=True):
+class PrefillWorkMetrics(msgspec.Struct):
     """Versioned, bounded waiting/running Prefill snapshot."""
 
     schema_version: int
