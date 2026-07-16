@@ -40,7 +40,7 @@ class TestPrefillQueueMetrics(CustomTestCase):
             SchedulerLoadInquirer.get_num_waiting_uncached_tokens(inquirer), 425
         )
 
-    def test_builds_candidate_work_ahead_and_chunk_remainder(self):
+    def test_builds_fcfs_work_ahead_and_chunk_remainder(self):
         metrics = build_prefill_queue_metrics(
             [
                 _req(tokens=100, priority=0),
@@ -49,9 +49,6 @@ class TestPrefillQueueMetrics(CustomTestCase):
                 _req(tokens=300, matched=100, priority=10),
             ],
             _req(tokens=200, prefix_len=50),
-            now=100.0,
-            aging_rate=0.0,
-            max_wait_seconds=30.0,
             priority_scheduling_enabled=True,
             schedule_low_priority_values_first=False,
         )
@@ -60,7 +57,7 @@ class TestPrefillQueueMetrics(CustomTestCase):
         self.assertEqual(metrics.chunked_remaining_uncached_tokens, 150)
         self.assertEqual(metrics.priority_values, (0, 10))
         self.assertEqual(metrics.priority_total_uncached_tokens, (1600, 200))
-        self.assertEqual(metrics.priority_ahead_uncached_tokens[0][0], 600)
+        self.assertEqual(metrics.priority_ahead_uncached_tokens[0][0], 1600)
         self.assertEqual(metrics.priority_ahead_uncached_tokens[0][1], 1600)
         self.assertEqual(metrics.priority_ahead_uncached_tokens[1][0], 200)
 
@@ -73,9 +70,6 @@ class TestPrefillQueueMetrics(CustomTestCase):
         metrics = build_prefill_queue_metrics(
             waiting,
             None,
-            now=100.0,
-            aging_rate=0.0,
-            max_wait_seconds=30.0,
             priority_scheduling_enabled=True,
             schedule_low_priority_values_first=False,
         )

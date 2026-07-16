@@ -1,59 +1,45 @@
-# prefill-length-aware-scheduling Specification
+# Retired prefill-length-aware scheduling Specification
 
 ## Purpose
-Define the opt-in worker policy that lowers short-request Prefill latency using live uncached work while preserving priority, providing deterministic 1:3 fairness for older requests, and exporting phase-aware load summaries.
+Define compatibility and load-reporting behavior after worker-side length-aware Prefill scheduling is retired.
 
 ## Requirements
-### Requirement: Length-aware Prefill scheduling is opt-in
-The worker SHALL preserve its configured existing scheduling behavior unless `prefill-length-aware` is explicitly selected, and the default schedule policy SHALL remain FCFS.
 
-#### Scenario: Worker starts without the new policy
-- **WHEN** a worker starts without selecting `prefill-length-aware`
-- **THEN** it SHALL retain its configured existing waiting-prefill ordering
+### Requirement: Waiting Prefill order is FCFS
+The worker SHALL schedule waiting Prefill requests by business priority and queue-entry time without using request length or current uncached work to reorder requests.
 
-### Requirement: Waiting order uses current uncached work
-The worker SHALL refresh prefix-cache matches before each eligible scheduling round and SHALL order each business-priority class by repeatedly selecting one earliest-arrived request followed by up to three requests with the fewest current uncached input tokens.
-
-#### Scenario: A prefix becomes cached while a request waits
-- **WHEN** an earlier request creates a reusable prefix before the next scheduling round
-- **THEN** the dependent request SHALL be ordered using its newly reduced uncached work
-
-#### Scenario: Short request and long request have equal priority and age
-- **WHEN** two non-overdue requests have the same business priority and different uncached input lengths
-- **THEN** the request with fewer uncached tokens SHALL precede the longer request
+#### Scenario: Same-priority requests have different lengths
+- **WHEN** same-priority requests have different input lengths
+- **THEN** the earlier request SHALL remain ahead of the later request
 
 #### Scenario: Business priorities differ
 - **WHEN** priority scheduling is enabled and requests have different business priorities
-- **THEN** configured business-priority direction SHALL take precedence over prompt length
+- **THEN** configured business-priority direction SHALL take precedence while each priority group remains FCFS
 
-### Requirement: Same-priority fairness is bounded
-The worker SHALL revisit the earliest-arrived remaining request after every group of at most three short requests, so a long request cannot be bypassed by an unbounded number of later short requests.
+### Requirement: The retired policy name is parse-compatible
+The worker SHALL accept `prefill-length-aware` as a deprecated compatibility name and SHALL execute FCFS ordering when it is selected.
 
-#### Scenario: An older long request is revisited
-- **WHEN** an older long request remains after three shorter requests are selected
-- **THEN** it SHALL be selected before the next group of short requests in the same business priority
-
-#### Scenario: Fewer than three short requests remain
-- **WHEN** fewer than three requests remain after selecting the oldest request
-- **THEN** all remaining requests SHALL be selected by current uncached-token count and queue-entry time
+#### Scenario: A stale launcher selects the retired policy
+- **WHEN** a stale launcher selects `prefill-length-aware`
+- **THEN** startup SHALL succeed and the scheduler SHALL use FCFS
 
 ### Requirement: Existing Prefill execution constraints remain authoritative
-The policy SHALL only reorder requests still in the waiting queue and SHALL preserve chunked-prefill continuation and all existing admission constraints.
+The policy SHALL preserve chunked-prefill continuation and all existing admission constraints.
 
 #### Scenario: Chunked Prefill is active
-- **WHEN** a chunked request exists while a shorter request is waiting
+- **WHEN** a chunked request exists while another request is waiting
 - **THEN** the scheduler SHALL retain its existing chunked-request continuation behavior
 
 #### Scenario: An ordered request cannot fit
 - **WHEN** the next ordered request fails an existing token, KV, LoRA, or other admission check
 - **THEN** `PrefillAdder` SHALL retain authority to defer or reject that admission
 
-### Requirement: Worker exports bounded Prefill work summaries
-When the policy is active, worker load reporting SHALL expose optional aggregate data for total Prefill work and candidate work-ahead without exporting individual requests, and SHALL bound represented priority groups.
+### Requirement: Worker exports bounded FCFS Prefill work summaries
+Worker load reporting SHALL expose optional aggregate data for total Prefill work and FCFS candidate work-ahead without exporting individual requests, and SHALL bound represented priority groups.
 
 #### Scenario: Candidate detail is complete
 - **WHEN** the waiting queue has no more than the supported priority-group limit
-- **THEN** the snapshot SHALL include chunked remainder, fixed work-bucket bounds, priority direction, and cumulative uncached work per priority and bucket
+- **THEN** the snapshot SHALL include chunked remainder, fixed work-bucket bounds, priority direction, and the full existing same-priority uncached work ahead of a new request for every bucket
 
 #### Scenario: Priority cardinality exceeds the limit
 - **WHEN** the waiting queue exceeds the supported priority-group limit
@@ -73,10 +59,6 @@ Worker load reporting SHALL identify integrated, native Prefill, and Decode-only
 #### Scenario: Decode-only worker reports load
 - **WHEN** a Decode-only worker reports running or waiting requests
 - **THEN** it SHALL label the Decode role and SHALL report zero waiting Prefill tokens
-
-#### Scenario: Prefill policy is configured on Decode
-- **WHEN** a Decode-only worker is configured with `prefill-length-aware`
-- **THEN** startup validation SHALL reject the configuration
 
 ### Requirement: Legacy length-aware tunables remain parse-compatible
 The worker SHALL continue accepting the historical aging-rate and maximum-wait arguments for deployment compatibility, but SHALL not use them to determine request order.
