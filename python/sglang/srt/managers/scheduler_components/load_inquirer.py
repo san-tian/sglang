@@ -19,7 +19,6 @@ from sglang.srt.managers.io_struct import (
 from sglang.srt.managers.schedule_policy import (
     PREFILL_QUEUE_PRIORITY_GROUP_LIMIT,
     PREFILL_WORK_BUCKET_BOUNDS,
-    prefill_one_oldest_three_shortest_order,
 )
 
 if TYPE_CHECKING:
@@ -40,13 +39,10 @@ def build_prefill_queue_metrics(
     waiting_queue,
     chunked_req,
     *,
-    now: float,
-    aging_rate: float,
-    max_wait_seconds: float,
     priority_scheduling_enabled: bool,
     schedule_low_priority_values_first: bool,
 ) -> PrefillQueueMetrics:
-    """Compress waiting work into bounded priority and candidate-work buckets."""
+    """Compress FCFS waiting work into bounded priority and work buckets."""
     groups = {}
     detail_complete = True
     for req in waiting_queue:
@@ -60,31 +56,15 @@ def build_prefill_queue_metrics(
                 detail_complete = False
                 groups.clear()
                 break
-            groups[priority] = [0, [], [0] * len(PREFILL_WORK_BUCKET_BOUNDS)]
+            groups[priority] = [0, [0] * len(PREFILL_WORK_BUCKET_BOUNDS)]
 
         uncached_tokens = max(0, req.seqlen - req.num_matched_prefix_tokens)
         group = groups[priority]
         group[0] += uncached_tokens
-        group[1].append(
-            (
-                uncached_tokens,
-                req.time_stats.wait_queue_entry_time,
-                len(group[1]),
-            )
-        )
 
     if detail_complete:
         for group in groups.values():
-            states = group[1]
-            for bucket_index, upper_bound in enumerate(PREFILL_WORK_BUCKET_BOUNDS):
-                candidate_index = len(states)
-                candidate_state = (upper_bound, float("inf"), candidate_index)
-                order = prefill_one_oldest_three_shortest_order(
-                    states + [candidate_state]
-                )
-                group[2][bucket_index] = sum(
-                    states[index][0] for index in order[: order.index(candidate_index)]
-                )
+            group[1][:] = [group[0]] * len(PREFILL_WORK_BUCKET_BOUNDS)
 
     priority_values = tuple(sorted(groups)) if detail_complete else ()
     chunked_remaining = (
@@ -101,7 +81,7 @@ def build_prefill_queue_metrics(
         priority_values=priority_values,
         priority_total_uncached_tokens=tuple(groups[p][0] for p in priority_values),
         priority_ahead_uncached_tokens=tuple(
-            tuple(groups[p][2]) for p in priority_values
+            tuple(groups[p][1]) for p in priority_values
         ),
     )
 
@@ -295,16 +275,11 @@ class SchedulerLoadInquirer:
 
         prefill_queue = None
         if (
-            (include_all or "prefill_queue" in include)
-            and self.server_args.schedule_policy == "prefill-length-aware"
-            and self.disaggregation_mode != DisaggregationMode.DECODE
-        ):
+            include_all or "prefill_queue" in include
+        ) and self.disaggregation_mode != DisaggregationMode.DECODE:
             prefill_queue = build_prefill_queue_metrics(
                 self.get_waiting_queue(),
                 self.get_chunked_req(),
-                now=time.perf_counter(),
-                aging_rate=self.server_args.prefill_length_aware_aging_rate,
-                max_wait_seconds=self.server_args.prefill_length_aware_max_wait_seconds,
                 priority_scheduling_enabled=self.server_args.enable_priority_scheduling,
                 schedule_low_priority_values_first=(
                     self.server_args.schedule_low_priority_values_first

@@ -166,36 +166,6 @@ PREFILL_WORK_BUCKET_BOUNDS = (
 PREFILL_QUEUE_PRIORITY_GROUP_LIMIT = 32
 
 
-def prefill_one_oldest_three_shortest_order(
-    states: list[tuple[int, float, int]],
-) -> list[int]:
-    """Return indices ordered by repeating one oldest then three shortest.
-
-    Each state is ``(uncached_tokens, queue_entry_time, stable_index)``. The
-    stable index makes ties deterministic without depending on request IDs.
-    """
-    remaining = list(range(len(states)))
-    ordered = []
-    while remaining:
-        oldest = min(remaining, key=lambda index: (states[index][1], states[index][2]))
-        remaining.remove(oldest)
-        ordered.append(oldest)
-
-        shortest = sorted(
-            remaining,
-            key=lambda index: (
-                states[index][0],
-                states[index][1],
-                states[index][2],
-            ),
-        )[:3]
-        shortest_set = set(shortest)
-        ordered.extend(shortest)
-        remaining = [index for index in remaining if index not in shortest_set]
-
-    return ordered
-
-
 class SchedulePolicy:
     Policy = Union[CacheAwarePolicy, CacheAgnosticPolicy]
 
@@ -273,8 +243,6 @@ class SchedulePolicy:
             elif policy == CacheAgnosticPolicy.ROUTING_KEY:
                 if running_batch is not None:
                     SchedulePolicy._sort_by_routing_key(waiting_queue, running_batch)
-            elif policy == CacheAgnosticPolicy.PREFILL_LENGTH_AWARE:
-                self._sort_by_prefill_length_aware(waiting_queue)
             else:
                 raise ValueError(f"Unknown CacheAgnostic Policy: {policy=}")
 
@@ -290,6 +258,11 @@ class SchedulePolicy:
         """
         Validates the policy and adjusts it if necessary based on tree cache settings.
         """
+        if policy == CacheAgnosticPolicy.PREFILL_LENGTH_AWARE.value:
+            logger.warning(
+                "schedule policy 'prefill-length-aware' is retired and now uses FCFS"
+            )
+            return CacheAgnosticPolicy.FCFS
         try:
             policy_enum = CacheAwarePolicy(policy)
             if getattr(tree_cache, "disable", True):
@@ -420,34 +393,6 @@ class SchedulePolicy:
                 x.time_stats.wait_queue_entry_time,
             )
         )
-
-    def _sort_by_prefill_length_aware(self, waiting_queue: List[Req]) -> None:
-        groups = defaultdict(list)
-        for stable_index, req in enumerate(waiting_queue):
-            priority = (
-                req.priority
-                if self.enable_priority_scheduling and req.priority is not None
-                else 0
-            )
-            groups[priority].append((stable_index, req))
-
-        ordered = []
-        for priority in sorted(groups, key=lambda value: value * self.priority_sign):
-            group = groups[priority]
-            states = [
-                (
-                    max(0, req.seqlen - req.num_matched_prefix_tokens),
-                    req.time_stats.wait_queue_entry_time,
-                    stable_index,
-                )
-                for stable_index, req in group
-            ]
-            ordered.extend(
-                group[index][1]
-                for index in prefill_one_oldest_three_shortest_order(states)
-            )
-
-        waiting_queue[:] = ordered
 
     @staticmethod
     def _sort_by_routing_key(
@@ -600,9 +545,7 @@ class PrefillAdder:
         # fail-loud `RuntimeError`. `None` outside the unified Mamba pool.
         self.rem_mamba_slots = None
         if self._mamba_slot_cost:
-            self.rem_mamba_slots = (
-                self.token_to_kv_pool_allocator.mamba_allocator.schedulable_available_size()
-            )
+            self.rem_mamba_slots = self.token_to_kv_pool_allocator.mamba_allocator.schedulable_available_size()
             if self.is_hybrid_ssm_cache:
                 self.rem_mamba_slots += self.tree_cache.mamba_evictable_size()
 
@@ -1152,9 +1095,9 @@ class PrefillAdder:
                 if self.rem_dllm_tokens <= 0:
                     return AddReqResult.OTHER
 
-                assert (
-                    truncation_align_size is None
-                ), "truncation_align_size is not supported for dllm prefill"
+                assert truncation_align_size is None, (
+                    "truncation_align_size is not supported for dllm prefill"
+                )
 
                 self._add_dllm_req(req, prefix_len)
                 self._req_inc_lock_ref(req)
