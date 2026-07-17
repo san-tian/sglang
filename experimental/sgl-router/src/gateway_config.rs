@@ -149,7 +149,11 @@ pub struct CompiledGatewayConfig {
 impl CompiledGatewayConfig {
     /// Apply before any worker discovery or authentication task is spawned.
     pub fn apply_to_environment(&self) {
-        for name in ["GATEWAY_NVIDIA_WORKER_URLS", "WORKER_BEARER_KEY"] {
+        for name in [
+            "GATEWAY_NVIDIA_WORKER_URLS",
+            "WORKER_BEARER_KEY",
+            "WORKER_BEARER_KEYS",
+        ] {
             std::env::remove_var(name);
         }
         for name in [
