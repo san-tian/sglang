@@ -5,7 +5,7 @@ TBD - created by archiving change request-length-raw-chat-fallback. Update Purpo
 ## Requirements
 ### Requirement: Raw context counting is opt-in
 
-The gateway SHALL default to fail-closed unknown-length handling for bounded workers. When `ALLOW_RAW_CONTEXT_TOKENS=1` is set, the Chat handler SHALL use available extracted text tokens for context-range filtering even when the request carries tools, text-part content, template controls, task controls, reasoning controls, or continuation fields. This is a routing-only approximation: the gateway SHALL forward the original request and SHALL NOT inject approximate raw tokens as engine input. Other generation handlers SHALL retain their stricter raw-shape eligibility checks.
+The gateway SHALL default to fail-closed unknown-length handling for bounded workers. When `ALLOW_RAW_CONTEXT_TOKENS=1` is set, the Chat handler SHALL use available extracted text tokens for input-range filtering even when the request carries tools, text-part content, template controls, task controls, reasoning controls, or continuation fields. Requested output limits SHALL NOT be added to the extracted input length. This is a routing-only approximation: the gateway SHALL forward the original request and SHALL NOT inject approximate raw tokens as engine input. Other generation handlers SHALL retain their stricter raw-shape eligibility checks.
 
 #### Scenario: Default chat request remains fail-closed
 
@@ -14,19 +14,19 @@ The gateway SHALL default to fail-closed unknown-length handling for bounded wor
 
 #### Scenario: Opt-in short chat request uses raw count
 
-- **WHEN** the same gateway sets `ALLOW_RAW_CONTEXT_TOKENS=1` and a Chat request has extractable raw message tokens plus an output budget below `65536`
-- **THEN** the context-range filter SHALL use that budget and allow a worker registered with `@max_context_tokens=65535`
+- **WHEN** the same gateway sets `ALLOW_RAW_CONTEXT_TOKENS=1` and a Chat request has fewer than `65536` extractable raw message tokens, regardless of its requested output budget
+- **THEN** the input-range filter SHALL allow a worker registered with `@max_context_tokens=65535`
 
 #### Scenario: Agent chat shapes use existing raw request length
 
 - **WHEN** the gateway sets `ALLOW_RAW_CONTEXT_TOKENS=1` and a Chat request with extractable text tokens includes tools, text-part content, template controls, task controls, reasoning controls, or continuation fields
-- **THEN** the context-range filter SHALL use the existing raw message token count plus requested output budget rather than rejecting the request as unknown length
+- **THEN** the input-range filter SHALL use only the existing raw message token count rather than rejecting the request as unknown length or adding its requested output budget
 - **AND** the worker SHALL receive the original request and remain responsible for engine-side prompt construction
 
 #### Scenario: No extractable text remains unknown
 
 - **WHEN** raw counting is enabled but no text tokens can be extracted from the Chat request
-- **THEN** the request length SHALL remain unknown for hard context eligibility
+- **THEN** the request length SHALL remain unknown for hard input-range eligibility
 
 #### Scenario: Other handlers remain strict
 

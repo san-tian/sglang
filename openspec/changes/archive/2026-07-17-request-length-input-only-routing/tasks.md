@@ -10,6 +10,6 @@
 
 ## 3. Debug Gateway Rollout
 
-- [ ] 3.1 Build a content-addressed release binary and deploy it to only `sgl-router-length-split.service:18084`
-- [ ] 3.2 Verify readiness, worker health, and live short-input/large-output routing to AMD with route-decision evidence
-- [ ] 3.3 Update the experiment and work records with rollout evidence and rollback details
+- [x] 3.1 Build a content-addressed release binary and deploy it to only `sgl-router-length-split.service:18084`
+- [x] 3.2 Verify readiness, worker health, and live short-input/large-output routing to AMD with route-decision evidence
+- [x] 3.3 Update the experiment and work records with rollout evidence and rollback details
