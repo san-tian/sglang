@@ -13,15 +13,98 @@ pub const GATEWAY_CONFIG_FILE_ENV: &str = "GATEWAY_CONFIG_FILE";
 
 const MAX_BACKENDS: usize = 1_024;
 const MAX_KEYS: usize = 1_024;
+const REQUIRED_KEY_IDS: [&str; 4] = [
+    "external-all-length-high",
+    "external-amd-high",
+    "external-nvidia-high",
+    "internal-fp8-low",
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GatewayFileConfig {
     version: u32,
     revision: String,
+    runtime: RuntimeConfig,
     backends: Vec<BackendConfig>,
     scheduling: SchedulingConfig,
     keys: Vec<ClientKeyConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeConfig {
+    cache_state: CacheStateRuntimeConfig,
+    prefill_work: PrefillWorkRuntimeConfig,
+    router_state: RouterStateRuntimeConfig,
+    observability: ObservabilityRuntimeConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CacheStateRuntimeConfig {
+    mode: CacheStateMode,
+    timeout_ms: u64,
+    page_size: usize,
+    bigram: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum CacheStateMode {
+    RemoteOnly,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrefillWorkRuntimeConfig {
+    stale_grace_ms: u64,
+    failure_threshold: usize,
+    recovery_threshold: usize,
+    profile_source: PrefillProfileSource,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PrefillProfileSource {
+    EnvironmentOptional,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RouterStateRuntimeConfig {
+    mode: RouterStateMode,
+    key_prefix: String,
+    timeout_ms: u64,
+    snapshot_interval_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum RouterStateMode {
+    RedisRequired,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ObservabilityRuntimeConfig {
+    sls: SlsMode,
+    route_decision: RouteDecisionRuntimeConfig,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SlsMode {
+    Required,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RouteDecisionRuntimeConfig {
+    enabled: bool,
+    sample_rate: f64,
+    max_candidates: usize,
+    force_header: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -139,6 +222,7 @@ struct LengthPolicy<'a> {
 /// This type intentionally does not implement `Debug`.
 pub struct CompiledGatewayConfig {
     env: BTreeMap<&'static str, String>,
+    required_environment: Vec<&'static str>,
     pub revision: String,
     pub backend_count: usize,
     pub local_backend_count: usize,
@@ -161,12 +245,43 @@ impl CompiledGatewayConfig {
             "EXTERNAL_MODEL_URL",
             "EXTERNAL_MODEL_BEARER_TOKEN",
             "ALLOW_RAW_CONTEXT_TOKENS",
+            "CACHE_TREE_MAX_NODES",
+            "ROUTER_STATE_URL",
         ] {
             std::env::remove_var(name);
         }
         for (name, value) in &self.env {
             std::env::set_var(name, value);
         }
+    }
+
+    /// Validate fixed external secret/service contracts without exposing values.
+    pub fn validate_environment(&self) -> Result<()> {
+        self.validate_environment_with(|name| std::env::var(name).ok())
+    }
+
+    fn validate_environment_with<F>(&self, lookup: F) -> Result<()>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let missing = self
+            .required_environment
+            .iter()
+            .copied()
+            .filter(|name| {
+                lookup(name)
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+            })
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            bail!(
+                "gateway runtime requires non-empty environment variables: {}",
+                missing.join(", ")
+            );
+        }
+        Ok(())
     }
 }
 
@@ -187,6 +302,18 @@ fn compile(contents: &str) -> Result<CompiledGatewayConfig> {
     }
     if config.keys.is_empty() || config.keys.len() > MAX_KEYS {
         bail!("keys must contain between 1 and {MAX_KEYS} entries");
+    }
+    let configured_key_ids = config
+        .keys
+        .iter()
+        .map(|key| key.key_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if configured_key_ids.len() != REQUIRED_KEY_IDS.len()
+        || !REQUIRED_KEY_IDS
+            .iter()
+            .all(|required| configured_key_ids.contains(required))
+    {
+        bail!("keys must contain exactly: {}", REQUIRED_KEY_IDS.join(", "));
     }
     if config.scheduling.default_policy != "predicted_ttft" {
         bail!("scheduling.default_policy must be predicted_ttft");
@@ -376,6 +503,7 @@ fn compile(contents: &str) -> Result<CompiledGatewayConfig> {
     env.insert("TTFT_SCORE_MODE", "predicted-ttft".to_string());
     env.insert("LOAD_POLL_INTERVAL_SECS", "1".to_string());
     env.insert("CACHE_THRESHOLD", "0".to_string());
+    let required_environment = compile_runtime(&config.runtime, &mut env)?;
     if length_policy.is_some() {
         env.insert("ALLOW_RAW_CONTEXT_TOKENS", "1".to_string());
     }
@@ -392,7 +520,116 @@ fn compile(contents: &str) -> Result<CompiledGatewayConfig> {
         external_backend_count: external.len(),
         key_count: api_keys.len(),
         env,
+        required_environment,
     })
+}
+
+fn compile_runtime(
+    runtime: &RuntimeConfig,
+    env: &mut BTreeMap<&'static str, String>,
+) -> Result<Vec<&'static str>> {
+    if runtime.cache_state.mode != CacheStateMode::RemoteOnly {
+        bail!("runtime.cache_state.mode must be remote_only");
+    }
+    if runtime.cache_state.timeout_ms == 0 || runtime.cache_state.page_size == 0 {
+        bail!("cache-state timeout_ms and page_size must be positive");
+    }
+    if runtime.prefill_work.stale_grace_ms == 0
+        || runtime.prefill_work.failure_threshold == 0
+        || runtime.prefill_work.recovery_threshold == 0
+    {
+        bail!("Prefill Work stale grace and thresholds must be positive");
+    }
+    if runtime.prefill_work.profile_source != PrefillProfileSource::EnvironmentOptional {
+        bail!("runtime.prefill_work.profile_source must be environment_optional");
+    }
+    if runtime.router_state.mode != RouterStateMode::RedisRequired {
+        bail!("runtime.router_state.mode must be redis_required");
+    }
+    validate_redis_key_prefix(&runtime.router_state.key_prefix)?;
+    if runtime.router_state.timeout_ms == 0 || runtime.router_state.snapshot_interval_ms == 0 {
+        bail!("router-state timeout_ms and snapshot_interval_ms must be positive");
+    }
+    if runtime.observability.sls != SlsMode::Required {
+        bail!("runtime.observability.sls must be required");
+    }
+    let decision = &runtime.observability.route_decision;
+    if !decision.enabled {
+        bail!("runtime.observability.route_decision.enabled must be true");
+    }
+    if !decision.sample_rate.is_finite()
+        || !(0.0..=1.0).contains(&decision.sample_rate)
+        || decision.sample_rate == 0.0
+    {
+        bail!("route-decision sample_rate must be finite and in (0, 1]");
+    }
+    if decision.max_candidates == 0 || decision.max_candidates > MAX_BACKENDS {
+        bail!("route-decision max_candidates must be between 1 and {MAX_BACKENDS}");
+    }
+    validate_header_name(&decision.force_header)?;
+
+    env.insert("CACHE_TREE_SOURCE", "remote".to_string());
+    env.insert(
+        "CACHE_TREE_PAGE_SIZE",
+        runtime.cache_state.page_size.to_string(),
+    );
+    env.insert(
+        "CACHE_TREE_BIGRAM",
+        if runtime.cache_state.bigram { "1" } else { "0" }.to_string(),
+    );
+    env.insert(
+        "CACHE_STATE_TIMEOUT_MS",
+        runtime.cache_state.timeout_ms.to_string(),
+    );
+    env.insert(
+        "PREFILL_SCORE_STALE_GRACE_MS",
+        runtime.prefill_work.stale_grace_ms.to_string(),
+    );
+    env.insert(
+        "PREFILL_LOAD_FAILURE_THRESHOLD",
+        runtime.prefill_work.failure_threshold.to_string(),
+    );
+    env.insert(
+        "PREFILL_LOAD_RECOVERY_THRESHOLD",
+        runtime.prefill_work.recovery_threshold.to_string(),
+    );
+    env.insert(
+        "ROUTER_STATE_REDIS_KEY_PREFIX",
+        runtime.router_state.key_prefix.clone(),
+    );
+    env.insert(
+        "ROUTER_STATE_TIMEOUT_MS",
+        runtime.router_state.timeout_ms.to_string(),
+    );
+    env.insert(
+        "ROUTER_STATE_SNAPSHOT_INTERVAL_MS",
+        runtime.router_state.snapshot_interval_ms.to_string(),
+    );
+    env.insert(
+        "ROUTE_DECISION_LOG_SAMPLE_RATE",
+        runtime.observability.route_decision.sample_rate.to_string(),
+    );
+    env.insert(
+        "ROUTE_DECISION_LOG_MAX_CANDIDATES",
+        runtime
+            .observability
+            .route_decision
+            .max_candidates
+            .to_string(),
+    );
+    env.insert(
+        "ROUTE_DECISION_LOG_HEADER",
+        runtime.observability.route_decision.force_header.clone(),
+    );
+
+    Ok(vec![
+        "CACHE_STATE_URL",
+        "CACHE_STATE_API_TOKEN",
+        "ROUTER_STATE_REDIS_URL",
+        "SLS_ENDPOINT",
+        "SLS_ACCESS_KEY_ID",
+        "SLS_ACCESS_KEY_SECRET",
+    ])
 }
 
 fn compile_length_policy<'a>(
@@ -497,6 +734,30 @@ fn validate_label(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_redis_key_prefix(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 256
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/')
+        })
+    {
+        bail!("router-state key_prefix must be a non-empty safe Redis key prefix");
+    }
+    Ok(())
+}
+
+fn validate_header_name(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-'))
+    {
+        bail!("route-decision force_header must be a lowercase HTTP header name");
+    }
+    Ok(())
+}
+
 fn validate_api_key(value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > 4_096
@@ -533,6 +794,29 @@ mod tests {
     const CONFIG: &str = r#"
 version: 2
 revision: test-revision
+runtime:
+  cache_state:
+    mode: remote_only
+    timeout_ms: 500
+    page_size: 64
+    bigram: true
+  prefill_work:
+    stale_grace_ms: 10000
+    failure_threshold: 3
+    recovery_threshold: 2
+    profile_source: environment_optional
+  router_state:
+    mode: redis_required
+    key_prefix: test:router-state
+    timeout_ms: 5000
+    snapshot_interval_ms: 100
+  observability:
+    sls: required
+    route_decision:
+      enabled: true
+      sample_rate: 1.0
+      max_candidates: 64
+      force_header: x-sgl-route-decision-log
 backends:
   - backend_id: gpu-fp8
     type: worker
@@ -577,17 +861,17 @@ keys:
     backend_selector:
       hardware_vendor_in: [amd, nvidia]
       quantization_in: [fp8]
-  - key_id: amd-high
+  - key_id: external-amd-high
     api_key: client-amd
     priority: 100
     allowed_models: [served-model]
     backend_selector: { hardware_vendor_in: [amd] }
-  - key_id: all-length
+  - key_id: external-all-length-high
     api_key: client-length
     priority: 100
     allowed_models: [served-model, external-model]
     routing_policy_id: split
-  - key_id: nvidia-high
+  - key_id: external-nvidia-high
     api_key: client-nvidia
     priority: 100
     allowed_models: [served-model]
@@ -609,6 +893,17 @@ keys:
         assert!(compiled.env["WORKER_URLS"]
             .contains("http://nvidia.example:30000@min_context_tokens=65536"));
         assert_eq!(compiled.env["EXTERNAL_MODEL_ID"], "external-model");
+        assert_eq!(compiled.env["CACHE_TREE_SOURCE"], "remote");
+        assert_eq!(compiled.env["CACHE_TREE_PAGE_SIZE"], "64");
+        assert_eq!(compiled.env["PREFILL_SCORE_STALE_GRACE_MS"], "10000");
+        assert_eq!(compiled.env["PREFILL_LOAD_FAILURE_THRESHOLD"], "3");
+        assert_eq!(compiled.env["PREFILL_LOAD_RECOVERY_THRESHOLD"], "2");
+        assert_eq!(
+            compiled.env["ROUTER_STATE_REDIS_KEY_PREFIX"],
+            "test:router-state"
+        );
+        assert_eq!(compiled.env["ROUTE_DECISION_LOG_SAMPLE_RATE"], "1");
+        assert!(!compiled.env.contains_key("PREFILL_SCORE_PROFILES_JSON"));
 
         let policies: serde_json::Value =
             serde_json::from_str(&compiled.env["GATEWAY_KEY_POLICIES_JSON"]).unwrap();
@@ -624,7 +919,7 @@ keys:
             .as_array()
             .unwrap()
             .iter()
-            .find(|entry| entry["key_id"] == "all-length")
+            .find(|entry| entry["key_id"] == "external-all-length-high")
             .unwrap();
         assert_eq!(length["input_length_routing"], true);
         assert_eq!(length["allowed_models"].as_array().unwrap().len(), 2);
@@ -647,5 +942,53 @@ keys:
             "revision: test-revision\napi: {}",
         );
         assert!(compile(&invalid).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_runtime_fields() {
+        let invalid = CONFIG.replace(
+            "    timeout_ms: 500\n    page_size: 64",
+            "    timeout_ms: 500\n    local_fallback: true\n    page_size: 64",
+        );
+        assert!(compile(&invalid).is_err());
+    }
+
+    #[test]
+    fn requires_exact_four_key_inventory() {
+        let invalid = CONFIG.replace("external-amd-high", "legacy-amd-high");
+        let error = compile(&invalid)
+            .err()
+            .expect("legacy key inventory should fail")
+            .to_string();
+        assert!(error.contains("keys must contain exactly"));
+        assert!(!error.contains("client-amd"));
+    }
+
+    #[test]
+    fn environment_validation_reports_names_without_values() {
+        let compiled = compile(CONFIG).unwrap();
+        let error = compiled
+            .validate_environment_with(|name| match name {
+                "CACHE_STATE_URL" => Some("https://cache.example".to_string()),
+                "CACHE_STATE_API_TOKEN" => Some("cache-secret".to_string()),
+                "ROUTER_STATE_REDIS_URL" => Some("redis://redis-secret".to_string()),
+                "SLS_ENDPOINT" => Some("example.log.aliyuncs.com".to_string()),
+                "SLS_ACCESS_KEY_ID" => Some("sls-id-secret".to_string()),
+                _ => None,
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("SLS_ACCESS_KEY_SECRET"));
+        for secret in ["cache-secret", "redis-secret", "sls-id-secret"] {
+            assert!(!error.contains(secret));
+        }
+    }
+
+    #[test]
+    fn complete_environment_contract_validates() {
+        let compiled = compile(CONFIG).unwrap();
+        compiled
+            .validate_environment_with(|_| Some("configured".to_string()))
+            .unwrap();
     }
 }

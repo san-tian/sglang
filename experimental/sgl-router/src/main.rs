@@ -470,6 +470,9 @@ async fn main() -> Result<()> {
             anyhow::bail!("GATEWAY_CONFIG_FILE cannot be combined with explicit CLI arguments");
         }
         let compiled = sgl_router::gateway_config::load(std::path::Path::new(&path))?;
+        compiled
+            .validate_environment()
+            .context("validate administrator gateway runtime environment")?;
         tracing::info!(
             revision = %compiled.revision,
             backends = compiled.backend_count,
