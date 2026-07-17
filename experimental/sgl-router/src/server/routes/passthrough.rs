@@ -15,7 +15,9 @@ use crate::policies::registry::{
 use crate::policies::SelectionContext;
 use crate::policies::{request_tokens_for, RequestTokens};
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
+use crate::server::entry_auth::{
+    filter_key_scope, input_length_routing_enabled, GatewayKeyIdentity,
+};
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -23,10 +25,7 @@ use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
-use crate::server::routes::context_window::{
-    enforce_context_eligibility, required_context_tokens,
-    required_context_tokens_with_explicit_output,
-};
+use crate::server::routes::context_window::enforce_context_eligibility;
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::workers::LoadGuard;
@@ -48,12 +47,6 @@ struct PassthroughProbe {
     model: Option<String>,
     #[serde(default)]
     priority: Option<serde_json::Value>,
-    #[serde(default)]
-    max_tokens: Option<serde_json::Value>,
-    #[serde(default)]
-    max_completion_tokens: Option<serde_json::Value>,
-    #[serde(default)]
-    max_output_tokens: Option<serde_json::Value>,
 }
 
 fn parse_probe(body: &Bytes) -> Result<PassthroughProbe, ApiError> {
@@ -119,9 +112,9 @@ async fn passthrough(
     let model_str = probe
         .model
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-    if entry_identity.is_some_and(|identity| {
-        !identity.allows_external_model() && model_str != ctx.config.model.id
-    }) {
+    if entry_identity
+        .is_some_and(|identity| !identity.allows_model(&model_str, &ctx.config.model.id))
+    {
         return Err(ApiError::ModelNotFound(model_str));
     }
     let Some(cfg) = ctx
@@ -290,6 +283,7 @@ async fn passthrough_primary(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
+    let use_input_length_routing = input_length_routing_enabled(entry_identity);
 
     // /v1/completions has an explicit raw `prompt`; feed those tokens to
     // cache-aware routing without changing the worker-facing passthrough body.
@@ -306,21 +300,12 @@ async fn passthrough_primary(
     let reliable_prompt_tokens = (path == "/v1/completions")
         .then(|| request_tokens.as_ref().map(|tokens| tokens.ids.len()))
         .flatten();
-    let output_fields = if path == "/v1/completions" {
-        [
-            probe.max_tokens.as_ref(),
-            probe.max_completion_tokens.as_ref(),
-            None,
-        ]
+    let routing_input_tokens = reliable_prompt_tokens;
+    let workers = if use_input_length_routing {
+        enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?
     } else {
-        [None, None, probe.max_output_tokens.as_ref()]
+        workers
     };
-    let required_context_tokens = if path == "/v1/responses" {
-        required_context_tokens_with_explicit_output(reliable_prompt_tokens, &output_fields)
-    } else {
-        required_context_tokens(reliable_prompt_tokens, &output_fields)
-    };
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     let routing_key = ctx

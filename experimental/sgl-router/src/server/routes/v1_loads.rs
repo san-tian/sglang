@@ -252,6 +252,7 @@ mod tests {
                 model_ids: vec![ModelId(ctx.config.model.id.clone())],
                 bootstrap_port: (mode == WorkerMode::Prefill).then_some(8998),
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: Default::default(),

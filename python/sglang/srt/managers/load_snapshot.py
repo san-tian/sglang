@@ -55,7 +55,9 @@ from sglang.srt.environ import envs
 from sglang.srt.utils.network import is_zmq_endpoint_ipv6
 
 if TYPE_CHECKING:
-    from sglang.srt.managers.io_struct import GetLoadsReqOutput
+    from sglang.srt.managers.io_struct import GetLoadsReqOutput, PrefillWorkMetrics
+else:
+    from sglang.srt.managers.io_struct import PrefillWorkMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +301,7 @@ class LoadSnapshot(msgspec.Struct, omit_defaults=True):
     prefill_queue_priority_values: tuple[int, ...] = ()
     prefill_queue_priority_total_uncached_tokens: tuple[int, ...] = ()
     prefill_queue_priority_ahead_uncached_tokens: tuple[tuple[int, ...], ...] = ()
+    prefill_work: Optional[PrefillWorkMetrics] = None
 
     @classmethod
     def from_get_loads_output(cls, output: GetLoadsReqOutput) -> LoadSnapshot:
@@ -323,6 +326,8 @@ class LoadSnapshot(msgspec.Struct, omit_defaults=True):
                     value = _native(value)
                 snapshot[snapshot_attr] = value
 
+        snapshot["prefill_work"] = getattr(output, "prefill_work", None)
+
         return cls(**snapshot)
 
     VALID_SECTIONS = frozenset(
@@ -334,6 +339,7 @@ class LoadSnapshot(msgspec.Struct, omit_defaults=True):
             "disagg",
             "queues",
             "prefill_queue",
+            "prefill_work",
             "all",
         }
     )
@@ -379,6 +385,9 @@ class LoadSnapshot(msgspec.Struct, omit_defaults=True):
                     value = INT_TO_DISAGG_MODE.get(value, "null")
                 section[section_attr] = value
             load[section_name] = section
+
+        if self.prefill_work is not None and (include_all or "prefill_work" in include):
+            load["prefill_work"] = msgspec.to_builtins(self.prefill_work)
 
         return load
 

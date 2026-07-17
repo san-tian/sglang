@@ -4,7 +4,7 @@
 //! HTTP-level coverage for heterogeneous worker context windows.
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderValue, Request, StatusCode};
 use sgl_router::config::{
     ActiveLoadConfig, Config, DiscoveryBackend, ModelConfig, ObservabilityConfig, PolicyKind,
     ProxyConfig, ServerConfig, StaticUrlsDiscoveryConfig,
@@ -12,8 +12,9 @@ use sgl_router::config::{
 use sgl_router::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
 use sgl_router::policies::factory::build_registry_with_defaults;
 use sgl_router::proxy::Proxy;
-use sgl_router::server::app::build_router;
+use sgl_router::server::app::{build_router, build_router_with_gateway_keyring};
 use sgl_router::server::app_context::AppContext;
+use sgl_router::server::entry_auth::GatewayKeyring;
 use sgl_router::tokenizer::TokenizerRegistry;
 use sgl_router::workers::WorkerRegistry;
 use std::sync::Arc;
@@ -60,6 +61,7 @@ fn config_for_model(model: &str) -> Config {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 
@@ -80,6 +82,7 @@ fn worker_spec_for_model(
         model_ids: vec![ModelId(model.into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens,
         bearer_token: None,
         backend: Default::default(),
@@ -90,8 +93,25 @@ fn worker_spec_for_model(
     }
 }
 
+fn ranged_worker_spec(
+    id: &str,
+    url: &str,
+    min_context_tokens: Option<usize>,
+    max_context_tokens: Option<usize>,
+) -> WorkerSpec {
+    let mut spec = worker_spec(id, url, max_context_tokens);
+    spec.min_context_tokens = min_context_tokens;
+    spec
+}
+
 fn build_ctx(specs: Vec<WorkerSpec>) -> Arc<AppContext> {
     build_ctx_with_config(config(), specs)
+}
+
+fn build_raw_context_ctx(specs: Vec<WorkerSpec>) -> Arc<AppContext> {
+    let mut cfg = config();
+    cfg.allow_raw_context_tokens = true;
+    build_ctx_with_config(cfg, specs)
 }
 
 fn build_ctx_with_config(cfg: Config, specs: Vec<WorkerSpec>) -> Arc<AppContext> {
@@ -114,8 +134,112 @@ fn request(path: &str, body: serde_json::Value) -> Request<Body> {
         .unwrap()
 }
 
+fn with_bearer(mut request: Request<Body>, api_key: &'static str) -> Request<Body> {
+    request
+        .headers_mut()
+        .insert("authorization", HeaderValue::from_static(api_key));
+    request
+}
+
+fn length_test_keyring() -> Arc<GatewayKeyring> {
+    Arc::new(
+        GatewayKeyring::from_json(
+            r#"{"version":1,"keys":[
+                {"key_id":"ordinary","class":"external","enabled":true},
+                {"key_id":"length","class":"external_length","enabled":true}
+            ]}"#,
+            r#"{"ordinary":"ordinary-secret","length":"length-secret"}"#,
+        )
+        .unwrap(),
+    )
+}
+
 fn was_hit(worker: &MockWorker) -> bool {
     worker.captured.lock().unwrap().last_body.is_some()
+}
+
+#[tokio::test]
+async fn authenticated_length_filter_is_scoped_to_external_length_key() {
+    let ordinary_short = MockWorker::start(vec![]).await;
+    let ordinary_long = MockWorker::start(vec![]).await;
+    let ordinary_ctx = build_ctx(vec![
+        ranged_worker_spec("short", &ordinary_short.url, None, Some(1)),
+        ranged_worker_spec("long", &ordinary_long.url, Some(2), None),
+    ]);
+    let keyring = length_test_keyring();
+
+    for _ in 0..4 {
+        let response =
+            build_router_with_gateway_keyring(Arc::clone(&ordinary_ctx), Arc::clone(&keyring))
+                .oneshot(with_bearer(
+                    request(
+                        "/v1/completions",
+                        serde_json::json!({
+                            "model":"tiny",
+                            "prompt":"hello",
+                            "stream":false
+                        }),
+                    ),
+                    "Bearer ordinary-secret",
+                ))
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert!(was_hit(&ordinary_short));
+    assert!(was_hit(&ordinary_long));
+
+    let scoped_short = MockWorker::start(vec![]).await;
+    let scoped_long = MockWorker::start(vec![]).await;
+    let scoped_ctx = build_ctx(vec![
+        ranged_worker_spec("short", &scoped_short.url, None, Some(1)),
+        ranged_worker_spec("long", &scoped_long.url, Some(2), None),
+    ]);
+    for _ in 0..4 {
+        let response =
+            build_router_with_gateway_keyring(Arc::clone(&scoped_ctx), Arc::clone(&keyring))
+                .oneshot(with_bearer(
+                    request(
+                        "/v1/completions",
+                        serde_json::json!({
+                            "model":"tiny",
+                            "prompt":"hello",
+                            "stream":false
+                        }),
+                    ),
+                    "Bearer length-secret",
+                ))
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert!(!was_hit(&scoped_short));
+    assert!(was_hit(&scoped_long));
+
+    let chat_short = MockWorker::start(vec![]).await;
+    let chat_long = MockWorker::start(vec![]).await;
+    let chat_ctx = build_raw_context_ctx(vec![
+        ranged_worker_spec("short", &chat_short.url, None, Some(1)),
+        ranged_worker_spec("long", &chat_long.url, Some(2), None),
+    ]);
+    let response = build_router_with_gateway_keyring(chat_ctx, keyring)
+        .oneshot(with_bearer(
+            request(
+                "/v1/chat/completions",
+                serde_json::json!({
+                    "model":"tiny",
+                    "messages":[{"role":"user","content":"hello ".repeat(100)}],
+                    "tools":[{"type":"function","function":{"name":"lookup"}}],
+                    "stream":false
+                }),
+            ),
+            "Bearer length-secret",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!was_hit(&chat_short));
+    assert!(was_hit(&chat_long));
 }
 
 #[tokio::test]
@@ -152,11 +276,242 @@ async fn over_limit_completion_only_hits_unlimited_worker() {
 }
 
 #[tokio::test]
-async fn within_limit_completion_keeps_limited_worker_in_rotation() {
+async fn below_minimum_completion_only_hits_unbounded_worker() {
+    let long_only = MockWorker::start(vec![]).await;
+    let fallback = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![
+        ranged_worker_spec("long-only", &long_only.url, Some(500_000), None),
+        ranged_worker_spec("fallback", &fallback.url, None, None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "prompt":"hello",
+                "max_tokens":8,
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!was_hit(&long_only));
+    assert!(was_hit(&fallback));
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="worker_excluded_below_minimum"} 1"#
+    ));
+}
+
+#[tokio::test]
+async fn default_chat_without_chat_encoder_fails_closed_for_bounded_pool() {
+    let short = MockWorker::start(vec![]).await;
+    let long = MockWorker::start(vec![]).await;
+    let ctx = build_ctx(vec![
+        ranged_worker_spec("short", &short.url, None, Some(65_535)),
+        ranged_worker_spec("long", &long.url, Some(65_536), None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_tokens":8,
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!was_hit(&short));
+    assert!(!was_hit(&long));
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="empty_set_rejected_unknown_length"} 1"#
+    ));
+}
+
+#[tokio::test]
+async fn raw_context_opt_in_chat_ignores_large_output_budget() {
+    let short = MockWorker::start(vec![]).await;
+    let long = MockWorker::start(vec![]).await;
+    let ctx = build_raw_context_ctx(vec![
+        ranged_worker_spec("short", &short.url, None, Some(65_535)),
+        ranged_worker_spec("long", &long.url, Some(65_536), None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_tokens":1_000_000,
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(was_hit(&short));
+    assert!(!was_hit(&long));
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="worker_excluded_below_minimum"} 1"#
+    ));
+}
+
+#[tokio::test]
+async fn raw_context_opt_in_chat_with_reasoning_effort_routes_by_existing_tokens() {
+    let short = MockWorker::start(vec![]).await;
+    let long = MockWorker::start(vec![]).await;
+    let ctx = build_raw_context_ctx(vec![
+        ranged_worker_spec("short", &short.url, None, Some(65_535)),
+        ranged_worker_spec("long", &long.url, Some(65_536), None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(was_hit(&short));
+    assert!(!was_hit(&long));
+    let forwarded: serde_json::Value = serde_json::from_slice(
+        short
+            .captured
+            .lock()
+            .unwrap()
+            .last_body
+            .as_ref()
+            .expect("short worker request body"),
+    )
+    .unwrap();
+    assert_eq!(forwarded["reasoning_effort"], "high");
+    assert!(forwarded.get("input_ids").is_none());
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="worker_excluded_below_minimum"} 1"#
+    ));
+}
+
+#[tokio::test]
+async fn raw_context_opt_in_chat_agent_shapes_route_by_existing_tokens() {
+    let cases = [
+        (
+            "max-completion-tokens",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_completion_tokens":1_000_000,
+                "stream":false
+            }),
+        ),
+        (
+            "tools",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "tools":[{"type":"function","function":{"name":"noop","parameters":{"type":"object"}}}],
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "content-array",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}],
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "template-kwargs",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "chat_template_kwargs":{"enable_thinking":true},
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "task",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "task":"chat",
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "continuation",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"assistant","content":"partial"}],
+                "continue_final_message":true,
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+    ];
+
+    for (case_name, request_body) in cases {
+        let short = MockWorker::start(vec![]).await;
+        let long = MockWorker::start(vec![]).await;
+        let ctx = build_raw_context_ctx(vec![
+            ranged_worker_spec("short", &short.url, None, Some(65_535)),
+            ranged_worker_spec("long", &long.url, Some(65_536), None),
+        ]);
+
+        let response = build_router(Arc::clone(&ctx))
+            .oneshot(request("/v1/chat/completions", request_body))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "case={case_name}");
+        assert!(was_hit(&short), "case={case_name}");
+        assert!(!was_hit(&long), "case={case_name}");
+        let forwarded: serde_json::Value = serde_json::from_slice(
+            short
+                .captured
+                .lock()
+                .unwrap()
+                .last_body
+                .as_ref()
+                .expect("short worker request body"),
+        )
+        .unwrap();
+        assert!(forwarded.get("input_ids").is_none(), "case={case_name}");
+    }
+}
+
+#[tokio::test]
+async fn completion_output_budget_does_not_change_input_range() {
     let limited = MockWorker::start(vec![]).await;
     let unlimited = MockWorker::start(vec![]).await;
     let ctx = build_ctx(vec![
-        worker_spec("limited", &limited.url, Some(500_000)),
+        worker_spec("limited", &limited.url, Some(65_535)),
         worker_spec("unlimited", &unlimited.url, None),
     ]);
 
@@ -167,7 +522,7 @@ async fn within_limit_completion_keeps_limited_worker_in_rotation() {
                 serde_json::json!({
                     "model":"tiny",
                     "prompt":"hello",
-                    "max_tokens":8,
+                    "max_tokens":1_000_000,
                     "stream":false
                 }),
             ))
@@ -265,7 +620,7 @@ async fn unknown_length_chat_messages_and_responses_skip_limited_worker() {
 }
 
 #[tokio::test]
-async fn responses_without_explicit_output_limit_skip_limited_worker() {
+async fn responses_output_limit_does_not_change_input_range() {
     const MODEL: &str = "deepseek-v4-tiny";
 
     let limited = MockWorker::start(vec![]).await;
@@ -273,7 +628,7 @@ async fn responses_without_explicit_output_limit_skip_limited_worker() {
     let ctx = build_ctx_with_config(
         config_for_model(MODEL),
         vec![
-            worker_spec_for_model("limited", &limited.url, MODEL, Some(500_000)),
+            worker_spec_for_model("limited", &limited.url, MODEL, Some(65_535)),
             worker_spec_for_model("unlimited", &unlimited.url, MODEL, None),
         ],
     );
@@ -292,7 +647,7 @@ async fn responses_without_explicit_output_limit_skip_limited_worker() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
-    assert!(!was_hit(&limited));
+    assert!(was_hit(&limited));
     assert!(was_hit(&unlimited));
 
     limited.captured.lock().unwrap().last_body = None;
@@ -304,7 +659,7 @@ async fn responses_without_explicit_output_limit_skip_limited_worker() {
                 serde_json::json!({
                     "model":MODEL,
                     "input":"hello",
-                    "max_output_tokens":8,
+                    "max_output_tokens":1_000_000,
                     "stream":false
                 }),
             ))

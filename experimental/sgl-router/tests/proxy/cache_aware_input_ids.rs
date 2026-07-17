@@ -74,6 +74,7 @@ fn config() -> Config {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 
@@ -92,6 +93,7 @@ fn build_ctx(url: String) -> Arc<AppContext> {
         model_ids: vec![ModelId(MODEL.into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),

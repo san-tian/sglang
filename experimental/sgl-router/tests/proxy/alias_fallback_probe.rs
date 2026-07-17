@@ -62,6 +62,7 @@ fn alias_config(primary_url: &str, fallback_url: &str) -> Config {
             fallback_bearer_token: None,
         }),
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 
@@ -76,6 +77,7 @@ fn build_alias_ctx(primary_url: &str, fallback_url: &str) -> Arc<AppContext> {
         model_ids: vec![ModelId("primary".into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),

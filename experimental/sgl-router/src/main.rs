@@ -141,6 +141,11 @@ fn env_to_cli_args() -> Vec<OsString> {
     push_env_arg_or_fallback_default(&mut args, "PORT", "ROUTER_PORT", "--port", "8080");
     push_env_arg(&mut args, "ROUTER_MODE", "--mode");
     push_env_arg(&mut args, "MODEL_ID", "--model-id");
+    push_env_flag(
+        &mut args,
+        "ALLOW_RAW_CONTEXT_TOKENS",
+        "--allow-raw-context-tokens",
+    );
     push_env_arg(&mut args, "POLICY", "--policy");
     push_env_arg(&mut args, "REQUEST_TIMEOUT_SECS", "--request-timeout-secs");
     push_env_arg(
@@ -459,6 +464,26 @@ async fn main() -> Result<()> {
     // becomes a no-op via try_init's idempotency.
     let metrics = MetricsRegistry::new();
     let _sls_guard = install_bootstrap_subscriber(Arc::clone(&metrics));
+    let mut gateway_file_loaded = false;
+    if let Some(path) = non_empty_env(sgl_router::gateway_config::GATEWAY_CONFIG_FILE_ENV) {
+        if std::env::args_os().len() > 1 {
+            anyhow::bail!("GATEWAY_CONFIG_FILE cannot be combined with explicit CLI arguments");
+        }
+        let compiled = sgl_router::gateway_config::load(std::path::Path::new(&path))?;
+        compiled
+            .validate_environment()
+            .context("validate administrator gateway runtime environment")?;
+        tracing::info!(
+            revision = %compiled.revision,
+            backends = compiled.backend_count,
+            local_backends = compiled.local_backend_count,
+            external_backends = compiled.external_backend_count,
+            keys = compiled.key_count,
+            "loaded administrator gateway YAML"
+        );
+        compiled.apply_to_environment();
+        gateway_file_loaded = true;
+    }
     let startup = cli_from_args_or_env().await?;
     let cfg = startup
         .cli
@@ -503,6 +528,13 @@ async fn main() -> Result<()> {
         disabled_keys = gateway_keyring.disabled_key_count(),
         "gateway entry API-key authentication enabled"
     );
+    if non_empty_env("GATEWAY_CONFIG_VALIDATE_ONLY").is_some_and(|value| is_truthy(&value)) {
+        if !gateway_file_loaded {
+            anyhow::bail!("GATEWAY_CONFIG_VALIDATE_ONLY requires GATEWAY_CONFIG_FILE");
+        }
+        tracing::info!("gateway YAML validation completed; exiting without serving traffic");
+        return Ok(());
+    }
 
     let tokenizers = Arc::new(
         sgl_router::tokenizer::TokenizerRegistry::load_from_config(&cfg)
@@ -588,7 +620,14 @@ async fn main() -> Result<()> {
     // oracle, so seed it from --cache-tree-page-size / --cache-tree-bigram,
     // and we deliberately DON'T attach ZMQ subscribers (no worker ZMQ port
     // needed — works over NAT/Vast public mappings).
-    let route_history = matches!(
+    let history_hashing = matches!(
+        cache_tree_source,
+        Some(
+            sgl_router::config::CacheTreeSource::RouteHistory
+                | sgl_router::config::CacheTreeSource::Remote
+        )
+    );
+    let local_route_history = matches!(
         cache_tree_source,
         Some(sgl_router::config::CacheTreeSource::RouteHistory)
     );
@@ -596,7 +635,7 @@ async fn main() -> Result<()> {
         cache_tree_source,
         Some(sgl_router::config::CacheTreeSource::Zmq)
     );
-    if route_history {
+    if history_hashing {
         if let Some(ps) = cfg.cache_tree_page_size {
             match block_size_oracle.try_set(ps) {
                 Ok(v) => tracing::info!(
@@ -668,7 +707,7 @@ async fn main() -> Result<()> {
     // has no worker-driven BlockRemoved events to bound it, so periodically
     // LRU-evict down to --cache-tree-max-nodes. (zmq mode evicts via worker
     // events + its own cap, so this task is route-history-only.)
-    let tree_evict_handle = if route_history {
+    let tree_evict_handle = if local_route_history {
         let tree = kv_index.tree();
         let max_nodes = cfg.cache_tree_max_nodes;
         tracing::info!(

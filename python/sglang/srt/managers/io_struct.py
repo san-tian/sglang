@@ -2034,6 +2034,7 @@ class GetLoadsReqInput(BaseReq, kw_only=True):
             "disagg",
             "queues",
             "prefill_queue",
+            "prefill_work",
             "all",
         }
     )
@@ -2065,6 +2066,41 @@ class PrefillQueueMetrics(msgspec.Struct, array_like=True):
     priority_ahead_uncached_tokens: Tuple[Tuple[int, ...], ...]
 
 
+class PrefillWorkRequestMetrics(msgspec.Struct):
+    """Bounded request-level Prefill work state for Gateway routing."""
+
+    request_id: str
+    priority: int
+    total_uncached_tokens: int
+    processed_uncached_tokens: int = 0
+    current_chunk_end_tokens: int = 0
+
+
+class PrefillWorkOverflowMetrics(msgspec.Struct):
+    """Aggregate for Prefill entries omitted by the response bound."""
+
+    priority: int
+    length_bucket: int
+    request_count: int
+    total_uncached_tokens: int
+
+
+class PrefillWorkMetrics(msgspec.Struct):
+    """Versioned, bounded waiting/running Prefill snapshot."""
+
+    schema_version: int
+    snapshot_id: int
+    generated_at_ms: int
+    worker_boot_id: str
+    priority_scheduling_enabled: bool
+    schedule_low_priority_values_first: bool
+    detail_complete: bool
+    truncated: bool
+    waiting_prefill: Tuple[PrefillWorkRequestMetrics, ...] = ()
+    running_prefill: Tuple[PrefillWorkRequestMetrics, ...] = ()
+    overflow_summary: Tuple[PrefillWorkOverflowMetrics, ...] = ()
+
+
 class GetLoadsReqOutput(BaseReq, kw_only=True):
     """Per-DP-rank load metrics for /v1/loads endpoint."""
 
@@ -2093,6 +2129,7 @@ class GetLoadsReqOutput(BaseReq, kw_only=True):
     disaggregation: Optional[DisaggregationMetrics] = None
     queues: Optional[QueueMetrics] = None
     prefill_queue: Optional[PrefillQueueMetrics] = None
+    prefill_work: Optional[PrefillWorkMetrics] = None
 
 
 class SetInjectDumpMetadataReqInput(BaseReq, kw_only=True):

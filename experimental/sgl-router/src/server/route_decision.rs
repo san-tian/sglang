@@ -129,6 +129,7 @@ pub fn generic_candidate_json(worker: &Worker, selected: bool) -> serde_json::Va
         "effective_ttft_load_reported": worker.effective_ttft_load(true, 256),
         "prefill_capacity_milli": worker.prefill_capacity_milli(),
         "min_priority": worker.min_priority(),
+        "min_context_tokens": worker.min_context_tokens(),
         "max_context_tokens": worker.max_context_tokens(),
         "breaker_admit": breaker.admit,
         "breaker_state_code": breaker.state_code,

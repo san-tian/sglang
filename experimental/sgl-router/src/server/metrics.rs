@@ -24,6 +24,9 @@
 //! | `sgl_router_request_duration_seconds` | Histogram | `model_id` |
 //! | `sgl_router_ttft_seconds` | Histogram | `model_id` |
 //! | `sgl_router_overlap_blocks` | Histogram | `model_id` |
+//! | `sgl_router_cache_selection_blocks_total` | Counter | `model_id`, `kind` |
+//! | `sgl_router_cache_selection_tokens_approx_total` | Counter | `model_id`, `kind` |
+//! | `sgl_router_cache_selection_total` | Counter | `model_id`, `outcome` |
 //! | `sgl_router_active_load` | Gauge | `worker_url`, `kind` |
 //! | `sgl_router_workers` | Gauge | `mode` |
 //! | `sgl_router_worker_pool_member` | Gauge | `worker_id`, `worker_url`, `mode` |
@@ -112,6 +115,43 @@ pub enum RequestOutcome {
     Cancelled,
 }
 
+/// Cache opportunity retained by the final route decision. The variants are
+/// intentionally fixed so the Prometheus label cardinality stays bounded.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum CacheSelectionOutcome {
+    Unmeasurable,
+    NoAvailableCache,
+    RetainedAllAvailable,
+    RetainedSomeAvailable,
+    SacrificedAllAvailable,
+}
+
+impl CacheSelectionOutcome {
+    pub fn from_blocks(prompt: u64, available: u64, selected: u64) -> Self {
+        if prompt == 0 {
+            Self::Unmeasurable
+        } else if available == 0 {
+            Self::NoAvailableCache
+        } else if selected >= available {
+            Self::RetainedAllAvailable
+        } else if selected > 0 {
+            Self::RetainedSomeAvailable
+        } else {
+            Self::SacrificedAllAvailable
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unmeasurable => "unmeasurable",
+            Self::NoAvailableCache => "no_available_cache",
+            Self::RetainedAllAvailable => "retained_all_available",
+            Self::RetainedSomeAvailable => "retained_some_available",
+            Self::SacrificedAllAvailable => "sacrificed_all_available",
+        }
+    }
+}
+
 impl RequestOutcome {
     fn as_str(self) -> &'static str {
         match self {
@@ -190,18 +230,26 @@ impl PriorityFilterOutcome {
 /// Outcome of per-worker context-window eligibility filtering.
 #[derive(Debug, Clone, Copy)]
 pub enum ContextFilterOutcome {
+    WorkerExcludedBelowMinimum,
     WorkerExcludedOverLimit,
+    WorkerExcludedOutsideRange,
     WorkerExcludedUnknownLength,
+    EmptySetRejectedBelowMinimum,
     EmptySetRejectedOverLimit,
+    EmptySetRejectedOutsideRange,
     EmptySetRejectedUnknownLength,
 }
 
 impl ContextFilterOutcome {
     fn as_str(self) -> &'static str {
         match self {
+            Self::WorkerExcludedBelowMinimum => "worker_excluded_below_minimum",
             Self::WorkerExcludedOverLimit => "worker_excluded_over_limit",
+            Self::WorkerExcludedOutsideRange => "worker_excluded_outside_range",
             Self::WorkerExcludedUnknownLength => "worker_excluded_unknown_length",
+            Self::EmptySetRejectedBelowMinimum => "empty_set_rejected_below_minimum",
             Self::EmptySetRejectedOverLimit => "empty_set_rejected_over_limit",
+            Self::EmptySetRejectedOutsideRange => "empty_set_rejected_outside_range",
             Self::EmptySetRejectedUnknownLength => "empty_set_rejected_unknown_length",
         }
     }
@@ -365,6 +413,9 @@ pub struct MetricsRegistry {
     request_duration: Mutex<HashMap<String, Histogram>>,
     ttft_seconds: Mutex<HashMap<String, Histogram>>,
     overlap_blocks: Mutex<HashMap<String, Histogram>>,
+    cache_selection_blocks: Mutex<HashMap<String, Arc<CacheSelectionBlockCounters>>>,
+    cache_selection_tokens_approx: Mutex<HashMap<String, Arc<CacheSelectionTokenCounters>>>,
+    cache_selection_total: Mutex<HashMap<CacheSelectionKey, Arc<AtomicU64>>>,
     active_load: Mutex<HashMap<ActiveLoadKey, Arc<AtomicI64>>>,
     stale_requests_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     decode_affinity_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
@@ -387,6 +438,28 @@ pub struct MetricsRegistry {
     sls_log_entries_dropped_send_error: AtomicU64,
     sls_log_entries_dropped_shutdown_limit: AtomicU64,
     sls_log_queue_depth: AtomicI64,
+}
+
+#[derive(Debug, Default)]
+struct CacheSelectionBlockCounters {
+    prompt: AtomicU64,
+    available: AtomicU64,
+    selected: AtomicU64,
+    sacrificed: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct CacheSelectionTokenCounters {
+    prompt: AtomicU64,
+    available: AtomicU64,
+    selected: AtomicU64,
+    sacrificed: AtomicU64,
+}
+
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+struct CacheSelectionKey {
+    model_id: String,
+    outcome: &'static str,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
@@ -574,6 +647,92 @@ impl MetricsRegistry {
             .entry(model_id.to_owned())
             .or_insert_with(|| Histogram::new(OVERLAP_BLOCKS_BUCKETS));
         hist.observe(blocks as f64);
+    }
+
+    /// Record the cache opportunity visible to the router and how much of it
+    /// the final worker selection retained. Block counters exclude prompts
+    /// shorter than one cache block (`prompt_blocks == 0`); those requests are
+    /// still counted with the `unmeasurable` outcome. Token counters are an
+    /// approximation derived from `min(blocks * block_size, candidate_tokens)`
+    /// so a final partial block does not inflate the reported token amount.
+    pub fn record_cache_selection(
+        &self,
+        model_id: &str,
+        prompt_blocks: u64,
+        available_blocks: u64,
+        selected_blocks: u64,
+        candidate_tokens: u64,
+        block_size: u64,
+    ) -> CacheSelectionOutcome {
+        let available_blocks = available_blocks.min(prompt_blocks);
+        let selected_blocks = selected_blocks.min(available_blocks);
+        let outcome =
+            CacheSelectionOutcome::from_blocks(prompt_blocks, available_blocks, selected_blocks);
+
+        if prompt_blocks > 0 {
+            let counters = {
+                let mut guard = self.cache_selection_blocks.lock();
+                guard
+                    .entry(model_id.to_owned())
+                    .or_insert_with(|| Arc::new(CacheSelectionBlockCounters::default()))
+                    .clone()
+            };
+            counters.prompt.fetch_add(prompt_blocks, Ordering::Relaxed);
+            counters
+                .available
+                .fetch_add(available_blocks, Ordering::Relaxed);
+            counters
+                .selected
+                .fetch_add(selected_blocks, Ordering::Relaxed);
+            counters.sacrificed.fetch_add(
+                available_blocks.saturating_sub(selected_blocks),
+                Ordering::Relaxed,
+            );
+
+            let prompt_tokens_approx = prompt_blocks
+                .saturating_mul(block_size)
+                .min(candidate_tokens);
+            let available_tokens_approx = available_blocks
+                .saturating_mul(block_size)
+                .min(prompt_tokens_approx);
+            let selected_tokens_approx = selected_blocks
+                .saturating_mul(block_size)
+                .min(available_tokens_approx);
+            let token_counters = {
+                let mut guard = self.cache_selection_tokens_approx.lock();
+                guard
+                    .entry(model_id.to_owned())
+                    .or_insert_with(|| Arc::new(CacheSelectionTokenCounters::default()))
+                    .clone()
+            };
+            token_counters
+                .prompt
+                .fetch_add(prompt_tokens_approx, Ordering::Relaxed);
+            token_counters
+                .available
+                .fetch_add(available_tokens_approx, Ordering::Relaxed);
+            token_counters
+                .selected
+                .fetch_add(selected_tokens_approx, Ordering::Relaxed);
+            token_counters.sacrificed.fetch_add(
+                available_tokens_approx.saturating_sub(selected_tokens_approx),
+                Ordering::Relaxed,
+            );
+        }
+
+        let key = CacheSelectionKey {
+            model_id: model_id.to_owned(),
+            outcome: outcome.as_str(),
+        };
+        let counter = {
+            let mut guard = self.cache_selection_total.lock();
+            guard
+                .entry(key)
+                .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+                .clone()
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+        outcome
     }
 
     /// Observe end-to-end request latency (seconds) for
@@ -994,6 +1153,76 @@ impl MetricsRegistry {
         }
         drop(guard);
 
+        // cache-selection opportunity and retention counters
+        out.push_str(
+            "# HELP sgl_router_cache_selection_blocks_total Cache-addressable prompt blocks, globally available matched blocks, selected-worker matched blocks, and sacrificed matched blocks at final route selection.\n",
+        );
+        out.push_str("# TYPE sgl_router_cache_selection_blocks_total counter\n");
+        let guard = self.cache_selection_blocks.lock();
+        let mut models: Vec<&String> = guard.keys().collect();
+        models.sort();
+        for model_id in models {
+            let counters = guard.get(model_id).unwrap();
+            let model_id = escape_label(model_id);
+            for (kind, value) in [
+                ("prompt", counters.prompt.load(Ordering::Relaxed)),
+                ("available", counters.available.load(Ordering::Relaxed)),
+                ("selected", counters.selected.load(Ordering::Relaxed)),
+                ("sacrificed", counters.sacrificed.load(Ordering::Relaxed)),
+            ] {
+                out.push_str(&format!(
+                    "sgl_router_cache_selection_blocks_total{{model_id=\"{}\",kind=\"{}\"}} {}\n",
+                    model_id, kind, value,
+                ));
+            }
+        }
+        drop(guard);
+
+        // cache-selection token opportunities, approximated from block size
+        out.push_str(
+            "# HELP sgl_router_cache_selection_tokens_approx_total Approximate cache-selection token counts derived from matched blocks and the worker page size; capped at candidate prompt tokens.\n",
+        );
+        out.push_str("# TYPE sgl_router_cache_selection_tokens_approx_total counter\n");
+        let guard = self.cache_selection_tokens_approx.lock();
+        let mut models: Vec<&String> = guard.keys().collect();
+        models.sort();
+        for model_id in models {
+            let counters = guard.get(model_id).unwrap();
+            let model_id = escape_label(model_id);
+            for (kind, value) in [
+                ("prompt", counters.prompt.load(Ordering::Relaxed)),
+                ("available", counters.available.load(Ordering::Relaxed)),
+                ("selected", counters.selected.load(Ordering::Relaxed)),
+                ("sacrificed", counters.sacrificed.load(Ordering::Relaxed)),
+            ] {
+                out.push_str(&format!(
+                    "sgl_router_cache_selection_tokens_approx_total{{model_id=\"{}\",kind=\"{}\"}} {}\n",
+                    model_id, kind, value,
+                ));
+            }
+        }
+        drop(guard);
+
+        out.push_str(
+            "# HELP sgl_router_cache_selection_total Final cache-selection decisions by retained-opportunity outcome.\n",
+        );
+        out.push_str("# TYPE sgl_router_cache_selection_total counter\n");
+        let guard = self.cache_selection_total.lock();
+        let mut entries: Vec<(&CacheSelectionKey, u64)> = guard
+            .iter()
+            .map(|(key, value)| (key, value.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by(|a, b| (&a.0.model_id, a.0.outcome).cmp(&(&b.0.model_id, b.0.outcome)));
+        for (key, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_cache_selection_total{{model_id=\"{}\",outcome=\"{}\"}} {}\n",
+                escape_label(&key.model_id),
+                key.outcome,
+                value,
+            ));
+        }
+        drop(guard);
+
         // active_load gauge
         out.push_str(
             "# HELP sgl_router_active_load Per-worker active load (prefill_tokens or decode_blocks).\n",
@@ -1254,7 +1483,7 @@ impl MetricsRegistry {
 
         // context_filtered_total
         out.push_str(
-            "# HELP sgl_router_context_filtered_total Requests affected by per-worker context-window eligibility filtering. Limited workers are excluded when the prompt-plus-output budget exceeds their ceiling or cannot be computed reliably; empty_set variants indicate a 503 rejection.\n",
+            "# HELP sgl_router_context_filtered_total Requests affected by per-worker input-length eligibility filtering. Bounded workers are excluded when the input token count is outside their range or cannot be computed reliably; requested output limits are ignored; empty_set variants indicate a 503 rejection.\n",
         );
         out.push_str("# TYPE sgl_router_context_filtered_total counter\n");
         let guard = self.context_filtered_total.lock();
@@ -1565,15 +1794,23 @@ mod tests {
     #[test]
     fn context_filtered_counts_distinct_reasons() {
         let reg = MetricsRegistry::new();
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedBelowMinimum);
         reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedOutsideRange);
         reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedUnknownLength);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedBelowMinimum);
         reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedOutsideRange);
         reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedUnknownLength);
         let out = reg.render();
         for reason in [
+            "worker_excluded_below_minimum",
             "worker_excluded_over_limit",
+            "worker_excluded_outside_range",
             "worker_excluded_unknown_length",
+            "empty_set_rejected_below_minimum",
             "empty_set_rejected_over_limit",
+            "empty_set_rejected_outside_range",
             "empty_set_rejected_unknown_length",
         ] {
             assert!(
@@ -1868,6 +2105,105 @@ mod tests {
             out.contains(r#"sgl_router_overlap_blocks_bucket{model_id="tiny",le="4"} 1"#),
             "bucket le=4 should be 1; got:\n{out}",
         );
+    }
+
+    #[test]
+    fn record_cache_selection_emits_block_sums_and_outcomes() {
+        let reg = MetricsRegistry::new();
+        assert_eq!(
+            reg.record_cache_selection("tiny", 100, 80, 20, 100 * 64, 64),
+            CacheSelectionOutcome::RetainedSomeAvailable
+        );
+        assert_eq!(
+            reg.record_cache_selection("tiny", 100, 80, 0, 100 * 64, 64),
+            CacheSelectionOutcome::SacrificedAllAvailable
+        );
+        assert_eq!(
+            reg.record_cache_selection("tiny", 50, 30, 30, 50 * 64, 64),
+            CacheSelectionOutcome::RetainedAllAvailable
+        );
+        assert_eq!(
+            reg.record_cache_selection("tiny", 25, 0, 0, 25 * 64, 64),
+            CacheSelectionOutcome::NoAvailableCache
+        );
+        assert_eq!(
+            reg.record_cache_selection("tiny", 0, 0, 0, 0, 64),
+            CacheSelectionOutcome::Unmeasurable
+        );
+
+        let out = reg.render();
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="prompt"} 275"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="available"} 190"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="selected"} 50"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="sacrificed"} 140"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="prompt"} 17600"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="available"} 12160"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="selected"} 3200"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="sacrificed"} 8960"#
+        ));
+        for outcome in [
+            "retained_some_available",
+            "sacrificed_all_available",
+            "retained_all_available",
+            "no_available_cache",
+            "unmeasurable",
+        ] {
+            assert!(out.contains(&format!(
+                "sgl_router_cache_selection_total{{model_id=\"tiny\",outcome=\"{outcome}\"}} 1"
+            )));
+        }
+    }
+
+    #[test]
+    fn record_cache_selection_clamps_inconsistent_block_counts() {
+        let reg = MetricsRegistry::new();
+        reg.record_cache_selection("tiny", 10, 20, 30, 10 * 64, 64);
+
+        let out = reg.render();
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="available"} 10"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="selected"} 10"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_blocks_total{model_id="tiny",kind="sacrificed"} 0"#
+        ));
+    }
+
+    #[test]
+    fn record_cache_selection_token_approximation_respects_partial_prompt_block() {
+        let reg = MetricsRegistry::new();
+        reg.record_cache_selection("tiny", 2, 2, 1, 65, 64);
+
+        let out = reg.render();
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="prompt"} 65"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="available"} 65"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="selected"} 64"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_cache_selection_tokens_approx_total{model_id="tiny",kind="sacrificed"} 1"#
+        ));
     }
 
     #[test]

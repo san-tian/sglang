@@ -54,6 +54,9 @@ pub struct Config {
     /// upstream. The upstream credential is injected at the gateway and
     /// always replaces the client credential before proxying.
     pub external_model: Option<ExternalModelConfig>,
+    /// Opt in to raw prompt token counts for context-range routing when an
+    /// engine-equivalent chat encoder is unavailable. Disabled by default.
+    pub allow_raw_context_tokens: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
@@ -377,6 +380,11 @@ pub enum CacheTreeSource {
     /// no worker ZMQ port needed). Block size from `--cache-tree-page-size`.
     #[value(name = "route_history")]
     RouteHistory,
+    /// Hash prompts from route history and query/feed only the configured
+    /// remote cache-state service. No local prefix tree is populated or used
+    /// as a fallback.
+    #[value(name = "remote")]
+    Remote,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
@@ -446,6 +454,9 @@ pub struct CacheAwareConfig {
     ///     needs NO worker ZMQ port — works over NAT/Vast public mappings.
     ///     The block size comes from `--cache-tree-page-size` (the oracle is
     ///     seeded at startup) instead of worker introspection.
+    ///   `Remote`: use the same route-history hashing, but query and feed
+    ///     only remote cache-state. The local tree stays empty and is never a
+    ///     fallback.
     pub tree_source: CacheTreeSource,
     /// Opt-in TTFT-first routing mode. When false, cache-aware selection keeps
     /// its existing cache-first semantics. When true, selection scores workers

@@ -15,8 +15,159 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Response};
 use bytes::Bytes;
 use reqwest::{Client, Url};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const MAX_ERROR_SUMMARY_BYTES: usize = 1_024;
+const MAX_ERROR_BODY_METADATA_BYTES: usize = 16 * 1_024;
+
+#[derive(Clone, Debug)]
+struct UpstreamFailureContext {
+    worker: String,
+    route: String,
+    request_id: String,
+    trace_id: String,
+    stream: bool,
+    started: Instant,
+}
+
+impl UpstreamFailureContext {
+    fn new(worker: &Url, route: &str, headers: &HeaderMap, stream: bool) -> Self {
+        Self {
+            worker: safe_worker_identity(worker),
+            route: route.to_string(),
+            request_id: safe_header_field(headers, "x-request-id"),
+            trace_id: safe_header_field(headers, "x-trace-id"),
+            stream,
+            started: Instant::now(),
+        }
+    }
+
+    fn log(
+        &self,
+        failure_class: &'static str,
+        upstream_status: Option<reqwest::StatusCode>,
+        gateway_status: u16,
+        content_type: Option<&str>,
+        response_body: Option<&[u8]>,
+    ) {
+        let summary = response_body.and_then(summarize_upstream_json_error);
+        let body_bytes = response_body.map_or(0, <[u8]>::len);
+        let response_body_truncated = response_body
+            .is_some_and(|body| body.len() > MAX_ERROR_BODY_METADATA_BYTES)
+            || summary.as_ref().is_some_and(|value| value.truncated);
+        let error_summary = summary
+            .as_ref()
+            .map(|value| value.text.as_str())
+            .unwrap_or("-");
+        let content_type = content_type
+            .map(|value| sanitize_bounded(value, 128).0)
+            .unwrap_or_else(|| "-".to_string());
+        let upstream_status = upstream_status.map_or(0, |status| status.as_u16());
+
+        tracing::warn!(
+            event = "worker_upstream_failure",
+            failure_class,
+            worker = %self.worker,
+            route = %self.route,
+            upstream_status,
+            gateway_status,
+            latency_ms = self.started.elapsed().as_millis() as u64,
+            request_id = %self.request_id,
+            trace_id = %self.trace_id,
+            stream = self.stream,
+            content_type = %content_type,
+            response_body_bytes = body_bytes,
+            response_body_truncated,
+            error_summary = %error_summary,
+            "worker_upstream_failure"
+        );
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SafeErrorSummary {
+    text: String,
+    truncated: bool,
+}
+
+fn safe_worker_identity(worker: &Url) -> String {
+    let mut safe = worker.clone();
+    let _ = safe.set_username("");
+    let _ = safe.set_password(None);
+    safe.set_query(None);
+    safe.set_fragment(None);
+    safe.to_string()
+}
+
+fn safe_header_field(headers: &HeaderMap, name: &str) -> String {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| sanitize_bounded(value, 256).0)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn summarize_upstream_json_error(body: &[u8]) -> Option<SafeErrorSummary> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let root = value.as_object()?;
+    let mut fields = BTreeMap::new();
+    collect_allowed_error_fields(root, &mut fields);
+    if let Some(error) = root.get("error").and_then(serde_json::Value::as_object) {
+        collect_allowed_error_fields(error, &mut fields);
+    }
+    if fields.is_empty() {
+        return None;
+    }
+    let serialized = serde_json::to_string(&fields).ok()?;
+    let (text, truncated) = sanitize_bounded(&serialized, MAX_ERROR_SUMMARY_BYTES);
+    Some(SafeErrorSummary { text, truncated })
+}
+
+fn collect_allowed_error_fields(
+    object: &serde_json::Map<String, serde_json::Value>,
+    output: &mut BTreeMap<&'static str, String>,
+) {
+    for name in ["code", "detail", "message", "type"] {
+        let Some(value) = object.get(name) else {
+            continue;
+        };
+        let scalar = match value {
+            serde_json::Value::String(value) => Some(value.clone()),
+            serde_json::Value::Number(value) => Some(value.to_string()),
+            serde_json::Value::Bool(value) => Some(value.to_string()),
+            _ => None,
+        };
+        if let Some(value) = scalar {
+            output.insert(name, sanitize_bounded(&value, MAX_ERROR_SUMMARY_BYTES).0);
+        }
+    }
+}
+
+fn sanitize_bounded(value: &str, max_bytes: usize) -> (String, bool) {
+    let mut output = String::with_capacity(value.len().min(max_bytes));
+    let mut truncated = false;
+    for ch in value.chars() {
+        let ch = if ch.is_control() { ' ' } else { ch };
+        if output.len() + ch.len_utf8() > max_bytes {
+            truncated = true;
+            break;
+        }
+        output.push(ch);
+    }
+    (output, truncated)
+}
+
+fn transport_failure_class(error: &ApiError) -> &'static str {
+    match error {
+        ApiError::UpstreamTimeout { .. } => "upstream_timeout",
+        ApiError::UpstreamUnreachable { .. } => "upstream_unreachable",
+        ApiError::UpstreamStatus { .. } => "response_body_transport",
+        _ => "upstream_transport",
+    }
+}
 
 /// Parse a worker URL emitted by discovery.  On failure, trip the worker's
 /// circuit breaker so the malformed worker drops out of subsequent
@@ -223,6 +374,7 @@ impl Proxy {
         body: Bytes,
     ) -> Result<(Response<Body>, Bytes), ApiError> {
         let worker_url = parse_worker_url(worker_url, breaker)?;
+        let failure_context = UpstreamFailureContext::new(&worker_url, path, headers, false);
         let url = worker_url.join(path).map_err(|e| {
             ApiError::Internal(anyhow::Error::new(e).context(format!("join worker path {path}")))
         })?;
@@ -235,11 +387,21 @@ impl Proxy {
         req = req
             .header("content-type", "application/json")
             .timeout(self.request_timeout);
-        let resp = req.send().await.map_err(|e| {
-            breaker.record_failure();
-            Self::classify_reqwest_error_for(worker_url.clone(), e, path)
-        })?;
+        let resp = match req.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                breaker.record_failure();
+                let error = Self::classify_reqwest_error_for(worker_url.clone(), error, path);
+                failure_context.log(transport_failure_class(&error), None, 502, None, None);
+                return Err(error);
+            }
+        };
         let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned);
         // Defer breaker recording until after the body completes — a
         // worker that returns 2xx headers and then drops mid-body is
         // still failing the request, and crediting it as healthy lets
@@ -248,19 +410,28 @@ impl Proxy {
         // until after the read attempt to record exactly once.
         let bytes = match resp.bytes().await {
             Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(
-                    upstream = %url,
-                    status = %status,
-                    error = ?e,
-                    "upstream dropped connection mid-body",
-                );
+            Err(_) => {
                 breaker.record_failure();
-                return Err(ApiError::UpstreamStatus { status });
+                let error = ApiError::UpstreamStatus { status };
+                failure_context.log(
+                    transport_failure_class(&error),
+                    Some(status),
+                    502,
+                    content_type.as_deref(),
+                    None,
+                );
+                return Err(error);
             }
         };
         if status.is_server_error() {
             breaker.record_failure();
+            failure_context.log(
+                "upstream_status",
+                Some(status),
+                status.as_u16(),
+                content_type.as_deref(),
+                Some(&bytes),
+            );
         } else {
             breaker.record_success();
         }
@@ -443,6 +614,7 @@ impl Proxy {
         on_client_disconnect: Option<Box<dyn FnOnce(sse::ClientDisconnectPhase) + Send + 'static>>,
     ) -> Result<Response<Body>, ApiError> {
         let worker_url = parse_worker_url(worker_url, breaker)?;
+        let failure_context = UpstreamFailureContext::new(&worker_url, path, headers, true);
         let url = worker_url.join(path).map_err(|e| {
             ApiError::Internal(anyhow::Error::new(e).context(format!("join worker path {path}")))
         })?;
@@ -455,10 +627,15 @@ impl Proxy {
         req = req
             .header("content-type", "application/json")
             .header("accept", "text/event-stream");
-        let resp = req.send().await.map_err(|e| {
-            breaker.record_failure();
-            Self::classify_reqwest_error_for(worker_url.clone(), e, path)
-        })?;
+        let resp = match req.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                breaker.record_failure();
+                let error = Self::classify_reqwest_error_for(worker_url.clone(), error, path);
+                failure_context.log(transport_failure_class(&error), None, 502, None, None);
+                return Err(error);
+            }
+        };
         let status = resp.status();
         let upstream_ct = resp
             .headers()
@@ -479,14 +656,30 @@ impl Proxy {
         let on_complete: Option<Box<dyn FnOnce(bool) + Send + 'static>> =
             if status.is_server_error() {
                 breaker.record_failure();
+                failure_context.log(
+                    "upstream_status",
+                    Some(status),
+                    status.as_u16(),
+                    Some(&content_type),
+                    None,
+                );
                 None
             } else {
                 let breaker_for_hook = Arc::clone(breaker);
+                let failure_context = failure_context.clone();
+                let content_type = content_type.clone();
                 Some(Box::new(move |ok| {
                     if ok {
                         breaker_for_hook.record_success();
                     } else {
                         breaker_for_hook.record_failure();
+                        failure_context.log(
+                            "response_body_transport",
+                            Some(status),
+                            status.as_u16(),
+                            Some(&content_type),
+                            None,
+                        );
                     }
                 }))
             };
@@ -682,5 +875,62 @@ mod tests {
     async fn new_returns_result_not_panic() {
         let p = Proxy::new(Duration::from_secs(5)).unwrap();
         assert_eq!(p.request_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn error_summary_only_contains_allowlisted_scalar_fields() {
+        let body = br#"{
+            "message":"top-level",
+            "prompt":"do not log this prompt",
+            "authorization":"redacted-auth-value",
+            "error":{
+                "message":"worker failed",
+                "type":"server_error",
+                "code":502,
+                "detail":"rank 3 unavailable",
+                "request":{"messages":["private"]},
+                "secret":"do-not-log"
+            }
+        }"#;
+        let summary = summarize_upstream_json_error(body).unwrap();
+        assert!(!summary.truncated);
+        let parsed: serde_json::Value = serde_json::from_str(&summary.text).unwrap();
+        assert_eq!(parsed["message"], "worker failed");
+        assert_eq!(parsed["type"], "server_error");
+        assert_eq!(parsed["code"], "502");
+        assert_eq!(parsed["detail"], "rank 3 unavailable");
+        for forbidden in ["prompt", "authorization", "request", "secret", "private"] {
+            assert!(!summary.text.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn error_summary_is_control_free_and_bounded() {
+        let long = format!(
+            "line-1\nline-2\t{}",
+            "x".repeat(MAX_ERROR_SUMMARY_BYTES * 2)
+        );
+        let body = serde_json::to_vec(&json!({"error": {"message": long}})).unwrap();
+        let summary = summarize_upstream_json_error(&body).unwrap();
+        assert!(summary.truncated);
+        assert!(summary.text.len() <= MAX_ERROR_SUMMARY_BYTES);
+        assert!(!summary.text.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn non_json_and_arbitrary_json_have_no_summary() {
+        assert!(summarize_upstream_json_error(b"upstream exploded").is_none());
+        assert!(summarize_upstream_json_error(br#"{"prompt":"private"}"#).is_none());
+    }
+
+    #[test]
+    fn worker_identity_removes_credentials_query_and_fragment() {
+        let url =
+            Url::parse("https://user:password@worker.example:8443/?token=secret#part").unwrap();
+        let identity = safe_worker_identity(&url);
+        assert_eq!(identity, "https://worker.example:8443/");
+        for forbidden in ["user", "password", "token", "secret", "part"] {
+            assert!(!identity.contains(forbidden));
+        }
     }
 }

@@ -39,6 +39,7 @@ from typing import (
     Union,
 )
 
+import msgspec
 import numpy as np
 import requests
 import uvicorn
@@ -768,7 +769,7 @@ async def get_load():
         "Please use '/v1/loads' instead."
     )
     load_results = await _global_state.tokenizer_manager.get_loads(
-        include=["core", "prefill_queue"]
+        include=["core", "prefill_queue", "prefill_work"]
     )
     ts = time.perf_counter()
     load_role = _global_state.tokenizer_manager.server_args.disaggregation_mode
@@ -806,6 +807,8 @@ async def get_load():
                     r.prefill_queue_priority_ahead_uncached_tokens
                 ),
             }
+        if r.prefill_work is not None:
+            entry["prefill_work"] = msgspec.to_builtins(r.prefill_work)
         results.append(entry)
     return results
 

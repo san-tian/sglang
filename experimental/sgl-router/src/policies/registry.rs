@@ -192,13 +192,13 @@ impl PdPoolResolver {
 
     /// Pick a decode worker for a PD-mode handoff with **host affinity**
     /// to the prefill worker. Resolves the decode pool for `model`, applies
-    /// priority and context-window eligibility filtering, then the affinity
+    /// priority and input-length eligibility filtering, then the affinity
     /// rules in [`select_decode_with_affinity`].
     ///
     /// `request_priority` is the effective request priority; decode workers
-    /// whose `min_priority` exceeds it are removed. `required_context_tokens`
-    /// is the prompt plus output budget computed at ingress; a limited decode
-    /// worker is removed when the request is unknown or exceeds its ceiling.
+    /// whose `min_priority` exceeds it are removed. `routing_input_tokens`
+    /// is the reliable input count computed at ingress; a bounded decode
+    /// worker is removed when that count is unknown or outside its range.
     ///
     /// Returns `Err(NoDecodeWorkersAvailable)` if the decode pool is
     /// empty (PD-mode partial failure) — the chat handler then maps to
@@ -210,14 +210,16 @@ impl PdPoolResolver {
         model: &ModelId,
         prefill_url: &str,
         request_priority: i64,
-        required_context_tokens: Option<usize>,
+        routing_input_tokens: Option<usize>,
+        use_input_length_routing: bool,
         dedicated_request: bool,
     ) -> Result<Arc<Worker>, PdResolveError> {
         self.decode_with_affinity_avoiding(
             model,
             prefill_url,
             request_priority,
-            required_context_tokens,
+            routing_input_tokens,
+            use_input_length_routing,
             dedicated_request,
             None,
         )
@@ -231,7 +233,8 @@ impl PdPoolResolver {
         model: &ModelId,
         prefill_url: &str,
         request_priority: i64,
-        required_context_tokens: Option<usize>,
+        routing_input_tokens: Option<usize>,
+        use_input_length_routing: bool,
         dedicated_request: bool,
         excluded: &WorkerId,
     ) -> Result<Arc<Worker>, PdResolveError> {
@@ -239,7 +242,8 @@ impl PdPoolResolver {
             model,
             prefill_url,
             request_priority,
-            required_context_tokens,
+            routing_input_tokens,
+            use_input_length_routing,
             dedicated_request,
             Some(excluded),
         )
@@ -250,7 +254,8 @@ impl PdPoolResolver {
         model: &ModelId,
         prefill_url: &str,
         request_priority: i64,
-        required_context_tokens: Option<usize>,
+        routing_input_tokens: Option<usize>,
+        use_input_length_routing: bool,
         dedicated_request: bool,
         excluded: Option<&WorkerId>,
     ) -> Result<Arc<Worker>, PdResolveError> {
@@ -260,8 +265,14 @@ impl PdPoolResolver {
         }
         let dedicated_eligible = filter_dedicated_eligible(&candidates, dedicated_request);
         let eligible = filter_eligible(&dedicated_eligible.workers, request_priority);
-        let context_eligible = filter_context_eligible(&eligible.workers, required_context_tokens);
-        select_decode_with_affinity(prefill_url, &context_eligible.workers)
+        let context_eligible = use_input_length_routing
+            .then(|| filter_context_eligible(&eligible.workers, routing_input_tokens));
+        let eligible = context_eligible
+            .as_ref()
+            .map_or(eligible.workers.as_slice(), |filtered| {
+                filtered.workers.as_slice()
+            });
+        select_decode_with_affinity(prefill_url, eligible)
             .ok_or(PdResolveError::NoDecodeWorkersAvailable)
     }
 }
@@ -269,8 +280,12 @@ impl PdPoolResolver {
 /// Why context-window filtering removed one or more workers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextFilterReason {
-    /// The request's known prompt-plus-output budget exceeds a worker limit.
+    /// The request's known input token count is below a worker limit.
+    BelowMinimum,
+    /// The request's known input token count exceeds a worker limit.
     OverLimit,
+    /// Different workers were excluded on opposite sides of their ranges.
+    OutsideRange,
     /// The request shape could not be tokenized exactly enough to prove that
     /// it fits. Limited workers are excluded conservatively.
     UnknownLength,
@@ -287,37 +302,65 @@ pub struct ContextEligibleCandidates {
 
 /// Whether at least one candidate declares a router-enforced context limit.
 pub fn has_context_limited_worker(workers: &[Arc<Worker>]) -> bool {
-    workers.iter().any(|w| w.max_context_tokens().is_some())
+    workers
+        .iter()
+        .any(|w| w.min_context_tokens().is_some() || w.max_context_tokens().is_some())
 }
 
-/// Remove workers that cannot safely serve the request's total context.
+/// Remove workers outside the request's input-length routing range.
 ///
-/// Workers without `max_context_tokens` remain eligible and defer validation
-/// to their engine. A limited worker is eligible only when the router has a
-/// reliable prompt-plus-output token count and that count is within the
-/// declared limit. Unknown request length never spills onto a limited worker.
+/// Workers without either context bound remain eligible and defer validation
+/// to their engine. A bounded worker is eligible only when the router has a
+/// reliable input token count within its inclusive range.
+/// Unknown request length never spills onto a bounded worker.
 pub fn filter_context_eligible(
     workers: &[Arc<Worker>],
-    required_context_tokens: Option<usize>,
+    routing_input_tokens: Option<usize>,
 ) -> ContextEligibleCandidates {
-    let reason = required_context_tokens
-        .map(|_| ContextFilterReason::OverLimit)
-        .unwrap_or(ContextFilterReason::UnknownLength);
-    let eligible: Vec<Arc<Worker>> = workers
-        .iter()
-        .filter(|worker| match worker.max_context_tokens() {
+    let mut excluded_below = false;
+    let mut excluded_above = false;
+    let mut excluded_unknown = false;
+    let mut eligible = Vec::with_capacity(workers.len());
+    for worker in workers {
+        let min = worker.min_context_tokens();
+        let max = worker.max_context_tokens();
+        let include = match routing_input_tokens {
+            None if min.is_some() || max.is_some() => {
+                excluded_unknown = true;
+                false
+            }
             None => true,
-            Some(limit) => required_context_tokens.is_some_and(|required| required <= limit),
-        })
-        .cloned()
-        .collect();
+            Some(required) => {
+                let below = min.is_some_and(|limit| required < limit);
+                let above = max.is_some_and(|limit| required > limit);
+                excluded_below |= below;
+                excluded_above |= above;
+                !below && !above
+            }
+        };
+        if include {
+            eligible.push(Arc::clone(worker));
+        }
+    }
     let excluded = eligible.len() != workers.len();
+    let reason = if !excluded {
+        None
+    } else if excluded_unknown {
+        Some(ContextFilterReason::UnknownLength)
+    } else {
+        match (excluded_below, excluded_above) {
+            (true, false) => Some(ContextFilterReason::BelowMinimum),
+            (false, true) => Some(ContextFilterReason::OverLimit),
+            (true, true) => Some(ContextFilterReason::OutsideRange),
+            (false, false) => None,
+        }
+    };
 
     ContextEligibleCandidates {
         excluded_all: excluded && eligible.is_empty(),
         excluded_any: excluded && !eligible.is_empty(),
         workers: eligible,
-        reason: excluded.then_some(reason),
+        reason,
     }
 }
 
@@ -580,6 +623,7 @@ mod tests {
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -608,6 +652,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -626,6 +671,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -644,6 +690,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -789,6 +836,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens,
             bearer_token: None,
             backend: Default::default(),
@@ -843,6 +891,67 @@ mod tests {
             assert!(out.excluded_all);
             assert!(!out.excluded_any);
         }
+    }
+
+    fn range_worker(
+        id: &str,
+        min_context_tokens: Option<usize>,
+        max_context_tokens: Option<usize>,
+    ) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode: WorkerMode::Plain,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            min_context_tokens,
+            max_context_tokens,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+            prefill_members: Vec::new(),
+        }))
+    }
+
+    #[test]
+    fn context_filter_routes_exact_64k_boundary_between_ranges() {
+        let amd = range_worker("amd", None, Some(65_535));
+        let nvidia = range_worker("nvidia", Some(65_536), None);
+        let workers = [Arc::clone(&amd), Arc::clone(&nvidia)];
+
+        let short = filter_context_eligible(&workers, Some(65_535));
+        assert_eq!(
+            short
+                .workers
+                .iter()
+                .map(|w| w.id.0.as_str())
+                .collect::<Vec<_>>(),
+            ["amd"]
+        );
+        assert_eq!(short.reason, Some(ContextFilterReason::BelowMinimum));
+
+        let long = filter_context_eligible(&workers, Some(65_536));
+        assert_eq!(
+            long.workers
+                .iter()
+                .map(|w| w.id.0.as_str())
+                .collect::<Vec<_>>(),
+            ["nvidia"]
+        );
+        assert_eq!(long.reason, Some(ContextFilterReason::OverLimit));
+    }
+
+    #[test]
+    fn context_filter_keeps_unbounded_fallback_below_lower_bound() {
+        let nvidia = range_worker("nvidia", Some(65_536), None);
+        let fallback = range_worker("fallback", None, None);
+        let out = filter_context_eligible(&[nvidia, fallback], Some(1));
+        assert_eq!(out.workers.len(), 1);
+        assert_eq!(out.workers[0].id.0, "fallback");
+        assert_eq!(out.reason, Some(ContextFilterReason::BelowMinimum));
     }
 
     /// Model with only Plain workers → Plain partition.
@@ -1026,6 +1135,7 @@ mod tests {
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),
@@ -1051,7 +1161,7 @@ mod tests {
         let prefill_url = "http://host_a:30000";
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None, false)
+            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None, false, false)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_a:30001",
@@ -1086,7 +1196,14 @@ mod tests {
         assert!(!d1.breaker.allow(), "d1 breaker must be open");
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
@@ -1114,7 +1231,14 @@ mod tests {
         failed.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
@@ -1166,7 +1290,14 @@ mod tests {
         }
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert!(
             chosen.url == "http://host_b:30001" || chosen.url == "http://host_c:30001",
@@ -1202,7 +1333,14 @@ mod tests {
         let _g = d1.load_guard();
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_c:30001",
@@ -1222,7 +1360,14 @@ mod tests {
         )]);
         let resolver = PdPoolResolver::new(r);
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
     }
@@ -1238,7 +1383,7 @@ mod tests {
         ]);
         let resolver = PdPoolResolver::new(r);
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None, false)
+            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None, false, false)
             .unwrap();
         // Both d1 and d2 are at load 0 → either is acceptable. The
         // assertion is only that the function returns Some, not None
@@ -1286,7 +1431,14 @@ mod tests {
         // preserves PD shape and decode_with_affinity surfaces the
         // per-pool code.
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
 

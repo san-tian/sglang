@@ -28,6 +28,7 @@ fn build_test_app(cfg: Config, worker_url: String, bearer_token: Option<String>)
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token,
         backend: Default::default(),
@@ -77,6 +78,7 @@ fn base_config() -> Config {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     };
     cfg
 }
