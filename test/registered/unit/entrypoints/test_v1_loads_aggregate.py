@@ -21,6 +21,11 @@ from sglang.srt.managers.load_snapshot import (
     ShmLoadSnapshotWriter,
     slot_offset,
 )
+from sglang.srt.managers.io_struct import (
+    PrefillWorkMetrics,
+    PrefillWorkOverflowMetrics,
+    PrefillWorkRequestMetrics,
+)
 from sglang.srt.managers.tokenizer_control_mixin import TokenizerControlMixin
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel
@@ -106,7 +111,9 @@ class TestLoadsResponse(CustomTestCase):
         ):
             response = asyncio.run(http_server.get_load())
 
-        self.assertEqual(manager.requested_include, ["core", "prefill_queue"])
+        self.assertEqual(
+            manager.requested_include, ["core", "prefill_queue", "prefill_work"]
+        )
         self.assertEqual(response[0]["num_reqs"], 5)
         self.assertEqual(response[0]["num_running_reqs"], 2)
         self.assertEqual(response[0]["num_waiting_uncached_tokens"], 400)
@@ -139,6 +146,60 @@ class TestLoadsResponse(CustomTestCase):
 
 
 class TestGetLoads(CustomTestCase):
+    def test_prefill_work_snapshot_round_trips_and_is_optional(self):
+        work = PrefillWorkMetrics(
+            schema_version=1,
+            snapshot_id=42,
+            generated_at_ms=1234,
+            worker_boot_id="boot-a",
+            priority_scheduling_enabled=False,
+            schedule_low_priority_values_first=False,
+            detail_complete=False,
+            truncated=True,
+            waiting_prefill=(
+                PrefillWorkRequestMetrics(
+                    request_id="req-1",
+                    priority=100,
+                    total_uncached_tokens=4096,
+                ),
+            ),
+            running_prefill=(),
+            overflow_summary=(
+                PrefillWorkOverflowMetrics(
+                    priority=0,
+                    length_bucket=8192,
+                    request_count=2,
+                    total_uncached_tokens=10000,
+                ),
+            ),
+        )
+        snapshot = LoadSnapshot(dp_rank=0, prefill_work=work)
+        wire_value = msgspec.to_builtins(work)
+        self.assertIsInstance(wire_value, dict)
+        self.assertIsInstance(wire_value["waiting_prefill"][0], dict)
+        path = _temp_path()
+        writer = ShmLoadSnapshotWriter(path, dp_size=1, dp_rank=0)
+        reader = ShmLoadSnapshotReader(path, dp_size=1)
+        try:
+            writer.write(snapshot)
+            decoded = reader.read(0)
+            self.assertIsNotNone(decoded)
+            value = decoded.to_dict({"core", "prefill_work"})
+            self.assertEqual(value["prefill_work"]["snapshot_id"], 42)
+            self.assertEqual(
+                value["prefill_work"]["waiting_prefill"][0]["request_id"],
+                "req-1",
+            )
+            self.assertEqual(
+                value["prefill_work"]["overflow_summary"][0]["request_count"], 2
+            )
+            self.assertNotIn("prefill_work", LoadSnapshot(dp_rank=0).to_dict({"core"}))
+        finally:
+            reader.close()
+            writer.close()
+            if os.path.exists(path):
+                os.unlink(path)
+
     def test_load_snapshot_wire_format_is_msgpack_slots(self):
         path = _temp_path()
         writer = ShmLoadSnapshotWriter(path, dp_size=2, dp_rank=1)
