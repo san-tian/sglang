@@ -8,7 +8,8 @@ use crate::health::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use crate::router_state::RouterStateLoadOverlay;
 use axum::http::{header, HeaderMap, HeaderValue};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 /// Merge router-local reservations with the shared snapshot without counting
@@ -90,6 +91,90 @@ pub struct MemberPrefillLoadSnapshot {
     pub snapshot: PrefillLoadSnapshot,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct PrefillWorkRequestSnapshot {
+    pub request_id: String,
+    pub priority: i64,
+    pub total_uncached_tokens: usize,
+    pub processed_uncached_tokens: usize,
+    pub current_chunk_end_tokens: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct PrefillWorkOverflowSnapshot {
+    pub priority: i64,
+    pub length_bucket: usize,
+    pub request_count: usize,
+    pub total_uncached_tokens: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct PrefillWorkSnapshot {
+    pub schema_version: u32,
+    pub snapshot_id: u64,
+    pub generated_at_ms: u64,
+    pub worker_boot_id: String,
+    pub priority_scheduling_enabled: bool,
+    pub schedule_low_priority_values_first: bool,
+    pub detail_complete: bool,
+    pub truncated: bool,
+    #[serde(default)]
+    pub waiting_prefill: Vec<PrefillWorkRequestSnapshot>,
+    #[serde(default)]
+    pub running_prefill: Vec<PrefillWorkRequestSnapshot>,
+    #[serde(default)]
+    pub overflow_summary: Vec<PrefillWorkOverflowSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefillReservation {
+    pub request_id: String,
+    pub priority: i64,
+    pub tokens: usize,
+}
+
+impl PrefillWorkSnapshot {
+    pub fn work_ahead_tokens(&self, candidate_priority: i64) -> Option<usize> {
+        if self.schema_version != 1 {
+            return None;
+        }
+        let mut work = 0usize;
+        for req in &self.waiting_prefill {
+            let better_priority = self.priority_blocks(req.priority, candidate_priority);
+            if better_priority {
+                work = work.saturating_add(req.total_uncached_tokens);
+            }
+        }
+        for req in &self.running_prefill {
+            work = work.saturating_add(
+                req.current_chunk_end_tokens
+                    .saturating_sub(req.processed_uncached_tokens),
+            );
+        }
+        // Truncated entries are conservative aggregate pressure. They cannot
+        // be request-id deduplicated, so callers still merge this with the
+        // reservation using max rather than addition.
+        for entry in &self.overflow_summary {
+            let better_priority = self.priority_blocks(entry.priority, candidate_priority);
+            if better_priority {
+                work = work.saturating_add(entry.total_uncached_tokens);
+            }
+        }
+        Some(work)
+    }
+
+    pub fn priority_blocks(&self, existing_priority: i64, candidate_priority: i64) -> bool {
+        if !self.priority_scheduling_enabled || existing_priority == candidate_priority {
+            return true;
+        }
+        if self.schedule_low_priority_values_first {
+            existing_priority < candidate_priority
+        } else {
+            existing_priority > candidate_priority
+        }
+    }
+}
+
 /// Parse a host from a worker URL. Matches SMG's `worker_builder.rs`
 /// fallback chain: parse as-is, retry with `http://` prefix if missing,
 /// fall back to `"localhost"` if both fail. The fallback is defensive —
@@ -149,6 +234,8 @@ pub struct PendingLoadGuard {
     counter: Arc<AtomicUsize>,
     token_counter: Arc<AtomicUsize>,
     tokens: usize,
+    reservations: Option<Arc<RwLock<HashMap<String, PrefillReservation>>>>,
+    request_id: Option<String>,
 }
 
 impl PendingLoadGuard {
@@ -164,6 +251,39 @@ impl PendingLoadGuard {
             counter,
             token_counter,
             tokens,
+            reservations: None,
+            request_id: None,
+        }
+    }
+
+    pub(crate) fn with_tokens_and_request(
+        counter: Arc<AtomicUsize>,
+        token_counter: Arc<AtomicUsize>,
+        reservations: Arc<RwLock<HashMap<String, PrefillReservation>>>,
+        request_id: String,
+        priority: i64,
+        tokens: usize,
+    ) -> Self {
+        let tokens = tokens.max(1);
+        counter.fetch_add(1, Ordering::Relaxed);
+        token_counter.fetch_add(tokens, Ordering::Relaxed);
+        reservations
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                request_id.clone(),
+                PrefillReservation {
+                    request_id: request_id.clone(),
+                    priority,
+                    tokens,
+                },
+            );
+        Self {
+            counter,
+            token_counter,
+            tokens,
+            reservations: Some(reservations),
+            request_id: Some(request_id),
         }
     }
 }
@@ -172,6 +292,12 @@ impl Drop for PendingLoadGuard {
     fn drop(&mut self) {
         self.counter.fetch_sub(1, Ordering::Relaxed);
         self.token_counter.fetch_sub(self.tokens, Ordering::Relaxed);
+        if let (Some(reservations), Some(request_id)) = (&self.reservations, &self.request_id) {
+            reservations
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(request_id);
+        }
     }
 }
 
@@ -273,10 +399,17 @@ pub struct Worker {
     /// state rather than a probe failure.
     reported_prefill_load: Arc<RwLock<Option<PrefillLoadSnapshot>>>,
     reported_prefill_load_updated_ms: Arc<AtomicU64>,
+    reported_load_stale: Arc<AtomicBool>,
+    reported_load_failures: Arc<AtomicUsize>,
+    reported_load_recovery_successes: Arc<AtomicUsize>,
+    reported_load_circuit_open: Arc<AtomicBool>,
     /// Per-Prefill-member snapshots exposed by a logical PD proxy. Keeping
     /// members separate preserves parallel capacity and lets cache ownership
     /// be joined to the load of the exact physical Prefill worker.
     reported_prefill_members: Arc<RwLock<Vec<MemberPrefillLoadSnapshot>>>,
+    reported_prefill_work: Arc<RwLock<Option<PrefillWorkSnapshot>>>,
+    reported_prefill_member_work: Arc<RwLock<Vec<(String, PrefillWorkSnapshot)>>>,
+    prefill_reservations: Arc<RwLock<HashMap<String, PrefillReservation>>>,
     /// Optional global pending snapshot from the single-writer router-state
     /// service. Present only in multi-replica gateway deployments.
     global_pending: Option<Arc<RouterStateLoadOverlay>>,
@@ -335,7 +468,14 @@ impl Worker {
             reported_load: Arc::new(AtomicI64::new(REPORTED_LOAD_UNSET)),
             reported_prefill_load: Arc::new(RwLock::new(None)),
             reported_prefill_load_updated_ms: Arc::new(AtomicU64::new(0)),
+            reported_load_stale: Arc::new(AtomicBool::new(false)),
+            reported_load_failures: Arc::new(AtomicUsize::new(0)),
+            reported_load_recovery_successes: Arc::new(AtomicUsize::new(0)),
+            reported_load_circuit_open: Arc::new(AtomicBool::new(false)),
             reported_prefill_members: Arc::new(RwLock::new(Vec::new())),
+            reported_prefill_work: Arc::new(RwLock::new(None)),
+            reported_prefill_member_work: Arc::new(RwLock::new(Vec::new())),
+            prefill_reservations: Arc::new(RwLock::new(HashMap::new())),
             global_pending: None,
             bearer_token: spec.bearer_token,
         }
@@ -474,6 +614,70 @@ impl Worker {
         self.reported_load.store(v, Ordering::Relaxed);
     }
 
+    pub fn reported_load_stale(&self) -> bool {
+        self.reported_load_stale.load(Ordering::Relaxed)
+    }
+
+    pub fn set_reported_load_stale(&self, stale: bool) {
+        self.reported_load_stale.store(stale, Ordering::Relaxed);
+    }
+
+    pub fn reported_load_failures(&self) -> usize {
+        self.reported_load_failures.load(Ordering::Relaxed)
+    }
+
+    pub fn reported_load_circuit_open(&self) -> bool {
+        self.reported_load_circuit_open.load(Ordering::Relaxed)
+    }
+
+    /// Record a failed load-probe round and open the load-data circuit once
+    /// the configured threshold is reached. This circuit controls snapshot
+    /// trust only; worker health remains an independent fail-closed gate.
+    pub fn record_reported_load_failure(&self, threshold: usize) -> usize {
+        self.reported_load_recovery_successes
+            .store(0, Ordering::Relaxed);
+        let failures = self
+            .reported_load_failures
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        if failures >= threshold.max(1) {
+            self.reported_load_circuit_open
+                .store(true, Ordering::Relaxed);
+        }
+        failures
+    }
+
+    /// Return true when a successful load snapshot may be published. An open
+    /// circuit requires multiple consecutive successes before closing.
+    pub fn record_reported_load_success(&self, recovery_threshold: usize) -> bool {
+        self.reported_load_failures.store(0, Ordering::Relaxed);
+        if !self.reported_load_circuit_open() {
+            self.reported_load_recovery_successes
+                .store(0, Ordering::Relaxed);
+            return true;
+        }
+        let successes = self
+            .reported_load_recovery_successes
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        if successes < recovery_threshold.max(1) {
+            return false;
+        }
+        self.reported_load_recovery_successes
+            .store(0, Ordering::Relaxed);
+        self.reported_load_circuit_open
+            .store(false, Ordering::Relaxed);
+        true
+    }
+
+    pub fn reset_reported_load_poll_state(&self) {
+        self.reported_load_failures.store(0, Ordering::Relaxed);
+        self.reported_load_recovery_successes
+            .store(0, Ordering::Relaxed);
+        self.reported_load_circuit_open
+            .store(false, Ordering::Relaxed);
+    }
+
     pub fn reported_prefill_load(&self) -> Option<PrefillLoadSnapshot> {
         self.reported_prefill_load
             .read()
@@ -494,6 +698,36 @@ impl Worker {
             .reported_prefill_load
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
+    }
+
+    pub fn reported_prefill_work(&self) -> Option<PrefillWorkSnapshot> {
+        self.reported_prefill_work
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn set_reported_prefill_work(&self, snapshot: Option<PrefillWorkSnapshot>) {
+        *self
+            .reported_prefill_work
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
+    }
+
+    pub fn reported_prefill_member_work(&self, url: &str) -> Option<PrefillWorkSnapshot> {
+        self.reported_prefill_member_work
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .find(|(member_url, _)| member_url == url)
+            .map(|(_, snapshot)| snapshot.clone())
+    }
+
+    pub fn set_reported_prefill_member_work(&self, snapshots: Vec<(String, PrefillWorkSnapshot)>) {
+        *self
+            .reported_prefill_member_work
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshots;
     }
 
     pub fn reported_prefill_load_age_ms(&self) -> Option<u64> {
@@ -586,6 +820,31 @@ impl Worker {
             self.pending_tokens.clone(),
             tokens,
         )
+    }
+
+    pub fn pending_guard_with_request(
+        &self,
+        request_id: impl Into<String>,
+        priority: i64,
+        tokens: usize,
+    ) -> PendingLoadGuard {
+        PendingLoadGuard::with_tokens_and_request(
+            self.pending_requests.clone(),
+            self.pending_tokens.clone(),
+            self.prefill_reservations.clone(),
+            request_id.into(),
+            priority,
+            tokens,
+        )
+    }
+
+    pub fn pending_prefill_reservations(&self) -> Vec<PrefillReservation> {
+        self.prefill_reservations
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .cloned()
+            .collect()
     }
 }
 

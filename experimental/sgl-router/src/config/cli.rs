@@ -99,9 +99,10 @@ pub struct Cli {
     pub hit_load_rel_threshold: Option<f32>,
     /// Where the prefix tree gets its data: `zmq` (default; subscribe to
     /// worker ZMQ KV-events, precise but needs the worker ZMQ port reachable)
-    /// or `route_history` (router feeds the tree from its own routing
-    /// decisions — approximate, but needs NO worker ZMQ port; works over
-    /// NAT/Vast public mappings). Only meaningful with cache-aware policies.
+    /// `route_history` (router feeds a local tree and optional remote
+    /// cache-state), or `remote` (query/feed only remote cache-state; no
+    /// local tree fallback). The history modes need no worker ZMQ port.
+    /// Only meaningful with cache-aware policies.
     #[arg(long, value_enum)]
     pub cache_tree_source: Option<CacheTreeSource>,
     /// Block (page) size for route-history prefix hashing. REQUIRED when
@@ -462,15 +463,24 @@ impl Cli {
                 return Err(anyhow!("--ttft-token-scale must be greater than 0"));
             }
         }
-        // route_history tree source needs an explicit page size: there is no
-        // worker introspection in that mode to seed the block-size oracle, and
+        // History-based sources need an explicit page size: there is no
+        // worker introspection in those modes to seed the block-size oracle, and
         // a wrong block size makes the router's hashes never match the
         // workers' — silent cache-routing failure. Require it explicitly.
         let tree_source = self.cache_tree_source.unwrap_or_default();
-        if tree_source == CacheTreeSource::RouteHistory && self.cache_tree_page_size.is_none() {
+        if matches!(
+            tree_source,
+            CacheTreeSource::RouteHistory | CacheTreeSource::Remote
+        ) && self.cache_tree_page_size.is_none()
+        {
             return Err(anyhow!(
-                "--cache-tree-source route_history requires --cache-tree-page-size \
+                "--cache-tree-source route_history/remote requires --cache-tree-page-size \
                  (must equal the workers' --page-size)"
+            ));
+        }
+        if tree_source == CacheTreeSource::Remote && self.cache_state_url.is_none() {
+            return Err(anyhow!(
+                "--cache-tree-source remote requires --cache-state-url"
             ));
         }
         if tree_source == CacheTreeSource::Zmq
@@ -478,7 +488,8 @@ impl Cli {
         {
             return Err(anyhow!(
                 "--cache-tree-page-size / --cache-tree-bigram only apply to \
-                 --cache-tree-source route_history (zmq mode reads them from /server_info)"
+                 --cache-tree-source route_history/remote \
+                 (zmq mode reads them from /server_info)"
             ));
         }
         // The relative hit-load guard arms the divert logic; a value < 1.0
@@ -1476,6 +1487,53 @@ mod tests {
         assert_eq!(c.cache_tree_page_size, Some(64));
         assert!(c.cache_tree_bigram);
         assert_eq!(c.cache_tree_max_nodes, 50000);
+    }
+
+    #[test]
+    fn remote_cache_tree_requires_remote_state_url() {
+        let err = into_config_owned(with_model(&[
+            "--policy",
+            "cache_aware_zmq",
+            "--cache-tree-source",
+            "remote",
+            "--cache-tree-page-size",
+            "64",
+            "--worker-urls",
+            "http://worker:30000",
+        ]))
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            err.contains("--cache-tree-source remote requires --cache-state-url"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn remote_cache_tree_accepts_explicit_remote_state() {
+        let c = into_config_owned(with_model(&[
+            "--policy",
+            "cache_aware_zmq",
+            "--cache-tree-source",
+            "remote",
+            "--cache-tree-page-size",
+            "64",
+            "--cache-tree-bigram",
+            "--cache-state-url",
+            "http://cache-state-a:8080,http://cache-state-b:8080",
+            "--worker-urls",
+            "http://worker:30000",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            c.model.cache_aware.unwrap().tree_source,
+            CacheTreeSource::Remote
+        );
+        assert_eq!(c.cache_tree_page_size, Some(64));
+        assert!(c.cache_tree_bigram);
+        assert!(c.cache_state_url.is_some());
     }
 
     #[test]
