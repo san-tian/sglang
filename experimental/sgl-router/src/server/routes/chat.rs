@@ -9,7 +9,9 @@ use crate::policies::registry::{
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::router_state::RouterStateReservationGuard;
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
+use crate::server::entry_auth::{
+    filter_key_scope, input_length_routing_enabled, GatewayKeyIdentity,
+};
 use crate::server::error::ApiError;
 use crate::server::metrics::{
     MetricsRegistry, PriorityFilterOutcome, RequestOutcome, SseClientDisconnectPhase,
@@ -499,6 +501,7 @@ async fn chat_completions_inner(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
+    let use_input_length_routing = input_length_routing_enabled(entry_identity.as_ref());
 
     // Tokenize once at ingress whenever it can pay off — decoupled from the
     // routing policy, because forwarding `input_ids` is a property of the
@@ -521,7 +524,7 @@ async fn chat_completions_inner(
     // injection). `parse_probe` already validated the object shape.
     let want_tokens = ctx.tokenizers.has_chat_encoder(&model_str)
         || policy.needs_request_tokens()
-        || has_context_limited_worker(&workers);
+        || (use_input_length_routing && has_context_limited_worker(&workers));
     let request_value: Option<serde_json::Value> = if want_tokens {
         Some(serde_json::from_slice(&body).map_err(|_| {
             ApiError::BadRequest("invalid request: body must be a JSON object".into())
@@ -544,15 +547,20 @@ async fn chat_completions_inner(
     // engine-equivalence gate below and never consumes these approximate ids.
     let reliable_prompt_tokens = match (request_value.as_ref(), request_tokens.as_ref()) {
         (Some(value), Some(tokens))
-            if (tokens.engine_equivalent && context_prompt_tokens_reliable(value))
-                || ctx.config.allow_raw_context_tokens =>
+            if use_input_length_routing
+                && ((tokens.engine_equivalent && context_prompt_tokens_reliable(value))
+                    || ctx.config.allow_raw_context_tokens) =>
         {
             Some(tokens.ids.len())
         }
         _ => None,
     };
     let routing_input_tokens = reliable_prompt_tokens;
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?;
+    let workers = if use_input_length_routing {
+        enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?
+    } else {
+        workers
+    };
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     // Sticky-session routing key. When the sticky policy is configured,
@@ -613,6 +621,7 @@ async fn chat_completions_inner(
                     &worker.url,
                     request_priority,
                     routing_input_tokens,
+                    use_input_length_routing,
                     dedicated_request,
                 )
                 .map_err(|e| match e {
@@ -874,6 +883,7 @@ async fn chat_completions_inner(
                 &worker.url,
                 request_priority,
                 routing_input_tokens,
+                use_input_length_routing,
                 dedicated_request,
                 &failed_worker,
             ) {

@@ -5,7 +5,7 @@ TBD - created by archiving change request-length-raw-chat-fallback. Update Purpo
 ## Requirements
 ### Requirement: Raw context counting is opt-in
 
-The gateway SHALL default to fail-closed unknown-length handling for bounded workers. When `ALLOW_RAW_CONTEXT_TOKENS=1` is set, the Chat handler SHALL use available extracted text tokens for input-range filtering even when the request carries tools, text-part content, template controls, task controls, reasoning controls, or continuation fields. Requested output limits SHALL NOT be added to the extracted input length. This is a routing-only approximation: the gateway SHALL forward the original request and SHALL NOT inject approximate raw tokens as engine input. Other generation handlers SHALL retain their stricter raw-shape eligibility checks.
+The gateway SHALL default to fail-closed unknown-length handling for bounded workers. When input-length routing is enabled for the request and `ALLOW_RAW_CONTEXT_TOKENS=1` is set, the Chat handler SHALL use available extracted text tokens for input-range filtering even when the request carries tools, text-part content, template controls, task controls, reasoning controls, or continuation fields. Requested output limits SHALL NOT be added to the extracted input length. This is a routing-only approximation: the gateway SHALL forward the original request and SHALL NOT inject approximate raw tokens as engine input. Other generation handlers SHALL retain their stricter raw-shape eligibility checks. On an authenticated gateway, raw-token fallback SHALL therefore affect only the `external_length` key class.
 
 #### Scenario: Default chat request remains fail-closed
 
@@ -32,4 +32,3 @@ The gateway SHALL default to fail-closed unknown-length handling for bounded wor
 
 - **WHEN** raw counting is enabled for a Messages or Responses request with unsupported template, tool, multimodal, reasoning, task, or stateful fields
 - **THEN** that handler SHALL preserve its strict raw-shape eligibility checks
-

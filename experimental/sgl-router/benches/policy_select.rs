@@ -36,6 +36,8 @@ fn workers(n: usize, model: &str) -> Vec<Arc<Worker>> {
                 backend: Default::default(),
                 tier: Default::default(),
                 routes: Default::default(),
+                prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
             })
             .expect("test workers are unmixed");
     }

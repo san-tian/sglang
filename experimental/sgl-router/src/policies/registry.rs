@@ -211,6 +211,7 @@ impl PdPoolResolver {
         prefill_url: &str,
         request_priority: i64,
         routing_input_tokens: Option<usize>,
+        use_input_length_routing: bool,
         dedicated_request: bool,
     ) -> Result<Arc<Worker>, PdResolveError> {
         self.decode_with_affinity_avoiding(
@@ -218,6 +219,7 @@ impl PdPoolResolver {
             prefill_url,
             request_priority,
             routing_input_tokens,
+            use_input_length_routing,
             dedicated_request,
             None,
         )
@@ -232,6 +234,7 @@ impl PdPoolResolver {
         prefill_url: &str,
         request_priority: i64,
         routing_input_tokens: Option<usize>,
+        use_input_length_routing: bool,
         dedicated_request: bool,
         excluded: &WorkerId,
     ) -> Result<Arc<Worker>, PdResolveError> {
@@ -240,6 +243,7 @@ impl PdPoolResolver {
             prefill_url,
             request_priority,
             routing_input_tokens,
+            use_input_length_routing,
             dedicated_request,
             Some(excluded),
         )
@@ -251,6 +255,7 @@ impl PdPoolResolver {
         prefill_url: &str,
         request_priority: i64,
         routing_input_tokens: Option<usize>,
+        use_input_length_routing: bool,
         dedicated_request: bool,
         excluded: Option<&WorkerId>,
     ) -> Result<Arc<Worker>, PdResolveError> {
@@ -260,8 +265,14 @@ impl PdPoolResolver {
         }
         let dedicated_eligible = filter_dedicated_eligible(&candidates, dedicated_request);
         let eligible = filter_eligible(&dedicated_eligible.workers, request_priority);
-        let context_eligible = filter_context_eligible(&eligible.workers, routing_input_tokens);
-        select_decode_with_affinity(prefill_url, &context_eligible.workers)
+        let context_eligible = use_input_length_routing
+            .then(|| filter_context_eligible(&eligible.workers, routing_input_tokens));
+        let eligible = context_eligible
+            .as_ref()
+            .map_or(eligible.workers.as_slice(), |filtered| {
+                filtered.workers.as_slice()
+            });
+        select_decode_with_affinity(prefill_url, eligible)
             .ok_or(PdResolveError::NoDecodeWorkersAvailable)
     }
 }
@@ -1150,7 +1161,7 @@ mod tests {
         let prefill_url = "http://host_a:30000";
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None, false)
+            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None, false, false)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_a:30001",
@@ -1185,7 +1196,14 @@ mod tests {
         assert!(!d1.breaker.allow(), "d1 breaker must be open");
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
@@ -1213,7 +1231,14 @@ mod tests {
         failed.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
@@ -1265,7 +1290,14 @@ mod tests {
         }
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert!(
             chosen.url == "http://host_b:30001" || chosen.url == "http://host_c:30001",
@@ -1301,7 +1333,14 @@ mod tests {
         let _g = d1.load_guard();
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_c:30001",
@@ -1321,7 +1360,14 @@ mod tests {
         )]);
         let resolver = PdPoolResolver::new(r);
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
     }
@@ -1337,7 +1383,7 @@ mod tests {
         ]);
         let resolver = PdPoolResolver::new(r);
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None, false)
+            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None, false, false)
             .unwrap();
         // Both d1 and d2 are at load 0 → either is acceptable. The
         // assertion is only that the function returns Some, not None
@@ -1385,7 +1431,14 @@ mod tests {
         // preserves PD shape and decode_with_affinity surfaces the
         // per-pool code.
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None, false)
+            .decode_with_affinity(
+                &ModelId("m".into()),
+                "http://host_a:30000",
+                0,
+                None,
+                false,
+                false,
+            )
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
 

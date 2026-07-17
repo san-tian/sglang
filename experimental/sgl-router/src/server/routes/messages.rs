@@ -21,7 +21,9 @@ use crate::policies::registry::{
 };
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
+use crate::server::entry_auth::{
+    filter_key_scope, input_length_routing_enabled, GatewayKeyIdentity,
+};
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -715,6 +717,7 @@ async fn messages_inner(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
+    let use_input_length_routing = input_length_routing_enabled(entry_identity.as_ref());
 
     // Produce routing-only tokens for /v1/messages generation requests.
     //
@@ -737,7 +740,8 @@ async fn messages_inner(
     let request_tokens: Option<RequestTokens> = routing_value
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
-    let raw_context_safe = ctx.config.allow_raw_context_tokens
+    let raw_context_safe = use_input_length_routing
+        && ctx.config.allow_raw_context_tokens
         && serde_json::from_slice::<Value>(&body)
             .ok()
             .is_some_and(|value| raw_context_tokens_reliable(&value));
@@ -747,7 +751,7 @@ async fn messages_inner(
     let routing_input_tokens = (forward_path == "/v1/messages")
         .then_some(reliable_prompt_tokens)
         .flatten();
-    let workers = if forward_path == "/v1/messages" {
+    let workers = if use_input_length_routing && forward_path == "/v1/messages" {
         enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?
     } else {
         workers

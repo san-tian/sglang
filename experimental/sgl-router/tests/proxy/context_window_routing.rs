@@ -4,7 +4,7 @@
 //! HTTP-level coverage for heterogeneous worker context windows.
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderValue, Request, StatusCode};
 use sgl_router::config::{
     ActiveLoadConfig, Config, DiscoveryBackend, ModelConfig, ObservabilityConfig, PolicyKind,
     ProxyConfig, ServerConfig, StaticUrlsDiscoveryConfig,
@@ -12,8 +12,9 @@ use sgl_router::config::{
 use sgl_router::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
 use sgl_router::policies::factory::build_registry_with_defaults;
 use sgl_router::proxy::Proxy;
-use sgl_router::server::app::build_router;
+use sgl_router::server::app::{build_router, build_router_with_gateway_keyring};
 use sgl_router::server::app_context::AppContext;
+use sgl_router::server::entry_auth::GatewayKeyring;
 use sgl_router::tokenizer::TokenizerRegistry;
 use sgl_router::workers::WorkerRegistry;
 use std::sync::Arc;
@@ -133,8 +134,112 @@ fn request(path: &str, body: serde_json::Value) -> Request<Body> {
         .unwrap()
 }
 
+fn with_bearer(mut request: Request<Body>, api_key: &'static str) -> Request<Body> {
+    request
+        .headers_mut()
+        .insert("authorization", HeaderValue::from_static(api_key));
+    request
+}
+
+fn length_test_keyring() -> Arc<GatewayKeyring> {
+    Arc::new(
+        GatewayKeyring::from_json(
+            r#"{"version":1,"keys":[
+                {"key_id":"ordinary","class":"external","enabled":true},
+                {"key_id":"length","class":"external_length","enabled":true}
+            ]}"#,
+            r#"{"ordinary":"ordinary-secret","length":"length-secret"}"#,
+        )
+        .unwrap(),
+    )
+}
+
 fn was_hit(worker: &MockWorker) -> bool {
     worker.captured.lock().unwrap().last_body.is_some()
+}
+
+#[tokio::test]
+async fn authenticated_length_filter_is_scoped_to_external_length_key() {
+    let ordinary_short = MockWorker::start(vec![]).await;
+    let ordinary_long = MockWorker::start(vec![]).await;
+    let ordinary_ctx = build_ctx(vec![
+        ranged_worker_spec("short", &ordinary_short.url, None, Some(1)),
+        ranged_worker_spec("long", &ordinary_long.url, Some(2), None),
+    ]);
+    let keyring = length_test_keyring();
+
+    for _ in 0..4 {
+        let response =
+            build_router_with_gateway_keyring(Arc::clone(&ordinary_ctx), Arc::clone(&keyring))
+                .oneshot(with_bearer(
+                    request(
+                        "/v1/completions",
+                        serde_json::json!({
+                            "model":"tiny",
+                            "prompt":"hello",
+                            "stream":false
+                        }),
+                    ),
+                    "Bearer ordinary-secret",
+                ))
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert!(was_hit(&ordinary_short));
+    assert!(was_hit(&ordinary_long));
+
+    let scoped_short = MockWorker::start(vec![]).await;
+    let scoped_long = MockWorker::start(vec![]).await;
+    let scoped_ctx = build_ctx(vec![
+        ranged_worker_spec("short", &scoped_short.url, None, Some(1)),
+        ranged_worker_spec("long", &scoped_long.url, Some(2), None),
+    ]);
+    for _ in 0..4 {
+        let response =
+            build_router_with_gateway_keyring(Arc::clone(&scoped_ctx), Arc::clone(&keyring))
+                .oneshot(with_bearer(
+                    request(
+                        "/v1/completions",
+                        serde_json::json!({
+                            "model":"tiny",
+                            "prompt":"hello",
+                            "stream":false
+                        }),
+                    ),
+                    "Bearer length-secret",
+                ))
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert!(!was_hit(&scoped_short));
+    assert!(was_hit(&scoped_long));
+
+    let chat_short = MockWorker::start(vec![]).await;
+    let chat_long = MockWorker::start(vec![]).await;
+    let chat_ctx = build_raw_context_ctx(vec![
+        ranged_worker_spec("short", &chat_short.url, None, Some(1)),
+        ranged_worker_spec("long", &chat_long.url, Some(2), None),
+    ]);
+    let response = build_router_with_gateway_keyring(chat_ctx, keyring)
+        .oneshot(with_bearer(
+            request(
+                "/v1/chat/completions",
+                serde_json::json!({
+                    "model":"tiny",
+                    "messages":[{"role":"user","content":"hello ".repeat(100)}],
+                    "tools":[{"type":"function","function":{"name":"lookup"}}],
+                    "stream":false
+                }),
+            ),
+            "Bearer length-secret",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!was_hit(&chat_short));
+    assert!(was_hit(&chat_long));
 }
 
 #[tokio::test]

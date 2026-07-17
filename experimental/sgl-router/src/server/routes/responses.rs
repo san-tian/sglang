@@ -27,7 +27,9 @@ use crate::policies::registry::{
 };
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
+use crate::server::entry_auth::{
+    filter_key_scope, input_length_routing_enabled, GatewayKeyIdentity,
+};
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -614,6 +616,7 @@ async fn responses_inner(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
+    let use_input_length_routing = input_length_routing_enabled(entry_identity.as_ref());
 
     // Produce routing-only tokens for stateless /v1/responses generation
     // requests. The worker still receives the original native Responses body;
@@ -625,7 +628,8 @@ async fn responses_inner(
     let request_tokens: Option<RequestTokens> = responses_routing_value(&body)
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
-    let raw_context_safe = ctx.config.allow_raw_context_tokens
+    let raw_context_safe = use_input_length_routing
+        && ctx.config.allow_raw_context_tokens
         && serde_json::from_slice::<Value>(&body)
             .ok()
             .is_some_and(|value| raw_context_tokens_reliable(&value));
@@ -633,7 +637,11 @@ async fn responses_inner(
         (tokens.engine_equivalent || raw_context_safe).then_some(tokens.ids.len())
     });
     let routing_input_tokens = reliable_prompt_tokens;
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?;
+    let workers = if use_input_length_routing {
+        enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?
+    } else {
+        workers
+    };
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     let routing_key = ctx

@@ -15,7 +15,9 @@ use crate::policies::registry::{
 use crate::policies::SelectionContext;
 use crate::policies::{request_tokens_for, RequestTokens};
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
+use crate::server::entry_auth::{
+    filter_key_scope, input_length_routing_enabled, GatewayKeyIdentity,
+};
 use crate::server::error::ApiError;
 use crate::server::metrics::{PriorityFilterOutcome, RequestOutcome, WorkerModeLabel};
 use crate::server::routes::admission::enforce_external_queue_admission;
@@ -281,6 +283,7 @@ async fn passthrough_primary(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
+    let use_input_length_routing = input_length_routing_enabled(entry_identity);
 
     // /v1/completions has an explicit raw `prompt`; feed those tokens to
     // cache-aware routing without changing the worker-facing passthrough body.
@@ -298,7 +301,11 @@ async fn passthrough_primary(
         .then(|| request_tokens.as_ref().map(|tokens| tokens.ids.len()))
         .flatten();
     let routing_input_tokens = reliable_prompt_tokens;
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?;
+    let workers = if use_input_length_routing {
+        enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?
+    } else {
+        workers
+    };
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     let routing_key = ctx

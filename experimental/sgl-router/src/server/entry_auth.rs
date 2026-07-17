@@ -41,6 +41,7 @@ const OCP_APIM_SUBSCRIPTION_KEY: HeaderName = HeaderName::from_static("ocp-apim-
 pub enum GatewayKeyClass {
     External,
     ExternalNvidia,
+    ExternalLength,
     Dedicated,
     Internal,
     /// Internal upstream gateway identity. This class cannot be selected by
@@ -53,7 +54,9 @@ pub enum GatewayKeyClass {
 impl GatewayKeyClass {
     pub const fn priority_override(self) -> Option<i64> {
         match self {
-            Self::External | Self::ExternalNvidia | Self::Dedicated => Some(100),
+            Self::External | Self::ExternalNvidia | Self::ExternalLength | Self::Dedicated => {
+                Some(100)
+            }
             Self::Internal => Some(0),
             Self::Proxy => None,
         }
@@ -63,6 +66,7 @@ impl GatewayKeyClass {
         match self {
             Self::External => "external",
             Self::ExternalNvidia => "external_nvidia",
+            Self::ExternalLength => "external_length",
             Self::Dedicated => "dedicated",
             Self::Internal => "internal",
             Self::Proxy => "proxy",
@@ -105,6 +109,10 @@ impl GatewayKeyIdentity {
         matches!(self.class, GatewayKeyClass::Dedicated)
     }
 
+    pub const fn uses_input_length_routing(&self) -> bool {
+        matches!(self.class, GatewayKeyClass::ExternalLength)
+    }
+
     pub fn allows_worker_url(&self, worker_url: &str) -> bool {
         if !self.is_nvidia_only() {
             return true;
@@ -118,7 +126,7 @@ impl GatewayKeyIdentity {
     }
 
     pub const fn allows_external_model(&self) -> bool {
-        !self.is_nvidia_only() && !self.is_dedicated()
+        !self.is_nvidia_only() && !self.is_dedicated() && !self.uses_input_length_routing()
     }
 
     pub(crate) fn new(key_id: impl Into<Arc<str>>, class: GatewayKeyClass) -> Self {
@@ -140,6 +148,12 @@ impl GatewayKeyIdentity {
             allowed_worker_urls,
         }
     }
+}
+
+/// Preserve the historical unauthenticated library/debug behavior while
+/// making production range routing opt-in through a dedicated credential.
+pub fn input_length_routing_enabled(identity: Option<&GatewayKeyIdentity>) -> bool {
+    identity.map_or(true, GatewayKeyIdentity::uses_input_length_routing)
 }
 
 #[derive(Debug)]
@@ -742,6 +756,27 @@ mod tests {
         assert_eq!(identity.priority_override(), Some(100));
         assert!(identity.is_dedicated());
         assert!(!identity.allows_external_model());
+    }
+
+    #[test]
+    fn length_key_is_priority_100_and_scopes_input_range_routing() {
+        let keyring = GatewayKeyring::from_json(
+            r#"{"version":1,"keys":[
+                {"key_id":"length","class":"external_length","enabled":true}
+            ]}"#,
+            r#"{"length":"length-secret"}"#,
+        )
+        .unwrap();
+        let identity = keyring.authenticate("length-secret").unwrap();
+        assert_eq!(identity.class(), GatewayKeyClass::ExternalLength);
+        assert_eq!(identity.priority_override(), Some(100));
+        assert!(identity.uses_input_length_routing());
+        assert!(input_length_routing_enabled(Some(&identity)));
+        assert!(!identity.allows_external_model());
+
+        let ordinary = GatewayKeyIdentity::new("ordinary", GatewayKeyClass::External);
+        assert!(!input_length_routing_enabled(Some(&ordinary)));
+        assert!(input_length_routing_enabled(None));
     }
 
     #[test]
