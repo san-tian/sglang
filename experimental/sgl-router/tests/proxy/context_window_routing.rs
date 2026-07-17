@@ -231,7 +231,7 @@ async fn default_chat_without_chat_encoder_fails_closed_for_bounded_pool() {
 }
 
 #[tokio::test]
-async fn raw_context_opt_in_chat_routes_short_request_to_short_worker() {
+async fn raw_context_opt_in_chat_ignores_large_output_budget() {
     let short = MockWorker::start(vec![]).await;
     let long = MockWorker::start(vec![]).await;
     let ctx = build_raw_context_ctx(vec![
@@ -245,7 +245,7 @@ async fn raw_context_opt_in_chat_routes_short_request_to_short_worker() {
             serde_json::json!({
                 "model":"tiny",
                 "messages":[{"role":"user","content":"hello"}],
-                "max_tokens":8,
+                "max_tokens":1_000_000,
                 "stream":false
             }),
         ))
@@ -306,6 +306,15 @@ async fn raw_context_opt_in_chat_with_reasoning_effort_routes_by_existing_tokens
 #[tokio::test]
 async fn raw_context_opt_in_chat_agent_shapes_route_by_existing_tokens() {
     let cases = [
+        (
+            "max-completion-tokens",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_completion_tokens":1_000_000,
+                "stream":false
+            }),
+        ),
         (
             "tools",
             serde_json::json!({
@@ -393,11 +402,11 @@ async fn raw_context_opt_in_chat_agent_shapes_route_by_existing_tokens() {
 }
 
 #[tokio::test]
-async fn within_limit_completion_keeps_limited_worker_in_rotation() {
+async fn completion_output_budget_does_not_change_input_range() {
     let limited = MockWorker::start(vec![]).await;
     let unlimited = MockWorker::start(vec![]).await;
     let ctx = build_ctx(vec![
-        worker_spec("limited", &limited.url, Some(500_000)),
+        worker_spec("limited", &limited.url, Some(65_535)),
         worker_spec("unlimited", &unlimited.url, None),
     ]);
 
@@ -408,7 +417,7 @@ async fn within_limit_completion_keeps_limited_worker_in_rotation() {
                 serde_json::json!({
                     "model":"tiny",
                     "prompt":"hello",
-                    "max_tokens":8,
+                    "max_tokens":1_000_000,
                     "stream":false
                 }),
             ))
@@ -506,7 +515,7 @@ async fn unknown_length_chat_messages_and_responses_skip_limited_worker() {
 }
 
 #[tokio::test]
-async fn responses_without_explicit_output_limit_skip_limited_worker() {
+async fn responses_output_limit_does_not_change_input_range() {
     const MODEL: &str = "deepseek-v4-tiny";
 
     let limited = MockWorker::start(vec![]).await;
@@ -514,7 +523,7 @@ async fn responses_without_explicit_output_limit_skip_limited_worker() {
     let ctx = build_ctx_with_config(
         config_for_model(MODEL),
         vec![
-            worker_spec_for_model("limited", &limited.url, MODEL, Some(500_000)),
+            worker_spec_for_model("limited", &limited.url, MODEL, Some(65_535)),
             worker_spec_for_model("unlimited", &unlimited.url, MODEL, None),
         ],
     );
@@ -533,7 +542,7 @@ async fn responses_without_explicit_output_limit_skip_limited_worker() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
-    assert!(!was_hit(&limited));
+    assert!(was_hit(&limited));
     assert!(was_hit(&unlimited));
 
     limited.captured.lock().unwrap().last_body = None;
@@ -545,7 +554,7 @@ async fn responses_without_explicit_output_limit_skip_limited_worker() {
                 serde_json::json!({
                     "model":MODEL,
                     "input":"hello",
-                    "max_output_tokens":8,
+                    "max_output_tokens":1_000_000,
                     "stream":false
                 }),
             ))

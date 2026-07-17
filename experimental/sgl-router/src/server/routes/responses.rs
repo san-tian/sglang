@@ -37,7 +37,6 @@ use crate::server::routes::alias_fallback::{
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
 use crate::server::routes::context_window::{
     enforce_context_eligibility, raw_context_tokens_reliable,
-    required_context_tokens_with_explicit_output,
 };
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
@@ -70,8 +69,6 @@ struct ResponsesProbe {
     /// capacity-restricted workers (see [`filter_eligible`]).
     #[serde(default)]
     priority: Option<Value>,
-    #[serde(default)]
-    max_output_tokens: Option<Value>,
 }
 
 fn parse_probe(body: &Bytes) -> Result<ResponsesProbe, ApiError> {
@@ -635,11 +632,8 @@ async fn responses_inner(
     let reliable_prompt_tokens = request_tokens.as_ref().and_then(|tokens| {
         (tokens.engine_equivalent || raw_context_safe).then_some(tokens.ids.len())
     });
-    let required_context_tokens = required_context_tokens_with_explicit_output(
-        reliable_prompt_tokens,
-        &[probe.max_output_tokens.as_ref()],
-    );
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
+    let routing_input_tokens = reliable_prompt_tokens;
+    let workers = enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?;
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     let routing_key = ctx

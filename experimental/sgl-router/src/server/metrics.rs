@@ -1262,7 +1262,7 @@ impl MetricsRegistry {
 
         // context_filtered_total
         out.push_str(
-            "# HELP sgl_router_context_filtered_total Requests affected by per-worker context-range eligibility filtering. Bounded workers are excluded when the prompt-plus-output budget is outside their range or cannot be computed reliably; empty_set variants indicate a 503 rejection.\n",
+            "# HELP sgl_router_context_filtered_total Requests affected by per-worker input-length eligibility filtering. Bounded workers are excluded when the input token count is outside their range or cannot be computed reliably; requested output limits are ignored; empty_set variants indicate a 503 rejection.\n",
         );
         out.push_str("# TYPE sgl_router_context_filtered_total counter\n");
         let guard = self.context_filtered_total.lock();

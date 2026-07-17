@@ -23,10 +23,7 @@ use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
 use crate::server::routes::chat::{make_client_disconnect_hook, reserve_pending_load};
-use crate::server::routes::context_window::{
-    enforce_context_eligibility, required_context_tokens,
-    required_context_tokens_with_explicit_output,
-};
+use crate::server::routes::context_window::enforce_context_eligibility;
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::workers::LoadGuard;
@@ -48,12 +45,6 @@ struct PassthroughProbe {
     model: Option<String>,
     #[serde(default)]
     priority: Option<serde_json::Value>,
-    #[serde(default)]
-    max_tokens: Option<serde_json::Value>,
-    #[serde(default)]
-    max_completion_tokens: Option<serde_json::Value>,
-    #[serde(default)]
-    max_output_tokens: Option<serde_json::Value>,
 }
 
 fn parse_probe(body: &Bytes) -> Result<PassthroughProbe, ApiError> {
@@ -306,21 +297,8 @@ async fn passthrough_primary(
     let reliable_prompt_tokens = (path == "/v1/completions")
         .then(|| request_tokens.as_ref().map(|tokens| tokens.ids.len()))
         .flatten();
-    let output_fields = if path == "/v1/completions" {
-        [
-            probe.max_tokens.as_ref(),
-            probe.max_completion_tokens.as_ref(),
-            None,
-        ]
-    } else {
-        [None, None, probe.max_output_tokens.as_ref()]
-    };
-    let required_context_tokens = if path == "/v1/responses" {
-        required_context_tokens_with_explicit_output(reliable_prompt_tokens, &output_fields)
-    } else {
-        required_context_tokens(reliable_prompt_tokens, &output_fields)
-    };
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
+    let routing_input_tokens = reliable_prompt_tokens;
+    let workers = enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?;
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     let routing_key = ctx

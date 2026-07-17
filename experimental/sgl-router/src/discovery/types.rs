@@ -181,14 +181,13 @@ pub struct WorkerSpec {
     /// mode/bootstrap) nor dropped on reconcile re-introspection.
     #[serde(default)]
     pub min_priority: Option<i64>,
-    /// Minimum total context (prompt plus requested output tokens) this
-    /// worker accepts. `None` leaves the lower side unbounded. Static URL
+    /// Minimum input token count this worker accepts for range routing.
+    /// `None` leaves the lower side unbounded. Static URL
     /// discovery seeds this from `url@min_context_tokens=N`.
     #[serde(default)]
     pub min_context_tokens: Option<usize>,
-    /// Maximum total context (prompt plus requested output tokens) this
-    /// worker can safely serve. `None` leaves context validation to the
-    /// engine. Static URL discovery seeds this from
+    /// Maximum input token count this worker accepts for range routing.
+    /// `None` leaves the upper side unbounded. Static URL discovery seeds this from
     /// `url@max_context_tokens=N`.
     #[serde(default)]
     pub max_context_tokens: Option<usize>,

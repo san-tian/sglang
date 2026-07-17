@@ -19,7 +19,7 @@ use crate::server::routes::admission::enforce_external_queue_admission;
 use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
-use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
+use crate::server::routes::context_window::enforce_context_eligibility;
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::reasoning_compat::{normalize_reasoning_request, ReasoningEndpoint};
@@ -132,10 +132,6 @@ struct RequestProbe {
     /// capacity-restricted workers (see [`filter_eligible`]).
     #[serde(default)]
     priority: Option<serde_json::Value>,
-    #[serde(default)]
-    max_tokens: Option<serde_json::Value>,
-    #[serde(default)]
-    max_completion_tokens: Option<serde_json::Value>,
 }
 
 /// RAII guard that records `sgl_router_request_duration_seconds` when
@@ -555,14 +551,8 @@ async fn chat_completions_inner(
         }
         _ => None,
     };
-    let required_context_tokens = required_context_tokens(
-        reliable_prompt_tokens,
-        &[
-            probe.max_tokens.as_ref(),
-            probe.max_completion_tokens.as_ref(),
-        ],
-    );
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
+    let routing_input_tokens = reliable_prompt_tokens;
+    let workers = enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?;
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     // Sticky-session routing key. When the sticky policy is configured,
@@ -622,7 +612,7 @@ async fn chat_completions_inner(
                     &model_id,
                     &worker.url,
                     request_priority,
-                    required_context_tokens,
+                    routing_input_tokens,
                     dedicated_request,
                 )
                 .map_err(|e| match e {
@@ -883,7 +873,7 @@ async fn chat_completions_inner(
                 &model_id,
                 &worker.url,
                 request_priority,
-                required_context_tokens,
+                routing_input_tokens,
                 dedicated_request,
                 &failed_worker,
             ) {

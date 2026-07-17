@@ -192,13 +192,13 @@ impl PdPoolResolver {
 
     /// Pick a decode worker for a PD-mode handoff with **host affinity**
     /// to the prefill worker. Resolves the decode pool for `model`, applies
-    /// priority and context-window eligibility filtering, then the affinity
+    /// priority and input-length eligibility filtering, then the affinity
     /// rules in [`select_decode_with_affinity`].
     ///
     /// `request_priority` is the effective request priority; decode workers
-    /// whose `min_priority` exceeds it are removed. `required_context_tokens`
-    /// is the prompt plus output budget computed at ingress; a limited decode
-    /// worker is removed when the request is unknown or exceeds its ceiling.
+    /// whose `min_priority` exceeds it are removed. `routing_input_tokens`
+    /// is the reliable input count computed at ingress; a bounded decode
+    /// worker is removed when that count is unknown or outside its range.
     ///
     /// Returns `Err(NoDecodeWorkersAvailable)` if the decode pool is
     /// empty (PD-mode partial failure) — the chat handler then maps to
@@ -210,14 +210,14 @@ impl PdPoolResolver {
         model: &ModelId,
         prefill_url: &str,
         request_priority: i64,
-        required_context_tokens: Option<usize>,
+        routing_input_tokens: Option<usize>,
         dedicated_request: bool,
     ) -> Result<Arc<Worker>, PdResolveError> {
         self.decode_with_affinity_avoiding(
             model,
             prefill_url,
             request_priority,
-            required_context_tokens,
+            routing_input_tokens,
             dedicated_request,
             None,
         )
@@ -231,7 +231,7 @@ impl PdPoolResolver {
         model: &ModelId,
         prefill_url: &str,
         request_priority: i64,
-        required_context_tokens: Option<usize>,
+        routing_input_tokens: Option<usize>,
         dedicated_request: bool,
         excluded: &WorkerId,
     ) -> Result<Arc<Worker>, PdResolveError> {
@@ -239,7 +239,7 @@ impl PdPoolResolver {
             model,
             prefill_url,
             request_priority,
-            required_context_tokens,
+            routing_input_tokens,
             dedicated_request,
             Some(excluded),
         )
@@ -250,7 +250,7 @@ impl PdPoolResolver {
         model: &ModelId,
         prefill_url: &str,
         request_priority: i64,
-        required_context_tokens: Option<usize>,
+        routing_input_tokens: Option<usize>,
         dedicated_request: bool,
         excluded: Option<&WorkerId>,
     ) -> Result<Arc<Worker>, PdResolveError> {
@@ -260,7 +260,7 @@ impl PdPoolResolver {
         }
         let dedicated_eligible = filter_dedicated_eligible(&candidates, dedicated_request);
         let eligible = filter_eligible(&dedicated_eligible.workers, request_priority);
-        let context_eligible = filter_context_eligible(&eligible.workers, required_context_tokens);
+        let context_eligible = filter_context_eligible(&eligible.workers, routing_input_tokens);
         select_decode_with_affinity(prefill_url, &context_eligible.workers)
             .ok_or(PdResolveError::NoDecodeWorkersAvailable)
     }
@@ -269,9 +269,9 @@ impl PdPoolResolver {
 /// Why context-window filtering removed one or more workers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextFilterReason {
-    /// The request's known prompt-plus-output budget is below a worker limit.
+    /// The request's known input token count is below a worker limit.
     BelowMinimum,
-    /// The request's known prompt-plus-output budget exceeds a worker limit.
+    /// The request's known input token count exceeds a worker limit.
     OverLimit,
     /// Different workers were excluded on opposite sides of their ranges.
     OutsideRange,
@@ -296,15 +296,15 @@ pub fn has_context_limited_worker(workers: &[Arc<Worker>]) -> bool {
         .any(|w| w.min_context_tokens().is_some() || w.max_context_tokens().is_some())
 }
 
-/// Remove workers that cannot safely serve the request's total context.
+/// Remove workers outside the request's input-length routing range.
 ///
 /// Workers without either context bound remain eligible and defer validation
 /// to their engine. A bounded worker is eligible only when the router has a
-/// reliable prompt-plus-output token count within its inclusive range.
+/// reliable input token count within its inclusive range.
 /// Unknown request length never spills onto a bounded worker.
 pub fn filter_context_eligible(
     workers: &[Arc<Worker>],
-    required_context_tokens: Option<usize>,
+    routing_input_tokens: Option<usize>,
 ) -> ContextEligibleCandidates {
     let mut excluded_below = false;
     let mut excluded_above = false;
@@ -313,7 +313,7 @@ pub fn filter_context_eligible(
     for worker in workers {
         let min = worker.min_context_tokens();
         let max = worker.max_context_tokens();
-        let include = match required_context_tokens {
+        let include = match routing_input_tokens {
             None if min.is_some() || max.is_some() => {
                 excluded_unknown = true;
                 false

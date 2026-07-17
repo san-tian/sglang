@@ -205,8 +205,9 @@ pub struct Cli {
     /// Use this to keep heterogeneous/low-context workers (e.g. RTX-6000)
     /// serving only short high-priority production traffic.
     /// `@min_context_tokens=N` and `@max_context_tokens=N` declare an inclusive
-    /// prompt-plus-output context range. Requests that cannot be proven to fit
-    /// are excluded from bounded workers before policy scoring. For example,
+    /// input-token routing range. Requested output limits do not affect this
+    /// decision. Requests whose input length cannot be computed reliably are
+    /// excluded from bounded workers before policy scoring. For example,
     /// pair `@max_context_tokens=65535` with `@min_context_tokens=65536` to
     /// split short and long requests across two worker pools. Suffixes may be
     /// combined. A malformed or empty range fails startup. Omit both bounds to

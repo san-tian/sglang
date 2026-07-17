@@ -234,13 +234,13 @@ pub struct Worker {
     /// of the candidate set before policy selection. Carried from
     /// `WorkerSpec`; see [`crate::discovery::WorkerSpec::min_priority`].
     min_priority: Option<i64>,
-    /// Minimum total context this worker accepts. Requests whose prompt plus
-    /// requested output budget is below this value are removed before policy
-    /// scoring. `None` leaves the lower side unbounded.
+    /// Minimum input length this worker accepts for range routing. Requests
+    /// below this value are removed before policy scoring. `None` leaves the
+    /// lower side unbounded.
     min_context_tokens: Option<usize>,
-    /// Maximum total context this worker can safely serve. Requests whose
-    /// prompt plus output budget exceeds this value are removed before
-    /// policy scoring. `None` leaves validation to the engine.
+    /// Maximum input length this worker accepts for range routing. Requests
+    /// above this value are removed before policy scoring. `None` leaves the
+    /// upper side unbounded.
     max_context_tokens: Option<usize>,
     /// Serving backend. Determines which worker-control endpoints the
     /// router may call; e.g. vLLM workers do not expose SGLang `/get_load`
