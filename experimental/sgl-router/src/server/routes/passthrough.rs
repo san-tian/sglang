@@ -112,9 +112,9 @@ async fn passthrough(
     let model_str = probe
         .model
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-    if entry_identity.is_some_and(|identity| {
-        !identity.allows_external_model() && model_str != ctx.config.model.id
-    }) {
+    if entry_identity
+        .is_some_and(|identity| !identity.allows_model(&model_str, &ctx.config.model.id))
+    {
         return Err(ApiError::ModelNotFound(model_str));
     }
     let Some(cfg) = ctx

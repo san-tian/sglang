@@ -40,7 +40,8 @@ pub async fn maybe_forward(
     if probe.model.as_deref() != Some(cfg.model_id.as_str()) {
         return Ok(None);
     }
-    if identity.is_some_and(|identity| !identity.allows_external_model()) {
+    if identity.is_some_and(|identity| !identity.allows_model(&cfg.model_id, &ctx.config.model.id))
+    {
         return Err(ApiError::ModelNotFound(cfg.model_id.clone()));
     }
     let streaming = probe.stream.unwrap_or(false);

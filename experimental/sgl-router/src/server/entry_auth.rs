@@ -85,7 +85,10 @@ impl fmt::Display for GatewayKeyClass {
 pub struct GatewayKeyIdentity {
     key_id: Arc<str>,
     class: GatewayKeyClass,
+    priority_override: Option<i64>,
+    allowed_models: Option<Arc<HashSet<String>>>,
     allowed_worker_urls: Option<Arc<HashSet<String>>>,
+    input_length_routing: bool,
 }
 
 impl GatewayKeyIdentity {
@@ -98,7 +101,7 @@ impl GatewayKeyIdentity {
     }
 
     pub const fn priority_override(&self) -> Option<i64> {
-        self.class.priority_override()
+        self.priority_override
     }
 
     pub const fn is_nvidia_only(&self) -> bool {
@@ -110,13 +113,10 @@ impl GatewayKeyIdentity {
     }
 
     pub const fn uses_input_length_routing(&self) -> bool {
-        matches!(self.class, GatewayKeyClass::ExternalLength)
+        self.input_length_routing
     }
 
     pub fn allows_worker_url(&self, worker_url: &str) -> bool {
-        if !self.is_nvidia_only() {
-            return true;
-        }
         match self.allowed_worker_urls.as_ref() {
             Some(urls) => {
                 normalize_worker_url(worker_url).is_ok_and(|normalized| urls.contains(&normalized))
@@ -125,27 +125,42 @@ impl GatewayKeyIdentity {
         }
     }
 
-    pub const fn allows_external_model(&self) -> bool {
-        !self.is_nvidia_only() && !self.is_dedicated() && !self.uses_input_length_routing()
+    pub fn allows_model(&self, model_id: &str, local_model_id: &str) -> bool {
+        match self.allowed_models.as_ref() {
+            Some(models) => models.contains(model_id),
+            None if model_id == local_model_id => true,
+            None => {
+                !self.is_nvidia_only() && !self.is_dedicated() && !self.uses_input_length_routing()
+            }
+        }
     }
 
     pub(crate) fn new(key_id: impl Into<Arc<str>>, class: GatewayKeyClass) -> Self {
         Self {
             key_id: key_id.into(),
             class,
+            priority_override: class.priority_override(),
+            allowed_models: None,
             allowed_worker_urls: None,
+            input_length_routing: matches!(class, GatewayKeyClass::ExternalLength),
         }
     }
 
-    fn with_allowed_worker_urls(
+    fn with_policy(
         key_id: impl Into<Arc<str>>,
         class: GatewayKeyClass,
+        priority_override: Option<i64>,
+        allowed_models: Option<Arc<HashSet<String>>>,
         allowed_worker_urls: Option<Arc<HashSet<String>>>,
+        input_length_routing: bool,
     ) -> Self {
         Self {
             key_id: key_id.into(),
             class,
+            priority_override,
+            allowed_models,
             allowed_worker_urls,
+            input_length_routing,
         }
     }
 }
@@ -153,7 +168,7 @@ impl GatewayKeyIdentity {
 /// Preserve the historical unauthenticated library/debug behavior while
 /// making production range routing opt-in through a dedicated credential.
 pub fn input_length_routing_enabled(identity: Option<&GatewayKeyIdentity>) -> bool {
-    identity.map_or(true, GatewayKeyIdentity::uses_input_length_routing)
+    identity.is_none_or(GatewayKeyIdentity::uses_input_length_routing)
 }
 
 #[derive(Debug)]
@@ -166,7 +181,7 @@ pub fn filter_key_scope(
     workers: &[Arc<Worker>],
     identity: Option<&GatewayKeyIdentity>,
 ) -> KeyScopeCandidates {
-    let Some(identity) = identity.filter(|identity| identity.is_nvidia_only()) else {
+    let Some(identity) = identity.filter(|identity| identity.allowed_worker_urls.is_some()) else {
         return KeyScopeCandidates {
             workers: workers.to_vec(),
             excluded_all: false,
@@ -231,6 +246,9 @@ pub enum GatewayKeyringError {
 
     #[error("invalid {GATEWAY_NVIDIA_WORKER_URLS_ENV}: {0}")]
     InvalidNvidiaWorkerUrls(String),
+
+    #[error("invalid gateway key allowed_worker_urls: {0}")]
+    InvalidWorkerUrls(String),
 }
 
 #[derive(Deserialize)]
@@ -246,6 +264,14 @@ struct PolicyEntry {
     key_id: String,
     class: GatewayKeyClass,
     enabled: bool,
+    #[serde(default)]
+    priority: Option<i64>,
+    #[serde(default)]
+    allowed_models: Option<Vec<String>>,
+    #[serde(default)]
+    allowed_worker_urls: Option<Vec<String>>,
+    #[serde(default)]
+    input_length_routing: Option<bool>,
 }
 
 /// serde_json maps otherwise accept duplicate object keys with last-write-wins
@@ -374,9 +400,9 @@ impl GatewayKeyring {
             return Err(GatewayKeyringError::InventoryMismatch);
         }
 
-        let requires_nvidia_workers = policies
-            .values()
-            .any(|policy| policy.class == GatewayKeyClass::ExternalNvidia);
+        let requires_nvidia_workers = policies.values().any(|policy| {
+            policy.class == GatewayKeyClass::ExternalNvidia && policy.allowed_worker_urls.is_none()
+        });
         let nvidia_worker_urls = if requires_nvidia_workers {
             let raw = nvidia_worker_urls.ok_or_else(|| {
                 GatewayKeyringError::InvalidNvidiaWorkerUrls("value is required".to_string())
@@ -417,13 +443,65 @@ impl GatewayKeyring {
             if !seen_digests.insert(digest) {
                 return Err(GatewayKeyringError::InvalidApiKeys);
             }
+            let allowed_models = policy
+                .allowed_models
+                .map(|models| {
+                    if models.is_empty()
+                        || models.iter().any(|model| {
+                            model.is_empty()
+                                || model.len() > 256
+                                || !model.bytes().all(|byte| matches!(byte, 0x21..=0x7e))
+                        })
+                    {
+                        return Err(GatewayKeyringError::InvalidPolicies(
+                            "allowed_models must contain non-empty visible ASCII model IDs"
+                                .to_string(),
+                        ));
+                    }
+                    let model_count = models.len();
+                    let models = models.into_iter().collect::<HashSet<_>>();
+                    if models.len() != model_count {
+                        return Err(GatewayKeyringError::InvalidPolicies(
+                            "allowed_models must not contain duplicates".to_string(),
+                        ));
+                    }
+                    Ok(Arc::new(models))
+                })
+                .transpose()?;
+            let explicit_worker_urls = policy
+                .allowed_worker_urls
+                .map(|worker_urls| {
+                    let mut urls = HashSet::new();
+                    for worker_url in worker_urls {
+                        let normalized = normalize_worker_url(&worker_url).map_err(|error| {
+                            GatewayKeyringError::InvalidWorkerUrls(format!(
+                                "worker URL is invalid: {error}"
+                            ))
+                        })?;
+                        if !urls.insert(normalized) {
+                            return Err(GatewayKeyringError::InvalidWorkerUrls(
+                                "worker URLs must be unique".to_string(),
+                            ));
+                        }
+                    }
+                    Ok(Arc::new(urls))
+                })
+                .transpose()?;
+            let allowed_worker_urls = explicit_worker_urls.or_else(|| {
+                (policy.class == GatewayKeyClass::ExternalNvidia)
+                    .then(|| Arc::clone(nvidia_worker_urls.as_ref().expect("validated above")))
+            });
             entries.push(KeyEntry {
                 digest,
-                identity: GatewayKeyIdentity::with_allowed_worker_urls(
+                identity: GatewayKeyIdentity::with_policy(
                     Arc::<str>::from(key_id),
                     policy.class,
-                    (policy.class == GatewayKeyClass::ExternalNvidia)
-                        .then(|| Arc::clone(nvidia_worker_urls.as_ref().expect("validated above"))),
+                    policy.priority.or_else(|| policy.class.priority_override()),
+                    allowed_models,
+                    allowed_worker_urls,
+                    policy
+                        .input_length_routing
+                        .unwrap_or(matches!(policy.class, GatewayKeyClass::ExternalLength)),
                 ),
                 enabled: policy.enabled,
             });
@@ -739,7 +817,7 @@ mod tests {
         assert!(identity.allows_worker_url("http://nvidia:30000/"));
         assert!(!identity.allows_worker_url("http://amd:30000"));
         assert!(!identity.allows_worker_url("not-a-worker-url"));
-        assert!(!identity.allows_external_model());
+        assert!(!identity.allows_model("external", "local"));
     }
 
     #[test]
@@ -755,7 +833,7 @@ mod tests {
         assert_eq!(identity.class(), GatewayKeyClass::Dedicated);
         assert_eq!(identity.priority_override(), Some(100));
         assert!(identity.is_dedicated());
-        assert!(!identity.allows_external_model());
+        assert!(!identity.allows_model("external", "local"));
     }
 
     #[test]
@@ -772,11 +850,36 @@ mod tests {
         assert_eq!(identity.priority_override(), Some(100));
         assert!(identity.uses_input_length_routing());
         assert!(input_length_routing_enabled(Some(&identity)));
-        assert!(!identity.allows_external_model());
+        assert!(!identity.allows_model("external", "local"));
 
         let ordinary = GatewayKeyIdentity::new("ordinary", GatewayKeyClass::External);
         assert!(!input_length_routing_enabled(Some(&ordinary)));
         assert!(input_length_routing_enabled(None));
+    }
+
+    #[test]
+    fn explicit_policy_controls_priority_models_workers_and_length_routing() {
+        let keyring = GatewayKeyring::from_json(
+            r#"{"version":1,"keys":[{
+                "key_id":"configured",
+                "class":"external",
+                "enabled":true,
+                "priority":7,
+                "allowed_models":["local","external"],
+                "allowed_worker_urls":["http://amd:30000"],
+                "input_length_routing":true
+            }]}"#,
+            r#"{"configured":"configured-secret"}"#,
+        )
+        .unwrap();
+        let identity = keyring.authenticate("configured-secret").unwrap();
+        assert_eq!(identity.priority_override(), Some(7));
+        assert!(identity.allows_model("local", "local"));
+        assert!(identity.allows_model("external", "local"));
+        assert!(!identity.allows_model("other", "local"));
+        assert!(identity.allows_worker_url("http://amd:30000/"));
+        assert!(!identity.allows_worker_url("http://nvidia:30000"));
+        assert!(identity.uses_input_length_routing());
     }
 
     #[test]

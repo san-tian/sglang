@@ -464,6 +464,23 @@ async fn main() -> Result<()> {
     // becomes a no-op via try_init's idempotency.
     let metrics = MetricsRegistry::new();
     let _sls_guard = install_bootstrap_subscriber(Arc::clone(&metrics));
+    let mut gateway_file_loaded = false;
+    if let Some(path) = non_empty_env(sgl_router::gateway_config::GATEWAY_CONFIG_FILE_ENV) {
+        if std::env::args_os().len() > 1 {
+            anyhow::bail!("GATEWAY_CONFIG_FILE cannot be combined with explicit CLI arguments");
+        }
+        let compiled = sgl_router::gateway_config::load(std::path::Path::new(&path))?;
+        tracing::info!(
+            revision = %compiled.revision,
+            backends = compiled.backend_count,
+            local_backends = compiled.local_backend_count,
+            external_backends = compiled.external_backend_count,
+            keys = compiled.key_count,
+            "loaded administrator gateway YAML"
+        );
+        compiled.apply_to_environment();
+        gateway_file_loaded = true;
+    }
     let startup = cli_from_args_or_env().await?;
     let cfg = startup
         .cli
@@ -508,6 +525,13 @@ async fn main() -> Result<()> {
         disabled_keys = gateway_keyring.disabled_key_count(),
         "gateway entry API-key authentication enabled"
     );
+    if non_empty_env("GATEWAY_CONFIG_VALIDATE_ONLY").is_some_and(|value| is_truthy(&value)) {
+        if !gateway_file_loaded {
+            anyhow::bail!("GATEWAY_CONFIG_VALIDATE_ONLY requires GATEWAY_CONFIG_FILE");
+        }
+        tracing::info!("gateway YAML validation completed; exiting without serving traffic");
+        return Ok(());
+    }
 
     let tokenizers = Arc::new(
         sgl_router::tokenizer::TokenizerRegistry::load_from_config(&cfg)

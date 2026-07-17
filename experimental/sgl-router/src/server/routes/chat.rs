@@ -284,9 +284,10 @@ pub async fn chat_completions(
         .model
         .clone()
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-    if entry_identity.as_ref().is_some_and(|identity| {
-        !identity.allows_external_model() && model_str != ctx.config.model.id
-    }) {
+    if entry_identity
+        .as_ref()
+        .is_some_and(|identity| !identity.allows_model(&model_str, &ctx.config.model.id))
+    {
         return Err(ApiError::ModelNotFound(model_str));
     }
     let Some(cfg) = ctx

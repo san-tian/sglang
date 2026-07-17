@@ -400,9 +400,10 @@ pub async fn messages(
             .model
             .clone()
             .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-        if entry_identity.as_ref().is_some_and(|identity| {
-            !identity.allows_external_model() && model_str != ctx.config.model.id
-        }) {
+        if entry_identity
+            .as_ref()
+            .is_some_and(|identity| !identity.allows_model(&model_str, &ctx.config.model.id))
+        {
             return Err(ApiError::ModelNotFound(model_str));
         }
         let Some(cfg) = ctx
@@ -518,9 +519,10 @@ pub async fn count_tokens(
         let model_str = probe
             .model
             .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-        if entry_identity.as_ref().is_some_and(|identity| {
-            !identity.allows_external_model() && model_str != ctx.config.model.id
-        }) {
+        if entry_identity
+            .as_ref()
+            .is_some_and(|identity| !identity.allows_model(&model_str, &ctx.config.model.id))
+        {
             return Err(ApiError::ModelNotFound(model_str));
         }
         messages_inner(
