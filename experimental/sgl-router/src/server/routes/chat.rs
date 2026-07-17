@@ -19,9 +19,7 @@ use crate::server::routes::admission::enforce_external_queue_admission;
 use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
-use crate::server::routes::context_window::{
-    enforce_context_eligibility, raw_chat_context_tokens_reliable, required_context_tokens,
-};
+use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::reasoning_compat::{normalize_reasoning_request, ReasoningEndpoint};
@@ -545,11 +543,13 @@ async fn chat_completions_inner(
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
 
+    // The explicit Chat opt-in accepts any extracted text tokens as a
+    // routing-only approximation. Engine input forwarding has its own strict
+    // engine-equivalence gate below and never consumes these approximate ids.
     let reliable_prompt_tokens = match (request_value.as_ref(), request_tokens.as_ref()) {
         (Some(value), Some(tokens))
             if (tokens.engine_equivalent && context_prompt_tokens_reliable(value))
-                || (ctx.config.allow_raw_context_tokens
-                    && raw_chat_context_tokens_reliable(value)) =>
+                || ctx.config.allow_raw_context_tokens =>
         {
             Some(tokens.ids.len())
         }

@@ -304,6 +304,95 @@ async fn raw_context_opt_in_chat_with_reasoning_effort_routes_by_existing_tokens
 }
 
 #[tokio::test]
+async fn raw_context_opt_in_chat_agent_shapes_route_by_existing_tokens() {
+    let cases = [
+        (
+            "tools",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "tools":[{"type":"function","function":{"name":"noop","parameters":{"type":"object"}}}],
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "content-array",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}],
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "template-kwargs",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "chat_template_kwargs":{"enable_thinking":true},
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "task",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "task":"chat",
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+        (
+            "continuation",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"assistant","content":"partial"}],
+                "continue_final_message":true,
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ),
+    ];
+
+    for (case_name, request_body) in cases {
+        let short = MockWorker::start(vec![]).await;
+        let long = MockWorker::start(vec![]).await;
+        let ctx = build_raw_context_ctx(vec![
+            ranged_worker_spec("short", &short.url, None, Some(65_535)),
+            ranged_worker_spec("long", &long.url, Some(65_536), None),
+        ]);
+
+        let response = build_router(Arc::clone(&ctx))
+            .oneshot(request("/v1/chat/completions", request_body))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "case={case_name}");
+        assert!(was_hit(&short), "case={case_name}");
+        assert!(!was_hit(&long), "case={case_name}");
+        let forwarded: serde_json::Value = serde_json::from_slice(
+            short
+                .captured
+                .lock()
+                .unwrap()
+                .last_body
+                .as_ref()
+                .expect("short worker request body"),
+        )
+        .unwrap();
+        assert!(forwarded.get("input_ids").is_none(), "case={case_name}");
+    }
+}
+
+#[tokio::test]
 async fn within_limit_completion_keeps_limited_worker_in_rotation() {
     let limited = MockWorker::start(vec![]).await;
     let unlimited = MockWorker::start(vec![]).await;

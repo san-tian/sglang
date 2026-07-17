@@ -47,18 +47,6 @@ pub fn required_context_tokens_with_explicit_output(
 /// opted-in context-range decision. This rejects request features whose
 /// engine-side prompt construction cannot be represented by raw text.
 pub fn raw_context_tokens_reliable(value: &Value) -> bool {
-    raw_context_tokens_usable(value, false)
-}
-
-/// Whether Chat raw tokens may drive the operator-requested approximate range
-/// decision. Reasoning controls can change template overhead, but the existing
-/// raw message length is still used instead of rejecting the request. This is
-/// routing-only; the stricter input-id forwarding gate remains unchanged.
-pub fn raw_chat_context_tokens_reliable(value: &Value) -> bool {
-    raw_context_tokens_usable(value, true)
-}
-
-fn raw_context_tokens_usable(value: &Value, allow_reasoning_controls: bool) -> bool {
     let nonempty = |key: &str| {
         value.get(key).is_some_and(|v| match v {
             Value::Array(items) => !items.is_empty(),
@@ -73,9 +61,8 @@ fn raw_context_tokens_usable(value: &Value, allow_reasoning_controls: bool) -> b
         || value
             .get("chat_template_kwargs")
             .is_some_and(|v| !v.is_null())
-        || (!allow_reasoning_controls
-            && (value.get("reasoning").is_some_and(|v| !v.is_null())
-                || value.get("reasoning_effort").is_some_and(|v| !v.is_null())))
+        || value.get("reasoning").is_some_and(|v| !v.is_null())
+        || value.get("reasoning_effort").is_some_and(|v| !v.is_null())
         || value.get("task").is_some_and(|v| !v.is_null())
         || value.get("continue_final_message").and_then(Value::as_bool) == Some(true)
     {
@@ -237,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_context_routing_scopes_reasoning_approximation_to_chat() {
+    fn raw_context_reliability_stays_strict_for_messages_and_responses() {
         assert!(raw_context_tokens_reliable(&json!({
             "messages": [{"role": "user", "content": "hello"}]
         })));
@@ -261,8 +248,6 @@ mod tests {
         });
         assert!(!raw_context_tokens_reliable(&reasoning_effort));
         assert!(!raw_context_tokens_reliable(&nested_reasoning));
-        assert!(raw_chat_context_tokens_reliable(&reasoning_effort));
-        assert!(raw_chat_context_tokens_reliable(&nested_reasoning));
     }
 
     #[test]
