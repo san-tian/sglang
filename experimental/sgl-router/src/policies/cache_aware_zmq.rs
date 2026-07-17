@@ -1501,6 +1501,7 @@ impl CacheAwareZmqPolicy {
     }
 
     fn match_prefix(&self, model: &crate::discovery::ModelId, block_hashes: &[i64]) -> CacheMatch {
+        let remote_only = self.config.tree_source == CacheTreeSource::Remote;
         if let Some(client) = &self.remote_cache_state {
             let req = CacheStateMatchRequest {
                 model_id: model.0.clone(),
@@ -1514,11 +1515,12 @@ impl CacheAwareZmqPolicy {
                         self.record_remote_cache_state_query(RemoteCacheStateQueryOutcome::Hit);
                         return remote_match;
                     }
-                    if authoritative {
+                    if authoritative || remote_only {
                         self.record_remote_cache_state_query(RemoteCacheStateQueryOutcome::Miss);
                         tracing::debug!(
                             model = %model,
-                            "cache-aware-zmq: authoritative remote cache-state returned no useful match",
+                            remote_only,
+                            "cache-aware-zmq: remote cache-state returned no useful match without local fallback",
                         );
                         return remote_match;
                     }
@@ -1538,6 +1540,14 @@ impl CacheAwareZmqPolicy {
                     return local_match;
                 }
                 None => {
+                    if remote_only {
+                        self.record_remote_cache_state_query(RemoteCacheStateQueryOutcome::Failure);
+                        tracing::debug!(
+                            model = %model,
+                            "cache-aware-zmq: remote-only cache-state query failed",
+                        );
+                        return CacheMatch::empty();
+                    }
                     let local_match =
                         CacheMatch::from_local(self.tree.match_prefix(None, block_hashes));
                     if local_match.is_useful() {
@@ -1558,6 +1568,9 @@ impl CacheAwareZmqPolicy {
                     return local_match;
                 }
             }
+        }
+        if remote_only {
+            return CacheMatch::empty();
         }
         CacheMatch::from_local(self.tree.match_prefix(None, block_hashes))
     }
@@ -1587,15 +1600,20 @@ impl CacheAwareZmqPolicy {
         chosen: &Option<Arc<Worker>>,
         block_hashes: &[i64],
     ) {
-        if self.config.tree_source != CacheTreeSource::RouteHistory {
+        if !matches!(
+            self.config.tree_source,
+            CacheTreeSource::RouteHistory | CacheTreeSource::Remote
+        ) {
             return;
         }
         let Some(w) = chosen else { return };
         if block_hashes.is_empty() {
             return;
         }
-        let kw = KvWorkerId::new(w.url.clone(), 0);
-        self.tree.insert(&kw, None, block_hashes);
+        if self.config.tree_source == CacheTreeSource::RouteHistory {
+            let kw = KvWorkerId::new(w.url.clone(), 0);
+            self.tree.insert(&kw, None, block_hashes);
+        }
 
         if let Some(client) = &self.remote_cache_state {
             let ok = client.insert(&CacheStateInsertRequest {
@@ -1847,6 +1865,13 @@ struct GroupScore {
 }
 
 impl CacheMatch {
+    fn empty() -> Self {
+        Self {
+            matched_blocks: 0,
+            worker_urls: HashSet::new(),
+        }
+    }
+
     fn from_local(matched: crate::policies::kv_events::tree::MatchResult) -> Self {
         Self {
             matched_blocks: matched.matched_blocks,
@@ -4721,6 +4746,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn remote_only_failure_does_not_fall_back_to_local_tree() {
+        let registry = tokenizer_registry_with_tiny();
+        let text = "hello world hello world hello world";
+        let (ids, hashes) = tiny_ids_and_hashes(&registry, text);
+        let tree = Arc::new(HashTree::new());
+        tree.insert(&KvWorkerId::new("http://w0:30000".into(), 0), None, &hashes);
+        let client = Arc::new(RemoteCacheStateClient::new(
+            "http://127.0.0.1:9".into(),
+            std::time::Duration::from_millis(10),
+        ));
+        let metrics = MetricsRegistry::new();
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Remote,
+                ..CacheAwareConfig::default()
+            },
+            tree,
+            registry,
+            oracle_for_tests(4),
+        )
+        .with_remote_cache_state(client)
+        .with_metrics(Arc::clone(&metrics));
+        let w0 = worker("http://w0:30000", "tiny");
+        let w1 = worker("http://w1:30000", "tiny");
+        w0.set_reported_load(1);
+        w1.set_reported_load(0);
+        let workers = vec![Arc::clone(&w0), Arc::clone(&w1)];
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&workers, &ctx).expect("must pick");
+
+        assert_eq!(
+            chosen.url, "http://w1:30000",
+            "remote-only failure must ignore the populated local tree"
+        );
+        let rendered = metrics.render();
+        assert!(
+            rendered.contains(r#"sgl_router_remote_cache_state_query_total{outcome="failure"} 1"#),
+            "remote failure must be counted; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("fallback_local_hit"),
+            "remote-only mode must never report a local fallback; got:\n{rendered}"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn remote_cache_state_empty_match_falls_back_to_local_tree() {
         let service = Arc::new(crate::cache_state::CacheStateService::with_empty_tree());
@@ -4913,6 +4990,52 @@ mod tests {
             rendered.contains(r#"sgl_router_remote_cache_state_feed_total{outcome="success"} 1"#),
             "remote feed success must be counted; got:\n{rendered}",
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_only_feeds_remote_without_populating_local_tree() {
+        let service = Arc::new(crate::cache_state::CacheStateService::with_empty_tree());
+        let (base_url, server) = start_cache_state_service(Arc::clone(&service)).await;
+        let registry = tokenizer_registry_with_tiny();
+        let text = "hello world hello world hello world";
+        let (ids, hashes) = tiny_ids_and_hashes(&registry, text);
+        let tree = Arc::new(HashTree::new());
+        let client = Arc::new(RemoteCacheStateClient::new(
+            base_url,
+            std::time::Duration::from_millis(500),
+        ));
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                tree_source: CacheTreeSource::Remote,
+                ..CacheAwareConfig::default()
+            },
+            Arc::clone(&tree),
+            registry,
+            oracle_for_tests(4),
+        )
+        .with_remote_cache_state(client);
+        let worker = worker("http://w0:30000", "tiny");
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&[worker], &ctx).expect("must pick");
+
+        assert_eq!(chosen.url, "http://w0:30000");
+        assert_eq!(
+            tree.node_count(),
+            0,
+            "remote-only mode must never populate the local prefix tree"
+        );
+        let remote_match = service.match_prefix(&CacheStateMatchRequest {
+            model_id: "tiny".into(),
+            block_hashes: hashes,
+        });
+        server.abort();
+        assert!(remote_match.matched_blocks > 0);
+        assert_eq!(remote_match.workers[0].worker_url, "http://w0:30000");
     }
 
     #[test]

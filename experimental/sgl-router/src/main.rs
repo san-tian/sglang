@@ -588,7 +588,14 @@ async fn main() -> Result<()> {
     // oracle, so seed it from --cache-tree-page-size / --cache-tree-bigram,
     // and we deliberately DON'T attach ZMQ subscribers (no worker ZMQ port
     // needed — works over NAT/Vast public mappings).
-    let route_history = matches!(
+    let history_hashing = matches!(
+        cache_tree_source,
+        Some(
+            sgl_router::config::CacheTreeSource::RouteHistory
+                | sgl_router::config::CacheTreeSource::Remote
+        )
+    );
+    let local_route_history = matches!(
         cache_tree_source,
         Some(sgl_router::config::CacheTreeSource::RouteHistory)
     );
@@ -596,7 +603,7 @@ async fn main() -> Result<()> {
         cache_tree_source,
         Some(sgl_router::config::CacheTreeSource::Zmq)
     );
-    if route_history {
+    if history_hashing {
         if let Some(ps) = cfg.cache_tree_page_size {
             match block_size_oracle.try_set(ps) {
                 Ok(v) => tracing::info!(
@@ -668,7 +675,7 @@ async fn main() -> Result<()> {
     // has no worker-driven BlockRemoved events to bound it, so periodically
     // LRU-evict down to --cache-tree-max-nodes. (zmq mode evicts via worker
     // events + its own cap, so this task is route-history-only.)
-    let tree_evict_handle = if route_history {
+    let tree_evict_handle = if local_route_history {
         let tree = kv_index.tree();
         let max_nodes = cfg.cache_tree_max_nodes;
         tracing::info!(
