@@ -19,23 +19,23 @@ The system SHALL provide a cache-state service mode that maintains a prefix-cach
 - **THEN** the service SHALL return a successful response without requiring worker traffic
 
 ### Requirement: Gateway can use remote cache state
-The gateway SHALL support an opt-in remote cache-state client for cache-aware routing while preserving the existing in-process cache tree path when no remote service is configured. A successful response from a reconciliation-authoritative remote service SHALL be definitive for cache-hit selection, while transport failures and legacy non-authoritative responses SHALL preserve local route-history fallback.
+The gateway SHALL support an opt-in remote cache-state client for cache-aware routing. In `remote_only` mode the remote response SHALL be the only cache-match source: useful trusted matches SHALL participate in worker scoring, while authoritative misses, transport failures, timeouts, and malformed responses SHALL continue through cache-miss Prefill/load selection without consulting or populating a local route-history tree. Other explicitly configured cache-tree modes SHALL preserve their existing behavior.
 
 #### Scenario: Remote cache-state URL is configured
-- **WHEN** cache-aware routing is enabled with a remote cache-state URL and the remote service returns a useful trusted prefix match
+- **WHEN** cache-aware routing is enabled in `remote_only` mode with a remote cache-state URL and the remote service returns a useful trusted prefix match
 - **THEN** the gateway SHALL use the remote match result for prefix-aware worker scoring
 
 #### Scenario: Authoritative remote service returns no useful trusted match
 - **WHEN** the remote query succeeds with an authoritative response but returns zero matched blocks or no trusted matching workers
 - **THEN** the gateway SHALL skip local cache-history matching and continue through cache-miss load-based selection
 
-#### Scenario: Remote cache-state is unavailable or legacy
-- **WHEN** the remote query fails, times out, returns malformed data, or returns a non-authoritative legacy response without a useful match
-- **THEN** the gateway SHALL fall back to the in-process cache tree match result before selecting by load-only fallback behavior
+#### Scenario: Remote-only service is unavailable or malformed
+- **WHEN** the remote query fails, times out, or returns malformed data in `remote_only` mode
+- **THEN** the gateway SHALL treat cache match as empty, SHALL NOT query a local prefix tree, and SHALL continue through Prefill/load fallback
 
-#### Scenario: Remote cache-state URL is omitted
-- **WHEN** cache-aware routing is enabled without a remote cache-state URL
-- **THEN** the gateway SHALL keep the existing in-process ZMQ or route-history cache behavior
+#### Scenario: Another cache-tree mode is explicitly configured
+- **WHEN** the administrator selects an existing non-remote-only source
+- **THEN** the gateway SHALL preserve that source's existing local and remote fallback semantics
 
 ### Requirement: Remote cache-state failures degrade safely
 The gateway SHALL treat remote cache-state transport failures, timeouts, and malformed responses as non-fatal. It SHALL distinguish those failures from a successful authoritative cache miss so stale local history cannot override a fail-closed reconciliation decision.

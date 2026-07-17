@@ -19,5 +19,5 @@
 ## 4. Verification and closure
 
 - [x] 4.1 Run focused and full Rust tests, cargo check, clippy, release build, Python syntax tests, and YAML validate-only
-- [ ] 4.2 Validate the OpenSpec change strictly, archive it, and validate the archived specifications
-- [ ] 4.3 Scan the public diff for secrets and internal infrastructure identifiers, then commit and push the feature branch
+- [x] 4.2 Validate the OpenSpec change strictly, archive it, and validate the archived specifications
+- [x] 4.3 Scan the public diff for secrets and internal infrastructure identifiers, then commit and push the feature branch
