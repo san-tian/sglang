@@ -1610,15 +1610,23 @@ impl CacheAwareZmqPolicy {
         if block_hashes.is_empty() {
             return;
         }
+        // A logical 1P1D worker has exactly one possible Prefill cache owner.
+        // Feed that physical identity so the next member-level score can join
+        // cache-state matches to the same Prefill member. Keep the logical
+        // identity for integrated workers and ambiguous multi-P groups.
+        let cache_owner = match w.prefill_members() {
+            [only_member] => only_member.clone(),
+            _ => w.url.clone(),
+        };
         if self.config.tree_source == CacheTreeSource::RouteHistory {
-            let kw = KvWorkerId::new(w.url.clone(), 0);
+            let kw = KvWorkerId::new(cache_owner.clone(), 0);
             self.tree.insert(&kw, None, block_hashes);
         }
 
         if let Some(client) = &self.remote_cache_state {
             let ok = client.insert(&CacheStateInsertRequest {
                 model_id: model.0.clone(),
-                worker_url: w.url.clone(),
+                worker_url: cache_owner.clone(),
                 dp_rank: 0,
                 parent_hash: None,
                 block_hashes: block_hashes.to_vec(),
@@ -1632,7 +1640,7 @@ impl CacheAwareZmqPolicy {
             if !ok {
                 tracing::debug!(
                     model = %model,
-                    worker = %w.url,
+                    worker = %cache_owner,
                     "cache-aware-zmq: remote cache-state feed failed",
                 );
             }
@@ -4989,6 +4997,65 @@ mod tests {
         assert!(
             rendered.contains(r#"sgl_router_remote_cache_state_feed_total{outcome="success"} 1"#),
             "remote feed success must be counted; got:\n{rendered}",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_route_history_feeds_single_prefill_member_identity() {
+        let service = Arc::new(crate::cache_state::CacheStateService::with_empty_tree());
+        let (base_url, server) = start_cache_state_service(Arc::clone(&service)).await;
+        let registry = tokenizer_registry_with_tiny();
+        let text = "hello world hello world hello world";
+        let (ids, hashes) = tiny_ids_and_hashes(&registry, text);
+        let client = Arc::new(RemoteCacheStateClient::new(
+            base_url,
+            std::time::Duration::from_millis(500),
+        ));
+        let policy = CacheAwareZmqPolicy::new(
+            CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                balance_rel_threshold: f32::INFINITY,
+                use_reported_load: true,
+                tree_source: CacheTreeSource::Remote,
+                ttft_first_routing: true,
+                ttft_score_mode: TtftScoreMode::PredictedTtft,
+                ..CacheAwareConfig::default()
+            },
+            Arc::new(HashTree::new()),
+            registry,
+            oracle_for_tests(4),
+        )
+        .with_remote_cache_state(client);
+        let logical = worker_with_prefill_members(
+            "http://logical:30000",
+            "tiny",
+            WorkerBackend::SglangProxy,
+            1000,
+            vec!["http://prefill-0:30000".into()],
+        );
+        logical.set_reported_prefill_members(vec![MemberPrefillLoadSnapshot {
+            worker_url: "http://prefill-0:30000".into(),
+            prefill_capacity_milli: 1000,
+            snapshot: prefill_snapshot(0, 0, None),
+        }]);
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None).with_request_tokens(Some(&ids));
+
+        let chosen = policy.select(&[logical], &ctx).expect("must pick");
+
+        assert_eq!(chosen.url, "http://logical:30000");
+        let remote_match = service.match_prefix(&CacheStateMatchRequest {
+            model_id: "tiny".into(),
+            block_hashes: hashes,
+        });
+        server.abort();
+        assert_eq!(
+            remote_match.workers,
+            vec![CacheStateWorkerMatch {
+                worker_url: "http://prefill-0:30000".into(),
+                dp_rank: 0,
+            }],
         );
     }
 
