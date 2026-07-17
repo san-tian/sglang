@@ -261,6 +261,49 @@ async fn raw_context_opt_in_chat_routes_short_request_to_short_worker() {
 }
 
 #[tokio::test]
+async fn raw_context_opt_in_chat_with_reasoning_effort_routes_by_existing_tokens() {
+    let short = MockWorker::start(vec![]).await;
+    let long = MockWorker::start(vec![]).await;
+    let ctx = build_raw_context_ctx(vec![
+        ranged_worker_spec("short", &short.url, None, Some(65_535)),
+        ranged_worker_spec("long", &long.url, Some(65_536), None),
+    ]);
+
+    let response = build_router(Arc::clone(&ctx))
+        .oneshot(request(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model":"tiny",
+                "messages":[{"role":"user","content":"hello"}],
+                "max_tokens":8,
+                "reasoning_effort":"high",
+                "stream":false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(was_hit(&short));
+    assert!(!was_hit(&long));
+    let forwarded: serde_json::Value = serde_json::from_slice(
+        short
+            .captured
+            .lock()
+            .unwrap()
+            .last_body
+            .as_ref()
+            .expect("short worker request body"),
+    )
+    .unwrap();
+    assert_eq!(forwarded["reasoning_effort"], "high");
+    assert!(forwarded.get("input_ids").is_none());
+    assert!(ctx.metrics.render().contains(
+        r#"sgl_router_context_filtered_total{reason="worker_excluded_below_minimum"} 1"#
+    ));
+}
+
+#[tokio::test]
 async fn within_limit_completion_keeps_limited_worker_in_rotation() {
     let limited = MockWorker::start(vec![]).await;
     let unlimited = MockWorker::start(vec![]).await;

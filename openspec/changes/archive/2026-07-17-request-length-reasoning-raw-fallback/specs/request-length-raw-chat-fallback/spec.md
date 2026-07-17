@@ -1,8 +1,5 @@
-# request-length-raw-chat-fallback Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change request-length-raw-chat-fallback. Update Purpose after archive.
-## Requirements
 ### Requirement: Raw context counting is opt-in
 
 The gateway SHALL default to fail-closed unknown-length handling for bounded workers. When `ALLOW_RAW_CONTEXT_TOKENS=1` is set, eligible generation handlers MAY use raw prompt tokenization for context-range filtering when the request shape has no unsupported template controls, tools, multimodal content, or stateful continuation fields. A Chat request carrying `reasoning` or `reasoning_effort` SHALL use the available raw message tokens for this routing-only approximation instead of becoming unknown; the gateway SHALL still forward the original request without injecting those approximate tokens as engine input.
@@ -27,4 +24,3 @@ The gateway SHALL default to fail-closed unknown-length handling for bounded wor
 
 - **WHEN** raw counting is enabled but the request contains tools, multimodal content, explicit template controls, task controls, or stateful continuation fields
 - **THEN** the gateway SHALL not treat the raw count as reliable for hard context eligibility
-
