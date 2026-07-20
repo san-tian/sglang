@@ -1,0 +1,35 @@
+FROM acr-qhxx-registry.cn-beijing.cr.aliyuncs.com/mindverse/sglang:v0.5.14-cp-layersplit-v17-patched
+
+# 只覆盖 PR 改动的 Python 文件（26 个 + 1 个新文件）
+COPY python/sglang/srt/mem_cache/cp_layersplit_pool.py /sgl-workspace/sglang/python/sglang/srt/mem_cache/cp_layersplit_pool.py
+COPY python/sglang/srt/mem_cache/unified_radix_cache.py /sgl-workspace/sglang/python/sglang/srt/mem_cache/unified_radix_cache.py
+COPY python/sglang/srt/mem_cache/memory_pool_host.py /sgl-workspace/sglang/python/sglang/srt/mem_cache/memory_pool_host.py
+COPY python/sglang/srt/mem_cache/kv_cache_builder.py /sgl-workspace/sglang/python/sglang/srt/mem_cache/kv_cache_builder.py
+COPY python/sglang/srt/mem_cache/hicache_storage.py /sgl-workspace/sglang/python/sglang/srt/mem_cache/hicache_storage.py
+COPY python/sglang/srt/mem_cache/storage/mooncake_store/mooncake_store.py /sgl-workspace/sglang/python/sglang/srt/mem_cache/storage/mooncake_store/mooncake_store.py
+COPY python/sglang/srt/mem_cache/hybrid_cache/hybrid_pool_assembler.py /sgl-workspace/sglang/python/sglang/srt/mem_cache/hybrid_cache/hybrid_pool_assembler.py
+COPY python/sglang/srt/layers/attention/dsa_backend.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa_backend.py
+COPY python/sglang/srt/layers/attention/dsa/dsa_indexer.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+COPY python/sglang/srt/layers/utils/cp_utils.py /sgl-workspace/sglang/python/sglang/srt/layers/utils/cp_utils.py
+COPY python/sglang/srt/model_executor/model_runner_kv_cache_mixin.py /sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner_kv_cache_mixin.py
+COPY python/sglang/srt/model_executor/pool_configurator.py /sgl-workspace/sglang/python/sglang/srt/model_executor/pool_configurator.py
+COPY python/sglang/srt/managers/cache_controller.py /sgl-workspace/sglang/python/sglang/srt/managers/cache_controller.py
+COPY python/sglang/srt/managers/tp_worker.py /sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py
+COPY python/sglang/srt/arg_groups/pd_disaggregation_hook.py /sgl-workspace/sglang/python/sglang/srt/arg_groups/pd_disaggregation_hook.py
+COPY python/sglang/srt/disaggregation/common/conn.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/common/conn.py
+COPY python/sglang/srt/disaggregation/decode_hicache_mixin.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/decode_hicache_mixin.py
+COPY python/sglang/srt/disaggregation/prefill.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/prefill.py
+COPY python/sglang/srt/disaggregation/decode.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/decode.py
+COPY python/sglang/srt/disaggregation/utils.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/utils.py
+COPY python/sglang/srt/server_args.py /sgl-workspace/sglang/python/sglang/srt/server_args.py
+COPY python/sglang/srt/environ.py /sgl-workspace/sglang/python/sglang/srt/environ.py
+COPY python/sglang/jit_kernel/hicache.py /sgl-workspace/sglang/python/sglang/jit_kernel/hicache.py
+COPY python/sglang/jit_kernel/csrc/kvcacheio/hicache.cuh /sgl-workspace/sglang/python/sglang/jit_kernel/csrc/kvcacheio/hicache.cuh
+COPY python/sglang/jit_kernel/csrc/kvcacheio/relayout.cuh /sgl-workspace/sglang/python/sglang/jit_kernel/csrc/kvcacheio/relayout.cuh
+COPY python/sglang/jit_kernel/csrc/kvcacheio/staged_write_back.cuh /sgl-workspace/sglang/python/sglang/jit_kernel/csrc/kvcacheio/staged_write_back.cuh
+
+# AITER patch script
+COPY scripts/patch_aiter.py /scripts/patch_aiter.py
+
+# Mooncake patch script
+COPY scripts/patch_mooncake.sh /scripts/patch_mooncake.sh
