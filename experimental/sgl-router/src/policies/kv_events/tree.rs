@@ -40,7 +40,7 @@
 //! can be deep — the recursive form would risk stack-overflow for
 //! pathological inputs).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -347,6 +347,32 @@ impl TreeState {
         }
     }
 
+    fn remove_entry(&mut self, worker: &KvWorkerId, parent_hash: Option<i64>, block_hash: i64) {
+        let targets: Vec<NodeId> = self
+            .by_hash
+            .get(&block_hash)
+            .into_iter()
+            .flat_map(|ids| ids.iter().copied())
+            .filter(|id| {
+                self.nodes
+                    .get(id)
+                    .is_some_and(|node| node.parent_block_hash == parent_hash)
+            })
+            .collect();
+        for id in targets {
+            let prunable = match self.nodes.get_mut(&id) {
+                Some(node) => {
+                    node.workers.remove(worker);
+                    node.workers.is_empty() && node.children.is_empty()
+                }
+                None => false,
+            };
+            if prunable {
+                self.prune_cascade(id);
+            }
+        }
+    }
+
     fn clear_worker(&mut self, worker: &KvWorkerId) {
         // Snapshot ids before mutation.
         let ids: Vec<NodeId> = self
@@ -501,6 +527,62 @@ impl TreeState {
         }
     }
 
+    fn match_prefix_filtered(
+        &self,
+        parent_hash: Option<i64>,
+        block_hashes: &[i64],
+        allowed_workers: &HashSet<KvWorkerId>,
+    ) -> MatchResult {
+        if block_hashes.is_empty() || allowed_workers.is_empty() {
+            return MatchResult {
+                matched_blocks: 0,
+                workers: HashSet::new(),
+            };
+        }
+        let start = match parent_hash {
+            None => ROOT_ID,
+            Some(p) => match self.by_hash.get(&p) {
+                Some(set) if set.len() == 1 => *set.iter().next().unwrap(),
+                _ => ROOT_ID,
+            },
+        };
+
+        let mut current = start;
+        let mut depth = 0usize;
+        let mut best_depth = 0usize;
+        let mut best_workers = HashSet::new();
+        let now = now_millis();
+        for &hash in block_hashes {
+            let Some(child_id) = self
+                .nodes
+                .get(&current)
+                .and_then(|node| node.children.get(&hash).copied())
+            else {
+                break;
+            };
+            let Some(child) = self.nodes.get(&child_id) else {
+                break;
+            };
+            child.last_used.store(now, Ordering::Relaxed);
+            current = child_id;
+            depth += 1;
+
+            let trusted: HashSet<_> = child
+                .workers
+                .intersection(allowed_workers)
+                .cloned()
+                .collect();
+            if !trusted.is_empty() {
+                best_depth = depth;
+                best_workers = trusted;
+            }
+        }
+        MatchResult {
+            matched_blocks: best_depth,
+            workers: best_workers,
+        }
+    }
+
     /// Approximate count of *non-root* nodes in the tree.
     fn node_count(&self) -> usize {
         // Subtract one for the root sentinel.
@@ -620,10 +702,35 @@ impl HashTree {
         state.remove(worker, block_hashes);
     }
 
+    /// Remove one `(parent_hash, block_hash)` ownership edge for a worker.
+    /// This is used by reconciliation's storage-medium union tracker so a
+    /// same-hash entry in another chain is not removed accidentally.
+    pub fn remove_entry(&self, worker: &KvWorkerId, parent_hash: Option<i64>, block_hash: i64) {
+        self.state
+            .write()
+            .remove_entry(worker, parent_hash, block_hash);
+    }
+
     /// Apply an `AllBlocksCleared` event for `worker`.
     pub fn clear_worker(&self, worker: &KvWorkerId) {
         let mut state = self.state.write();
         state.clear_worker(worker);
+    }
+
+    /// Atomically replace all ownership for one worker from an authoritative
+    /// snapshot. The input is validated and topologically ordered before the
+    /// write lock is taken, so an invalid or cyclic snapshot leaves the tree
+    /// unchanged.
+    pub fn replace_worker(&self, worker: &KvWorkerId, entries: &[(Option<i64>, i64)]) -> bool {
+        let Some(ordered) = order_snapshot_entries(entries) else {
+            return false;
+        };
+        let mut state = self.state.write();
+        state.clear_worker(worker);
+        for (parent_hash, block_hash) in ordered {
+            state.insert(worker, parent_hash, &[block_hash]);
+        }
+        true
     }
 
     /// Find the longest path from the root that matches a prefix of
@@ -650,6 +757,20 @@ impl HashTree {
     pub fn match_prefix(&self, parent_hash: Option<i64>, block_hashes: &[i64]) -> MatchResult {
         let state = self.state.read();
         state.match_prefix(parent_hash, block_hashes)
+    }
+
+    /// Find the deepest matched prefix held by at least one allowed worker.
+    /// Structural nodes owned only by excluded workers are traversed but are
+    /// never returned as cache-hit evidence.
+    pub fn match_prefix_for_workers(
+        &self,
+        parent_hash: Option<i64>,
+        block_hashes: &[i64],
+        allowed_workers: &HashSet<KvWorkerId>,
+    ) -> MatchResult {
+        self.state
+            .read()
+            .match_prefix_filtered(parent_hash, block_hashes, allowed_workers)
     }
 
     /// Approximate number of non-root nodes in the tree (the root sentinel
@@ -681,6 +802,49 @@ impl HashTree {
         let mut state = self.state.write();
         state.evict_lru(max_size)
     }
+}
+
+fn order_snapshot_entries(entries: &[(Option<i64>, i64)]) -> Option<Vec<(Option<i64>, i64)>> {
+    let mut unique = HashSet::with_capacity(entries.len());
+    let mut roots = Vec::new();
+    let mut children_by_parent: HashMap<i64, Vec<(Option<i64>, i64)>> = HashMap::new();
+    for &(parent_hash, block_hash) in entries {
+        let entry = (parent_hash, block_hash);
+        if !unique.insert(entry) {
+            return None;
+        }
+        match parent_hash {
+            Some(parent_hash) => children_by_parent
+                .entry(parent_hash)
+                .or_default()
+                .push(entry),
+            None => roots.push(entry),
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(entries.len());
+    let mut resolved_hashes = HashSet::with_capacity(entries.len());
+    let mut ready_hashes = VecDeque::new();
+    for entry @ (_, block_hash) in roots {
+        ordered.push(entry);
+        if resolved_hashes.insert(block_hash) {
+            ready_hashes.push_back(block_hash);
+        }
+    }
+
+    while let Some(parent_hash) = ready_hashes.pop_front() {
+        let Some(children) = children_by_parent.remove(&parent_hash) else {
+            continue;
+        };
+        for entry @ (_, block_hash) in children {
+            ordered.push(entry);
+            if resolved_hashes.insert(block_hash) {
+                ready_hashes.push_back(block_hash);
+            }
+        }
+    }
+
+    (ordered.len() == entries.len()).then_some(ordered)
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,5 +1254,92 @@ mod tests {
         let m = tree.match_prefix(None, &[1, 2, 3]);
         assert_eq!(m.matched_blocks, 3);
         assert_eq!(m.workers, workers(&[&b]));
+    }
+
+    #[test]
+    fn filtered_match_returns_deepest_allowed_holder() {
+        let tree = HashTree::new();
+        let trusted = worker("http://trusted", 0);
+        let untrusted = worker("http://untrusted", 0);
+        tree.insert(&trusted, None, &[1, 2]);
+        tree.insert(&untrusted, None, &[1, 2, 3]);
+
+        let allowed = workers(&[&trusted]);
+        let matched = tree.match_prefix_for_workers(None, &[1, 2, 3], &allowed);
+        assert_eq!(matched.matched_blocks, 2);
+        assert_eq!(matched.workers, allowed);
+    }
+
+    #[test]
+    fn replace_worker_is_atomic_and_preserves_other_workers() {
+        let tree = HashTree::new();
+        let replaced = worker("http://replace", 0);
+        let other = worker("http://other", 0);
+        tree.insert(&replaced, None, &[1, 2]);
+        tree.insert(&other, None, &[9]);
+
+        assert!(tree.replace_worker(&replaced, &[(Some(10), 20), (None, 10), (Some(20), 30)]));
+        assert_eq!(tree.match_prefix(None, &[1, 2]).matched_blocks, 0);
+        assert_eq!(
+            tree.match_prefix(None, &[10, 20, 30]).workers,
+            workers(&[&replaced])
+        );
+        assert_eq!(tree.match_prefix(None, &[9]).workers, workers(&[&other]));
+    }
+
+    #[test]
+    fn invalid_snapshot_does_not_change_worker_state() {
+        let tree = HashTree::new();
+        let a = worker("http://a", 0);
+        tree.insert(&a, None, &[1, 2]);
+
+        assert!(!tree.replace_worker(&a, &[(Some(20), 10), (Some(10), 20)]));
+        let matched = tree.match_prefix(None, &[1, 2]);
+        assert_eq!(matched.matched_blocks, 2);
+        assert_eq!(matched.workers, workers(&[&a]));
+    }
+
+    #[test]
+    fn duplicate_snapshot_entry_is_rejected() {
+        let tree = HashTree::new();
+        let a = worker("http://a", 0);
+        assert!(!tree.replace_worker(&a, &[(None, 1), (None, 1)]));
+        assert_eq!(tree.node_count(), 0);
+    }
+
+    #[test]
+    fn reverse_ordered_deep_snapshot_is_resolved_without_repeated_full_scans() {
+        const ENTRY_COUNT: i64 = 20_000;
+        let entries: Vec<_> = (0..ENTRY_COUNT)
+            .rev()
+            .map(|block_hash| {
+                let parent_hash = (block_hash > 0).then_some(block_hash - 1);
+                (parent_hash, block_hash)
+            })
+            .collect();
+
+        let ordered = order_snapshot_entries(&entries).expect("valid chain must resolve");
+        assert_eq!(ordered.len(), entries.len());
+        assert_eq!(ordered.first(), Some(&(None, 0)));
+        assert_eq!(
+            ordered.last(),
+            Some(&(Some(ENTRY_COUNT - 2), ENTRY_COUNT - 1))
+        );
+    }
+
+    #[test]
+    fn snapshot_ordering_keeps_distinct_edges_with_a_shared_block_hash() {
+        let entries = [
+            (Some(7), 8),
+            (Some(1), 7),
+            (None, 2),
+            (Some(2), 7),
+            (None, 1),
+        ];
+        let ordered = order_snapshot_entries(&entries).expect("shared hashes are valid");
+        assert_eq!(ordered.len(), entries.len());
+        for entry in entries {
+            assert!(ordered.contains(&entry));
+        }
     }
 }

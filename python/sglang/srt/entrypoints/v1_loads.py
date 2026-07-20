@@ -82,7 +82,7 @@ async def get_loads(
     Query Parameters:
         dp_rank: Filter to specific DP rank (optional)
         include: Comma-separated sections to include (optional)
-                 Options: core, memory, spec, lora, disagg, queues, all
+                 Options: core, memory, spec, lora, disagg, queues, prefill_queue, all
                  Default: all
         format: Response format - 'json' (default) or 'prometheus'
 

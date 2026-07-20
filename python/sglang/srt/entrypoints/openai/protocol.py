@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -542,6 +543,52 @@ ChatCompletionMessageContentPart = Union[
     ChatCompletionMessageContentToolReferenceBlock,
 ]
 
+
+def _normalize_chat_completion_content_part(part: Any) -> Any:
+    if hasattr(part, "model_dump"):
+        part = part.model_dump(exclude_none=True)
+    if not isinstance(part, dict):
+        return part
+
+    part_type = part.get("type")
+    if part_type in ("input_text", "output_text"):
+        normalized = part.copy()
+        normalized["type"] = "text"
+        return normalized
+
+    if part_type == "input_image":
+        image_url = part.get("image_url")
+        if isinstance(image_url, dict):
+            image_url_obj = image_url.copy()
+        else:
+            image_url_obj = {"url": image_url}
+        if not image_url_obj.get("detail"):
+            image_url_obj["detail"] = part.get("detail") or "auto"
+        for key in ("min_dynamic_patch", "max_dynamic_patch"):
+            if key in part and key not in image_url_obj:
+                image_url_obj[key] = part[key]
+        return {"type": "image_url", "image_url": image_url_obj}
+
+    return part
+
+
+def _normalize_chat_completion_message_content(message: Any) -> Any:
+    if hasattr(message, "model_dump"):
+        message = message.model_dump(exclude_none=True)
+    if not isinstance(message, dict):
+        return message
+
+    content = message.get("content")
+    if not isinstance(content, list):
+        return message
+
+    message = message.copy()
+    message["content"] = [
+        _normalize_chat_completion_content_part(part) for part in content
+    ]
+    return message
+
+
 # Rerank content types for multimodal reranking (e.g., Qwen3-VL-Reranker)
 # Can be a simple string (text-only) or a list of multimodal content parts
 RerankContentPart = Union[
@@ -576,9 +623,9 @@ _GENERIC_MESSAGE_ROLES: Tuple[str, ...] = get_args(_GenericMessageRole)
 
 class ChatCompletionMessageGenericParam(BaseModel):
     role: _GenericMessageRole
-    content: Union[str, List[ChatCompletionMessageContentPart], None] = Field(
-        default=None
-    )
+    content: Union[
+        str, List[ChatCompletionMessageContentPart], Dict[str, Any], None
+    ] = Field(default=None)
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
     reasoning_content: Optional[str] = None
@@ -595,6 +642,19 @@ class ChatCompletionMessageGenericParam(BaseModel):
                 raise ValueError(f"'role' must be one of {allowed} (case-insensitive).")
             return v_lower
         raise ValueError("'role' must be a string")
+
+    @model_validator(mode="after")
+    def _normalize_content(self):
+        if self.content is None or isinstance(self.content, str):
+            return self
+        if isinstance(self.content, list):
+            return self
+        if self.role == "tool":
+            self.content = json.dumps(
+                self.content, ensure_ascii=False, separators=(",", ":")
+            )
+            return self
+        raise ValueError("content must be a string, a list of content parts, or null")
 
 
 class ChatCompletionMessageUserParam(BaseModel):
@@ -733,6 +793,7 @@ class ChatCompletionRequest(BaseModel):
     session_params: Optional[Dict] = None
     separate_reasoning: bool = True
     stream_reasoning: bool = True
+    return_reasoning: Optional[bool] = None
     chat_template_kwargs: Optional[Dict] = None
 
     # SGLang multimodal controls (extensions)
@@ -788,6 +849,22 @@ class ChatCompletionRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
+    def normalize_response_style_message_content(cls, values):
+        if not isinstance(values, dict):
+            return values
+
+        messages = values.get("messages")
+        if not isinstance(messages, list):
+            return values
+
+        values = values.copy()
+        values["messages"] = [
+            _normalize_chat_completion_message_content(message) for message in messages
+        ]
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
     def set_tool_choice_default(cls, values):
         if values.get("tool_choice") is None:
             if values.get("tools") is None:
@@ -803,7 +880,7 @@ class ChatCompletionRequest(BaseModel):
 
         if r is not None and isinstance(r, dict):
             effort = r.get("effort") or r.get("reasoning_effort")
-            if effort in {"none", "low", "medium", "high"}:
+            if effort in {"none", "low", "medium", "high", "max"}:
                 values["reasoning_effort"] = effort
 
             enabled = (
@@ -811,6 +888,9 @@ class ChatCompletionRequest(BaseModel):
                 if r.get("enabled") is not None
                 else r.get("enable", False)
             )
+            thinking_type = r.get("type")
+            if thinking_type in {"enabled", "disabled"}:
+                enabled = thinking_type == "enabled"
             if isinstance(enabled, str):
                 enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
             if enabled:
@@ -823,6 +903,34 @@ class ChatCompletionRequest(BaseModel):
                 ctk.setdefault("thinking", True)
                 ctk.setdefault("enable_thinking", True)
                 values["chat_template_kwargs"] = ctk
+
+        thinking = values.get("thinking")
+        if thinking is not None and isinstance(thinking, dict):
+            thinking_type = thinking.get("type")
+            if thinking_type in {"enabled", "disabled"}:
+                ctk = values.get("chat_template_kwargs")
+                if not isinstance(ctk, dict):
+                    ctk = {}
+                enabled = thinking_type == "enabled"
+                ctk.setdefault("thinking", enabled)
+                ctk.setdefault("enable_thinking", enabled)
+                values["chat_template_kwargs"] = ctk
+
+        enable_thinking = values.get("enable_thinking")
+        if isinstance(enable_thinking, str):
+            enable_thinking = enable_thinking.strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            }
+        if isinstance(enable_thinking, bool):
+            ctk = values.get("chat_template_kwargs")
+            if not isinstance(ctk, dict):
+                ctk = {}
+            ctk.setdefault("enable_thinking", enable_thinking)
+            values["chat_template_kwargs"] = ctk
 
         if values.get("reasoning_effort") == "none":
             ctk = values.get("chat_template_kwargs")
@@ -1300,9 +1408,11 @@ OpenAIServingRequest = Union[
 class ResponseReasoningParam(BaseModel):
     """Reasoning parameters for responses."""
 
-    effort: Optional[Literal["low", "medium", "high"]] = Field(
-        default="medium",
-        description="Constrains effort on reasoning for reasoning models.",
+    effort: Optional[Literal["none", "minimal", "low", "medium", "high", "xhigh"]] = (
+        Field(
+            default="medium",
+            description="Constrains effort on reasoning for reasoning models.",
+        )
     )
     summary: Optional[Literal["auto", "concise", "detailed"]] = Field(
         default=None,
@@ -1385,12 +1495,15 @@ class ResponsesRequest(BaseModel):
     store: Optional[bool] = True
     stream: Optional[bool] = False
     temperature: Optional[float] = None
-    tool_choice: Literal["auto", "required", "none"] = "auto"
+    tool_choice: Union[ToolChoice, Literal["auto", "required", "none"]] = "auto"
     tools: List[ResponseTool] = Field(default_factory=list)
     top_logprobs: Optional[int] = 0
     top_p: Optional[float] = None
     truncation: Optional[Literal["auto", "disabled"]] = "disabled"
     user: Optional[str] = None
+    chat_template_kwargs: Optional[Dict[str, Any]] = None
+    thinking: Optional[Dict[str, Any]] = None
+    enable_thinking: Optional[Union[bool, str]] = None
 
     # Extra SGLang parameters
     request_id: str = Field(
@@ -1406,6 +1519,11 @@ class ResponsesRequest(BaseModel):
     cache_salt: Optional[str] = Field(
         default=None, description="Cache salt for request caching"
     )
+
+    # Disaggregated Prefill bootstrap fields.
+    bootstrap_host: Optional[str] = None
+    bootstrap_port: Optional[int] = None
+    bootstrap_room: Optional[int] = None
 
     # SGLang sampling extras. ``None`` defers to ``--preferred-sampling-params``.
     frequency_penalty: float = 0.0
@@ -1430,6 +1548,28 @@ class ResponsesRequest(BaseModel):
         if not isinstance(values, dict):
             return values
 
+        # The OpenAI Responses API accepts ``tool_choice`` in the *flat*
+        # object form {"type": "function", "name": "<fn>"}, whereas the
+        # sibling Chat Completions API (and SGLang's ``ToolChoice`` model)
+        # use the nested form {"type": "function", "function": {"name": ...}}.
+        # Normalize the flat form to the nested form once, so the downstream
+        # ChatCompletionRequest / tool_call_constraint path reuses the exact
+        # enforcement logic already proven on /v1/chat/completions.
+        tc = values.get("tool_choice")
+        if (
+            isinstance(tc, dict)
+            and tc.get("type") == "function"
+            and "name" in tc
+            and not isinstance(tc.get("function"), dict)
+        ):
+            values = values.copy()
+            values["tool_choice"] = {
+                "type": "function",
+                "function": {"name": tc["name"]},
+            }
+
+        values = cls._normalize_responses_reasoning_controls(values)
+
         input_value = values.get("input")
         if not isinstance(input_value, list):
             return values
@@ -1438,6 +1578,55 @@ class ResponsesRequest(BaseModel):
         values["input"] = [
             cls._normalize_input_item_for_validation(item) for item in input_value
         ]
+        return values
+
+    @staticmethod
+    def _normalize_responses_reasoning_controls(values):
+        values = values.copy()
+
+        def _chat_template_kwargs():
+            ctk = values.get("chat_template_kwargs")
+            if not isinstance(ctk, dict):
+                ctk = {}
+            values["chat_template_kwargs"] = ctk
+            return ctk
+
+        reasoning = values.get("reasoning")
+        if isinstance(reasoning, dict):
+            thinking_type = reasoning.get("type")
+            if thinking_type in {"enabled", "disabled"}:
+                enabled = thinking_type == "enabled"
+                ctk = _chat_template_kwargs()
+                ctk.setdefault("thinking", enabled)
+                ctk.setdefault("enable_thinking", enabled)
+
+        thinking = values.get("thinking")
+        if isinstance(thinking, dict):
+            thinking_type = thinking.get("type")
+            if thinking_type in {"enabled", "disabled"}:
+                enabled = thinking_type == "enabled"
+                ctk = _chat_template_kwargs()
+                ctk.setdefault("thinking", enabled)
+                ctk.setdefault("enable_thinking", enabled)
+
+        enable_thinking = values.get("enable_thinking")
+        if isinstance(enable_thinking, str):
+            enable_thinking = enable_thinking.strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            }
+        if isinstance(enable_thinking, bool):
+            ctk = _chat_template_kwargs()
+            ctk.setdefault("enable_thinking", enable_thinking)
+
+        if isinstance(reasoning, dict) and reasoning.get("effort") == "none":
+            ctk = _chat_template_kwargs()
+            ctk.setdefault("thinking", False)
+            ctk.setdefault("enable_thinking", False)
+
         return values
 
     @staticmethod
@@ -1567,7 +1756,7 @@ class ResponsesResponse(BaseModel):
     status: Literal["queued", "in_progress", "completed", "failed", "cancelled"]
     usage: Optional[UsageInfo] = None
     parallel_tool_calls: bool = True
-    tool_choice: str = "auto"
+    tool_choice: Union[str, ToolChoice] = "auto"
     tools: List[ResponseTool] = Field(default_factory=list)
 
     # OpenAI compatibility fields. not all are used at the moment.
@@ -1651,7 +1840,15 @@ class ResponsesResponse(BaseModel):
                 if request.parallel_tool_calls is not None
                 else True
             ),
-            tool_choice=request.tool_choice,
+            # Echo tool_choice as a string. The object form
+            # (forced function) is semantically "required"; echoing the
+            # raw ToolChoice object breaks the OpenAI SDK's response event
+            # types, whose tool_choice union differs from the request union.
+            tool_choice=(
+                "required"
+                if isinstance(request.tool_choice, ToolChoice)
+                else request.tool_choice
+            ),
             tools=request.tools,
             # fields for parity with v1/responses
             error=None,

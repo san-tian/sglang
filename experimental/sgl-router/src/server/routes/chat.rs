@@ -1,23 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::discovery::{ModelId, WorkerMode};
-use crate::policies::registry::{PdPoolResolver, PdResolveError};
+use crate::discovery::{ModelId, WorkerMode, WorkerRoute};
+use crate::policies::registry::{
+    filter_eligible, filter_route_eligible, has_context_limited_worker, PdPoolResolver,
+    PdResolveError,
+};
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
+use crate::router_state::RouterStateReservationGuard;
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::GatewayKeyIdentity;
 use crate::server::error::ApiError;
 use crate::server::metrics::{
-    MetricsRegistry, RequestOutcome, StaleRequestOutcome, WorkerModeLabel,
+    MetricsRegistry, PriorityFilterOutcome, RequestOutcome, SseClientDisconnectPhase,
+    StaleRequestOutcome, WorkerModeLabel,
 };
+use crate::server::routes::admission::enforce_external_queue_admission;
+use crate::server::routes::alias_fallback::{
+    fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
+};
+use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
+use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
+use crate::server::routes::priority_override::apply_request_priority_override;
+use crate::server::routes::reasoning_compat::{normalize_reasoning_request, ReasoningEndpoint};
+use crate::server::routes::tool_arguments::normalize_chat_tool_call_arguments;
+use crate::server::routes::tool_schema::normalize_chat_tool_schemas;
+use crate::server::trace::TraceContext;
 use crate::workers::{LoadGuard, Worker};
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Response};
 use bytes::Bytes;
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Observability header carrying the decode-pool URL selected via host
 /// affinity for a PD-disaggregated request. The router fans the
@@ -48,6 +66,48 @@ const CHARS_PER_TOKEN_ESTIMATE: usize = 4;
 /// PAYLOAD_TOO_LARGE before this handler runs.
 pub const MAX_CHAT_BODY_BYTES: usize = 5 << 20;
 
+pub(crate) fn reserve_pending_load(
+    ctx: &AppContext,
+    worker: &Worker,
+    pending_tokens: usize,
+) -> (
+    crate::workers::worker::PendingLoadGuard,
+    Option<RouterStateReservationGuard>,
+) {
+    let pending_tokens = pending_tokens.max(1);
+    let remote_guard = ctx.router_state_client.as_ref().and_then(|client| {
+        RouterStateReservationGuard::reserve(
+            Arc::clone(client),
+            worker.url.clone(),
+            pending_tokens,
+            ctx.config
+                .active_load
+                .stale_request_timeout_secs
+                .saturating_mul(1000),
+        )
+    });
+    (
+        worker.pending_guard_with_tokens(pending_tokens),
+        remote_guard,
+    )
+}
+
+pub(crate) fn make_client_disconnect_hook(
+    metrics: Arc<MetricsRegistry>,
+) -> Box<dyn FnOnce(crate::proxy::sse::ClientDisconnectPhase) + Send + 'static> {
+    Box::new(move |phase| {
+        let phase = match phase {
+            crate::proxy::sse::ClientDisconnectPhase::BeforeFirstUpstreamByte => {
+                SseClientDisconnectPhase::BeforeFirstUpstreamByte
+            }
+            crate::proxy::sse::ClientDisconnectPhase::AfterFirstUpstreamByte => {
+                SseClientDisconnectPhase::AfterFirstUpstreamByte
+            }
+        };
+        metrics.record_sse_client_disconnect(phase);
+    })
+}
+
 /// Minimal probe over the request body — we only need the `stream` field
 /// and the `model` field to decide between buffered vs SSE forwarding and
 /// to select a worker. Deserializing into this struct (vs `serde_json::Value`)
@@ -66,6 +126,16 @@ struct RequestProbe {
     stream: Option<bool>,
     #[serde(default)]
     model: Option<String>,
+    /// Request priority, captured as a raw JSON value so a malformed value
+    /// (string, object, …) is tolerated rather than rejected — eligibility
+    /// resolution treats anything non-integer as `0` (lowest). Used to gate
+    /// capacity-restricted workers (see [`filter_eligible`]).
+    #[serde(default)]
+    priority: Option<serde_json::Value>,
+    #[serde(default)]
+    max_tokens: Option<serde_json::Value>,
+    #[serde(default)]
+    max_completion_tokens: Option<serde_json::Value>,
 }
 
 /// RAII guard that records `sgl_router_request_duration_seconds` when
@@ -89,13 +159,194 @@ impl Drop for RecordDurationOnDrop {
     }
 }
 
+/// Only failures known to happen before the decode accepted the request are
+/// eligible for same-request reselection. Retrying a response timeout, 5xx, or
+/// mid-body failure could duplicate generation on two decode workers.
+fn can_reselect_pd_decode(error: &ApiError) -> bool {
+    match error {
+        ApiError::BreakerOpen { .. } | ApiError::WorkerMisconfigured { .. } => true,
+        ApiError::UpstreamUnreachable { source, .. } => source.chain().any(|cause| {
+            cause
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(|error| error.is_connect())
+        }),
+        _ => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn forward_pd_decode_attempt(
+    ctx: &Arc<AppContext>,
+    decode_worker: &Arc<Worker>,
+    base_headers: &HeaderMap,
+    outgoing_body: Bytes,
+    streaming: bool,
+    stale_token: &CancellationToken,
+    model: &str,
+    metrics_model: &str,
+    start: std::time::Instant,
+    stream_duration: Option<Arc<RecordDurationOnDrop>>,
+    trace_ctx: &TraceContext,
+) -> Result<Response<Body>, ApiError> {
+    let mut headers = base_headers.clone();
+    if let Ok(value) = HeaderValue::from_str(&decode_worker.url) {
+        headers.insert(X_SGL_DECODE_URL, value);
+    }
+    let decode_headers = decode_worker
+        .headers_for(&headers)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("build worker auth header: {e}")))?;
+    let decode_guard = decode_worker.load_guard();
+
+    if streaming {
+        // Keep one shared duration guard across both attempts. A failed
+        // connect drops only its Arc clone; a successful SSE pump holds the
+        // final clone until stream completion, so latency is recorded once.
+        let stream_guards: Box<dyn Send + 'static> = match stream_duration {
+            Some(duration) => Box::new((decode_guard, duration)),
+            None => Box::new(decode_guard),
+        };
+        let ttft_hook: Box<dyn FnOnce() + Send + 'static> = {
+            let metrics = Arc::clone(&ctx.metrics);
+            let model = metrics_model.to_string();
+            Box::new(move || {
+                metrics.observe_ttft(&model, start.elapsed().as_secs_f64());
+            })
+        };
+        let fetch = ctx.proxy.forward_streaming_to_traced(
+            &decode_worker.url,
+            &decode_worker.breaker,
+            "/v1/chat/completions",
+            decode_headers.as_ref(),
+            outgoing_body,
+            Some(stream_guards),
+            Some(ttft_hook),
+            Some(make_client_disconnect_hook(Arc::clone(&ctx.metrics))),
+            ctx.trace_sink.clone(),
+            trace_ctx.clone(),
+        );
+        tokio::select! {
+            biased;
+            result = fetch => result,
+            _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model.to_string() }),
+        }
+    } else {
+        let _decode_hold = decode_guard;
+        let fetch = ctx.proxy.forward_json_to_traced(
+            &decode_worker.url,
+            &decode_worker.breaker,
+            "/v1/chat/completions",
+            decode_headers.as_ref(),
+            outgoing_body,
+            ctx.trace_sink.clone(),
+            trace_ctx.clone(),
+        );
+        tokio::select! {
+            biased;
+            result = fetch => result,
+            _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model.to_string() }),
+        }
+    }
+}
+
 /// POST /v1/chat/completions — parse model from body, select a healthy
 /// worker via the per-model policy, then proxy the request. If the
 /// request opts into streaming (`stream: true`), we pipe SSE bytes back;
 /// otherwise buffer.
 pub async fn chat_completions(
     State(ctx): State<Arc<AppContext>>,
+    entry_identity: Option<Extension<GatewayKeyIdentity>>,
     headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response<Body>, ApiError> {
+    let body = apply_request_priority_override(
+        &ctx.config.priority_override,
+        entry_identity.as_ref().map(|identity| &identity.0),
+        &headers,
+        body,
+    )?;
+    let body = normalize_chat_tool_call_arguments(&headers, body)?;
+    if let Some(response) =
+        maybe_forward_external_model(&ctx, &headers, &body, "/v1/chat/completions").await?
+    {
+        return Ok(response);
+    }
+    let body = normalize_reasoning_request(&ctx, ReasoningEndpoint::Chat, body)?;
+    let body = normalize_chat_thinking_blocks(body)?;
+    let body = normalize_chat_tool_message_object_content(body)?;
+    let body = normalize_chat_tool_schema_required_nulls(body)?;
+    let probe = parse_probe(&body)?;
+    let model_str = probe
+        .model
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
+    let Some(cfg) = ctx
+        .config
+        .alias_fallback
+        .as_ref()
+        .filter(|cfg| cfg.alias_model_id == model_str)
+        .cloned()
+    else {
+        return chat_completions_inner(State(ctx), headers, body).await;
+    };
+
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    let primary_body = rewrite_model(&body, &cfg.primary_model_id)?;
+    ctx.metrics
+        .record_alias_route(&cfg.alias_model_id, "primary", "selected");
+    tracing::info!(
+        request_id = %request_id,
+        alias = %cfg.alias_model_id,
+        route = "primary",
+        primary_model = %cfg.primary_model_id,
+        path = "/v1/chat/completions",
+        "alias primary selected",
+    );
+    let primary =
+        chat_completions_inner(State(Arc::clone(&ctx)), headers.clone(), primary_body).await;
+    match primary {
+        Ok(resp) => {
+            if let Some(reason) = fallback_reason_for_response(resp.status()) {
+                forward_to_fallback(
+                    &ctx,
+                    &cfg,
+                    &headers,
+                    &body,
+                    "/v1/chat/completions",
+                    probe.stream.unwrap_or(false),
+                    request_id,
+                    reason,
+                )
+                .await
+            } else {
+                Ok(resp)
+            }
+        }
+        Err(e) => {
+            if let Some(reason) = fallback_reason_for_error(&e) {
+                forward_to_fallback(
+                    &ctx,
+                    &cfg,
+                    &headers,
+                    &body,
+                    "/v1/chat/completions",
+                    probe.stream.unwrap_or(false),
+                    request_id,
+                    reason,
+                )
+                .await
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+async fn chat_completions_inner(
+    State(ctx): State<Arc<AppContext>>,
+    mut headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
     let start = std::time::Instant::now();
@@ -104,6 +355,14 @@ pub async fn chat_completions(
     let model_str = probe
         .model
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
+    let trace_ctx = TraceContext::new(
+        &mut headers,
+        "POST",
+        "/v1/chat/completions",
+        Some(model_str.clone()),
+        streaming,
+        body.clone(),
+    );
     let model_id = ModelId(model_str.clone());
 
     // PD pool isolation: for PD-mode deployments, prefill traffic
@@ -126,10 +385,60 @@ pub async fn chat_completions(
             },
         })?;
 
+    let route_eligible = filter_route_eligible(&workers, WorkerRoute::Chat);
+    if route_eligible.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            healthy_workers = workers.len(),
+            route = "/v1/chat/completions",
+            "route capability filter removed all candidates; rejecting request",
+        );
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    }
+    let workers = route_eligible.workers;
+
+    // Resolve the model's policy BEFORE priority filtering so an unknown /
+    // unsupported model still surfaces as 404 `ModelNotFound` rather than
+    // being masked by a 503 from the eligibility filter (which can empty the
+    // candidate set for a gated-but-policyless model). Order matters:
+    // "model not served here" is a different, earlier failure than "no
+    // eligible capacity for this priority".
     let policy = ctx
         .policies
         .get(&model_id)
         .ok_or_else(|| ApiError::ModelNotFound(model_str.clone()))?;
+
+    // Priority-eligibility filtering: capacity-restricted workers (e.g. an
+    // RTX-6000 tagged `min_priority=100`) are removed from the candidate
+    // set for requests below their threshold, BEFORE the policy scores the
+    // pool. Internal/long requests carry priority `0` and never reach such
+    // a worker; production traffic carries `priority=100`. Effective
+    // priority is read from the probe (absent/malformed → 0). Hard
+    // isolation: if filtering empties the candidate set (only gated workers
+    // are healthy and this request doesn't qualify) the request is REJECTED
+    // with 503 rather than spilled onto a gated worker — keeping long
+    // internal requests off the small-context worker even under degradation.
+    let request_priority = crate::policies::priority_from_value(probe.priority.as_ref());
+    let eligible = filter_eligible(&workers, request_priority);
+    if eligible.excluded_all {
+        tracing::warn!(
+            model = %model_str,
+            request_priority,
+            healthy_workers = workers.len(),
+            "priority filter removed all candidates; rejecting request (no eligible-capacity worker healthy for this priority)",
+        );
+        ctx.metrics
+            .record_priority_filtered(PriorityFilterOutcome::EmptySetRejected);
+        return Err(ApiError::NoHealthyWorkers {
+            model: model_str.clone(),
+        });
+    } else if eligible.excluded_any {
+        ctx.metrics
+            .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
+    }
+    let workers = eligible.workers;
 
     // Tokenize once at ingress whenever it can pay off — decoupled from the
     // routing policy, because forwarding `input_ids` is a property of the
@@ -150,7 +459,9 @@ pub async fn chat_completions(
     // body. When parsed, this single value is reused for the routing
     // tokenization and the outgoing-body injection below (and PD bootstrap
     // injection). `parse_probe` already validated the object shape.
-    let want_tokens = ctx.tokenizers.has_chat_encoder(&model_str) || policy.needs_request_tokens();
+    let want_tokens = ctx.tokenizers.has_chat_encoder(&model_str)
+        || policy.needs_request_tokens()
+        || has_context_limited_worker(&workers);
     let request_value: Option<serde_json::Value> = if want_tokens {
         Some(serde_json::from_slice(&body).map_err(|_| {
             ApiError::BadRequest("invalid request: body must be a JSON object".into())
@@ -168,6 +479,24 @@ pub async fn chat_completions(
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
 
+    let reliable_prompt_tokens = match (request_value.as_ref(), request_tokens.as_ref()) {
+        (Some(value), Some(tokens))
+            if tokens.engine_equivalent && context_prompt_tokens_reliable(value) =>
+        {
+            Some(tokens.ids.len())
+        }
+        _ => None,
+    };
+    let required_context_tokens = required_context_tokens(
+        reliable_prompt_tokens,
+        &[
+            probe.max_tokens.as_ref(),
+            probe.max_completion_tokens.as_ref(),
+        ],
+    );
+    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
+    enforce_external_queue_admission(&ctx, &model_str, &workers)?;
+
     // Sticky-session routing key. When the sticky policy is configured,
     // read the routing key from the operator-chosen header into the
     // selection context; the policy pins it to a worker. Other policies
@@ -182,12 +511,20 @@ pub async fn chat_completions(
         .filter(|s| !s.is_empty());
     let selection_ctx = SelectionContext::with_routing_key(&model_id, Some(&body), routing_key)
         .with_request_tokens(request_tokens.as_ref().map(|t| t.ids.as_slice()));
-    let worker =
-        policy
-            .select(&workers, &selection_ctx)
-            .ok_or_else(|| ApiError::PolicySelectionFailed {
+    let (worker, pending_guard) = {
+        let _selection_guard = ctx.selection_lock.lock().await;
+        let worker = policy.select(&workers, &selection_ctx).ok_or_else(|| {
+            ApiError::PolicySelectionFailed {
                 model: model_str.clone(),
-            })?;
+            }
+        })?;
+        let pending_tokens = request_tokens
+            .as_ref()
+            .map(|t| t.ids.len().max(1))
+            .unwrap_or(1);
+        let pending_guard = reserve_pending_load(&ctx, &worker, pending_tokens);
+        (worker, pending_guard)
+    };
 
     // PD-mode decoder affinity. When the selected prefill worker is
     // part of a PD-disagg deployment, also resolve the matching decode
@@ -204,7 +541,12 @@ pub async fn chat_completions(
     let decode_peer: Option<Arc<Worker>> = if worker.mode() == WorkerMode::Prefill {
         Some(
             resolver
-                .decode_with_affinity(&model_id, &worker.url)
+                .decode_with_affinity(
+                    &model_id,
+                    &worker.url,
+                    request_priority,
+                    required_context_tokens,
+                )
                 .map_err(|e| match e {
                     PdResolveError::NoHealthyWorkers => ApiError::NoHealthyWorkers {
                         model: model_str.clone(),
@@ -224,7 +566,7 @@ pub async fn chat_completions(
     } else {
         None
     };
-    let decode_hint_url: Option<String> = decode_peer.as_ref().map(|d| d.url.clone());
+    let mut decode_hint_url: Option<String> = decode_peer.as_ref().map(|d| d.url.clone());
     let mut request_headers = headers;
     if let Some(url) = &decode_hint_url {
         match HeaderValue::from_str(url) {
@@ -247,19 +589,16 @@ pub async fn chat_completions(
         }
     }
     let headers = request_headers;
+    let worker_headers = worker
+        .headers_for(&headers)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("build worker auth header: {e}")))?;
 
-    // Per-worker `active_requests` guard. The `ActiveLoadGuard` below
-    // sits beside this one: both track in-flight load, but the
-    // ActiveLoadGuard entry is per-request (with timeout-based janitor)
-    // while the worker-scoped counter is what the cache-aware policy
-    // reads. Both must drop at the same time — when the response stream
-    // ends, the client disconnects, or the handler returns an error. In
-    // PD mode the pair moves into the spawned prefill task so prefill
-    // load is tracked for the full duration of the KV transfer; in plain
-    // mode the pair stays in this handler. Decode-load contribution is
-    // 0 here: the active-load registry's decode axis is reserved for a
-    // future decode-side scheduler — current decode selection is
-    // host-affinity only.
+    // Per-worker guards. `pending_guard` was created inside the selection
+    // critical section, so the next concurrent selection sees this dispatch
+    // immediately even when `/get_load` has not polled it yet. The
+    // `LoadGuard` below tracks request lifetime in the existing active-load
+    // counter, and `ActiveLoadGuard` tracks token-weighted stale-request
+    // state.
     let guard = worker.load_guard();
     // Use the exact token count from the ingress tokenization when available;
     // fall back to the byte-count heuristic for load-only policies that don't
@@ -359,7 +698,13 @@ pub async fn chat_completions(
     let outgoing_body =
         build_outgoing_body(&body, request_value, forward_input_ids, bootstrap.as_ref())?;
 
-    let result = if let Some(decode_worker) = decode_peer {
+    let pd_stream_duration = if streaming && decode_peer.is_some() {
+        Some(Arc::new(make_duration_guard()))
+    } else {
+        None
+    };
+
+    let result = if let Some(mut decode_worker) = decode_peer {
         // PD-disagg dispatch (Pattern B — spawn prefill, await decode).
         //
         // SGLang's HTTP-mode disagg-prefill requires three flat
@@ -400,10 +745,10 @@ pub async fn chat_completions(
 
         let prefill_url = worker.url.clone();
         let prefill_breaker = Arc::clone(&worker.breaker);
-        let prefill_headers = headers.clone();
+        let prefill_headers = worker_headers.as_ref().clone();
         let prefill_body = outgoing_body.clone();
         let prefill_proxy = Arc::clone(&ctx.proxy);
-        let prefill_holds: (LoadGuard, _) = (guard, active_guard);
+        let prefill_holds: (LoadGuard, _, _) = (guard, active_guard, pending_guard);
         tokio::spawn(async move {
             // The tuple binding extends both guards' lifetime to the
             // end of this async block, which lasts until the prefill
@@ -436,57 +781,86 @@ pub async fn chat_completions(
             }
         });
 
-        // Synchronously await the decode worker. Its response is what
-        // the client sees. The decode side gets its own LoadGuard so
-        // per-worker `active_requests` reflects decode-pool load for
-        // cache-aware-zmq decisions on the decode side.
-        let decode_guard = decode_worker.load_guard();
-        if streaming {
-            let stream_guards: Box<dyn Send + 'static> =
-                Box::new((decode_guard, make_duration_guard()));
-            let fetch = ctx.proxy.forward_streaming_to(
-                &decode_worker.url,
-                &decode_worker.breaker,
-                "/v1/chat/completions",
-                &headers,
-                outgoing_body,
-                Some(stream_guards),
-                Some(make_ttft_hook()),
-            );
-            tokio::select! {
-                biased;
-                r = fetch => r,
-                _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model_str }),
+        // Await the selected decode. When the attempt fails at TCP connect (or
+        // loses a breaker race), exclude it and try one alternate decode with
+        // the same prefill request and bootstrap room. Other failures are not
+        // retried because the first decode may already be generating.
+        let first_result = forward_pd_decode_attempt(
+            &ctx,
+            &decode_worker,
+            &headers,
+            outgoing_body.clone(),
+            streaming,
+            &stale_token,
+            &model_str,
+            &metrics_model,
+            start,
+            pd_stream_duration.as_ref().map(Arc::clone),
+            &trace_ctx,
+        )
+        .await;
+        if first_result.as_ref().is_err_and(can_reselect_pd_decode) {
+            let failed_worker = decode_worker.id.clone();
+            match resolver.decode_with_affinity_excluding(
+                &model_id,
+                &worker.url,
+                request_priority,
+                required_context_tokens,
+                &failed_worker,
+            ) {
+                Ok(alternate) => {
+                    tracing::warn!(
+                        failed_decode = %decode_worker.url,
+                        alternate_decode = %alternate.url,
+                        bootstrap_room,
+                        "decode connect failed; reselecting one alternate for the same PD request",
+                    );
+                    decode_worker = alternate;
+                    decode_hint_url = Some(decode_worker.url.clone());
+                    forward_pd_decode_attempt(
+                        &ctx,
+                        &decode_worker,
+                        &headers,
+                        outgoing_body,
+                        streaming,
+                        &stale_token,
+                        &model_str,
+                        &metrics_model,
+                        start,
+                        pd_stream_duration.as_ref().map(Arc::clone),
+                        &trace_ctx,
+                    )
+                    .await
+                }
+                Err(reason) => {
+                    tracing::warn!(
+                        failed_decode = %decode_worker.url,
+                        ?reason,
+                        "decode connect failed and no alternate decode is available",
+                    );
+                    first_result
+                }
             }
         } else {
-            let _decode_hold = decode_guard;
-            let fetch = ctx.proxy.forward_json_to(
-                &decode_worker.url,
-                &decode_worker.breaker,
-                "/v1/chat/completions",
-                &headers,
-                outgoing_body,
-            );
-            tokio::select! {
-                biased;
-                r = fetch => r,
-                _ = stale_token.cancelled() => Err(ApiError::StaleRequestExpired { model: model_str }),
-            }
+            first_result
         }
     } else if streaming {
         // Plain mode, streaming. Both guards ride the SSE pump until
         // the body completes — see the matching comment in the
         // non-streaming arm.
         let stream_guards: Box<dyn Send + 'static> =
-            Box::new((guard, active_guard, make_duration_guard()));
-        let fetch = ctx.proxy.forward_streaming_to(
+            Box::new((guard, active_guard, pending_guard, make_duration_guard()));
+        let fetch = ctx.proxy.forward_streaming_to_traced(
             &worker.url,
             &worker.breaker,
             "/v1/chat/completions",
-            &headers,
+            worker_headers.as_ref(),
             outgoing_body,
             Some(stream_guards),
             Some(make_ttft_hook()),
+            Some(make_client_disconnect_hook(Arc::clone(&ctx.metrics))),
+            ctx.trace_sink.clone(),
+            trace_ctx.clone(),
         );
         // Bias `fetch` over the cancellation branch: a successful
         // response that completes in the same poll as the token firing
@@ -506,13 +880,15 @@ pub async fn chat_completions(
         // lifetime to the end of the function — the `forward_json_to`
         // future does not need them (it does not return until the
         // body is buffered).
-        let _holds: (LoadGuard, _) = (guard, active_guard);
-        let fetch = ctx.proxy.forward_json_to(
+        let _holds: (LoadGuard, _, _) = (guard, active_guard, pending_guard);
+        let fetch = ctx.proxy.forward_json_to_traced(
             &worker.url,
             &worker.breaker,
             "/v1/chat/completions",
-            &headers,
+            worker_headers.as_ref(),
             outgoing_body,
+            ctx.trace_sink.clone(),
+            trace_ctx.clone(),
         );
         // Same `biased` order as the streaming arm.
         tokio::select! {
@@ -631,7 +1007,7 @@ pub async fn chat_completions(
 /// to thread the tokenizer's actual token count through (the
 /// cache-aware-zmq policy already tokenizes the prompt for tree
 /// matching — that count could be reused here).
-fn estimate_prefill_tokens(body: &Bytes) -> usize {
+pub(crate) fn estimate_prefill_tokens(body: &Bytes) -> usize {
     (body.len() / CHARS_PER_TOKEN_ESTIMATE).max(1)
 }
 
@@ -743,6 +1119,186 @@ fn build_outgoing_body(
     Ok(Bytes::from(bytes))
 }
 
+/// Accept Anthropic-style assistant thinking blocks on the OpenAI chat path.
+///
+/// Some upstream clients replay prior assistant turns as content blocks like
+/// `{"type":"thinking","thinking":"..."}`. SGLang's OpenAI schema accepts
+/// prior reasoning as a top-level assistant `reasoning_content` string, but
+/// rejects `thinking` as a `content[]` part. Normalize that compatibility case
+/// at the router edge so worker validation sees the native SGLang shape.
+fn normalize_chat_thinking_blocks(body: Bytes) -> Result<Bytes, ApiError> {
+    if !body
+        .windows(b"thinking".len())
+        .any(|window| window == b"thinking")
+    {
+        return Ok(body);
+    }
+
+    let mut value: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
+        tracing::debug!(error = %e, "chat-completions thinking-normalize parse failed");
+        ApiError::BadRequest("invalid request: body must be a JSON object".to_string())
+    })?;
+    let Some(messages) = value.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+        return Ok(body);
+    };
+
+    let mut changed = false;
+    for message in messages {
+        if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(obj) = message.as_object_mut() else {
+            continue;
+        };
+        let Some(content) = obj.get_mut("content").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+
+        let mut reasoning_parts = Vec::new();
+        let mut kept_parts = Vec::with_capacity(content.len());
+        for part in std::mem::take(content) {
+            let part_type = part.get("type").and_then(|v| v.as_str());
+            match part_type {
+                Some("thinking") => {
+                    if let Some(text) = part.get("thinking").and_then(|v| v.as_str()) {
+                        if !text.is_empty() {
+                            reasoning_parts.push(text.to_string());
+                        }
+                    }
+                    changed = true;
+                }
+                Some("redacted_thinking") => {
+                    changed = true;
+                }
+                _ => kept_parts.push(part),
+            }
+        }
+
+        if !reasoning_parts.is_empty() {
+            let new_reasoning = reasoning_parts.join("\n");
+            match obj.get_mut("reasoning_content") {
+                Some(existing) if existing.is_string() => {
+                    let existing = existing.as_str().unwrap_or_default();
+                    *obj.get_mut("reasoning_content").expect("checked above") =
+                        serde_json::Value::String(if existing.is_empty() {
+                            new_reasoning
+                        } else {
+                            format!("{existing}\n{new_reasoning}")
+                        });
+                }
+                Some(existing) if existing.is_null() => {
+                    *existing = serde_json::Value::String(new_reasoning);
+                }
+                None => {
+                    obj.insert(
+                        "reasoning_content".to_string(),
+                        serde_json::Value::String(new_reasoning),
+                    );
+                }
+                Some(_) => {}
+            }
+        }
+
+        if kept_parts.is_empty() {
+            obj.insert(
+                "content".to_string(),
+                serde_json::Value::String(String::new()),
+            );
+        } else {
+            obj.insert("content".to_string(), serde_json::Value::Array(kept_parts));
+        }
+    }
+
+    if !changed {
+        return Ok(body);
+    }
+    serde_json::to_vec(&value).map(Bytes::from).map_err(|e| {
+        ApiError::Internal(
+            anyhow::Error::new(e).context("re-serialize normalized chat request body"),
+        )
+    })
+}
+
+/// Accept object-valued `content` only for OpenAI chat `role="tool"` messages.
+///
+/// SGLang worker validation accepts tool message content as a string. Some
+/// upstream clients send the tool result as a structured JSON object instead.
+/// Match the worker-side compatibility patch by JSON-compacting that object at
+/// the router edge, while leaving non-tool object content to fail validation.
+fn normalize_chat_tool_message_object_content(body: Bytes) -> Result<Bytes, ApiError> {
+    if !body.windows(b"tool".len()).any(|window| window == b"tool") {
+        return Ok(body);
+    }
+
+    let mut value: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
+        tracing::debug!(error = %e, "chat-completions tool-content-normalize parse failed");
+        ApiError::BadRequest("invalid request: body must be a JSON object".to_string())
+    })?;
+    let Some(messages) = value.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+        return Ok(body);
+    };
+
+    let mut changed = false;
+    for message in messages {
+        if message.get("role").and_then(|v| v.as_str()) != Some("tool") {
+            continue;
+        }
+        let Some(obj) = message.as_object_mut() else {
+            continue;
+        };
+        let Some(content) = obj.get_mut("content") else {
+            continue;
+        };
+        if !content.is_object() {
+            continue;
+        }
+
+        let compacted = serde_json::to_string(content).map_err(|e| {
+            ApiError::Internal(
+                anyhow::Error::new(e).context("serialize normalized tool message content"),
+            )
+        })?;
+        *content = serde_json::Value::String(compacted);
+        changed = true;
+    }
+
+    if !changed {
+        return Ok(body);
+    }
+    serde_json::to_vec(&value).map(Bytes::from).map_err(|e| {
+        ApiError::Internal(
+            anyhow::Error::new(e).context("re-serialize normalized chat request body"),
+        )
+    })
+}
+
+/// Accept `required: null` emitted by some upstream tool-schema generators.
+///
+/// This is intentionally narrow: `required: null` means "no required
+/// properties" in those generators, so dropping it preserves optional-property
+/// semantics. Other malformed schema fields are left untouched for SGLang's
+/// worker-side JSON Schema validator to reject clearly.
+fn normalize_chat_tool_schema_required_nulls(body: Bytes) -> Result<Bytes, ApiError> {
+    if !body.windows(b"required".len()).any(|w| w == b"required")
+        || !body.windows(b"tools".len()).any(|w| w == b"tools")
+    {
+        return Ok(body);
+    }
+
+    let mut value: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
+        tracing::debug!(error = %e, "chat-completions tool-schema normalize parse failed");
+        ApiError::BadRequest("invalid request: body must be a JSON object".to_string())
+    })?;
+    let before = value.clone();
+    normalize_chat_tool_schemas(&mut value);
+    if value == before {
+        return Ok(body);
+    }
+    serde_json::to_vec(&value).map(Bytes::from).map_err(|e| {
+        ApiError::Internal(anyhow::Error::new(e).context("re-serialize normalized tool schemas"))
+    })
+}
+
 /// Whether the router's `input_ids` may be forwarded for this request.
 ///
 /// We forward only when the engine, fed `input_ids`, would have produced the
@@ -782,7 +1338,25 @@ fn build_outgoing_body(
 /// tokenizer that does not would diverge by a leading special, again undetectable
 /// from the request.
 fn input_ids_safe_to_forward(value: &serde_json::Value) -> bool {
-    if request_has_tools(value) || request_is_multimodal(value) {
+    if request_has_tools(value) || !context_prompt_tokens_reliable(value) {
+        return false;
+    }
+    true
+}
+
+/// Whether ingress tokenization is reliable enough for a hard context-window
+/// decision. Tool schemas are allowed because `encode_chat_with_tools`
+/// renders them; legacy `functions` and request-specific template controls are
+/// not represented by that path and therefore make the length unknown.
+fn context_prompt_tokens_reliable(value: &serde_json::Value) -> bool {
+    if request_is_multimodal(value)
+        || value.get("input_ids").is_some_and(|v| !v.is_null())
+        || value.get("functions").is_some_and(|v| match v {
+            serde_json::Value::Array(a) => !a.is_empty(),
+            serde_json::Value::Null => false,
+            _ => true,
+        })
+    {
         return false;
     }
     // Fields that steer the engine's template tokenization but which the
@@ -820,10 +1394,9 @@ fn input_ids_safe_to_forward(value: &serde_json::Value) -> bool {
 ///     tokenization.
 ///
 /// Non-chat-encoder / non-`messages` requests never expected the offload, so
-/// they are not failures. A tools / multimodal / thinking request on a
-/// chat-encoder model still gets engine-equivalent ids (`encode_chat`
-/// succeeded; the safe-predicate withholds forwarding for other reasons), so it
-/// is an expected omission, not a failure.
+/// they are not failures. Tools / multimodal / thinking requests are also
+/// expected omissions because the safe predicate deliberately keeps their
+/// tokenization at the engine, whether or not ingress encoding produced ids.
 fn ingress_tokenize_offload_failed(
     has_chat_encoder: bool,
     request_value: Option<&serde_json::Value>,
@@ -835,6 +1408,9 @@ fn ingress_tokenize_offload_failed(
     let chat_request =
         request_value.is_some_and(|v| v.get("messages").is_some_and(|m| m.is_array()));
     if !chat_request {
+        return false;
+    }
+    if request_value.is_some_and(|v| !input_ids_safe_to_forward(v)) {
         return false;
     }
     !request_tokens.is_some_and(|t| t.engine_equivalent)
@@ -1036,6 +1612,25 @@ mod tests {
         })));
     }
 
+    #[test]
+    fn context_prompt_reliability_is_conservative_but_allows_tool_schemas() {
+        assert!(context_prompt_tokens_reliable(&serde_json::json!({
+            "messages":[{"role":"user","content":"hello"}],
+            "tools":[{"type":"function","function":{"name":"lookup"}}]
+        })));
+        for body in [
+            serde_json::json!({
+                "messages":[{"role":"user","content":[{"type":"image_url","image_url":"x"}]}]
+            }),
+            serde_json::json!({"messages":[], "functions":[{"name":"legacy"}]}),
+            serde_json::json!({"messages":[], "input_ids":[1,2,3]}),
+            serde_json::json!({"messages":[], "chat_template":"custom"}),
+            serde_json::json!({"messages":[{"role":"assistant","content":"prefix"}]}),
+        ] {
+            assert!(!context_prompt_tokens_reliable(&body), "body: {body}");
+        }
+    }
+
     /// Plain text chat with nothing unreplicated → input_ids may be forwarded.
     #[test]
     fn input_ids_safe_to_forward_allows_plain_text_chat() {
@@ -1101,6 +1696,160 @@ mod tests {
         assert!(parsed.get("input_ids").is_none());
     }
 
+    #[test]
+    fn normalize_chat_thinking_blocks_promotes_assistant_reasoning() {
+        let body = Bytes::from_static(
+            br#"{"model":"x","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"plan","signature":"sig"},{"type":"text","text":"answer"}]}]}"#,
+        );
+
+        let out = normalize_chat_thinking_blocks(body).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let msg = &parsed["messages"][0];
+
+        assert_eq!(msg["reasoning_content"], "plan");
+        assert_eq!(
+            msg["content"],
+            serde_json::json!([{"type":"text","text":"answer"}])
+        );
+    }
+
+    #[test]
+    fn normalize_chat_thinking_blocks_merges_existing_reasoning() {
+        let body = Bytes::from_static(
+            br#"{"model":"x","messages":[{"role":"assistant","reasoning_content":"old","content":[{"type":"thinking","thinking":"new"},{"type":"thinking","thinking":"newer"},{"type":"text","text":""}]}]}"#,
+        );
+
+        let out = normalize_chat_thinking_blocks(body).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+
+        assert_eq!(
+            parsed["messages"][0]["reasoning_content"],
+            "old\nnew\nnewer"
+        );
+    }
+
+    #[test]
+    fn normalize_chat_thinking_blocks_drops_redacted_and_uses_empty_content() {
+        let body = Bytes::from_static(
+            br#"{"model":"x","messages":[{"role":"assistant","content":[{"type":"redacted_thinking","data":"opaque"}]}]}"#,
+        );
+
+        let out = normalize_chat_thinking_blocks(body).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+
+        assert_eq!(parsed["messages"][0]["content"], "");
+        assert!(parsed["messages"][0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn normalize_chat_thinking_blocks_leaves_user_content_unchanged() {
+        let body = Bytes::from_static(
+            br#"{"model":"x","messages":[{"role":"user","content":[{"type":"thinking","thinking":"not accepted here"}]}]}"#,
+        );
+        let out = normalize_chat_thinking_blocks(body.clone()).unwrap();
+
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn normalize_chat_tool_message_object_content_compacts_tool_content() {
+        let body = Bytes::from_static(
+            br#"{"model":"x","messages":[{"role":"tool","tool_call_id":"call_1","content":{"status":"ok","items":[1,2],"nested":{"a":true}}}]}"#,
+        );
+
+        let out = normalize_chat_tool_message_object_content(body).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let content = parsed["messages"][0]["content"].as_str().unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(content).unwrap(),
+            serde_json::json!({"status":"ok","items":[1,2],"nested":{"a":true}})
+        );
+        assert!(!content.contains(' '));
+    }
+
+    #[test]
+    fn normalize_chat_tool_message_object_content_leaves_string_and_array() {
+        let body = Bytes::from_static(
+            br#"{"model":"x","messages":[{"role":"tool","content":"already string"},{"role":"tool","content":[{"type":"text","text":"kept"}]}]}"#,
+        );
+        let out = normalize_chat_tool_message_object_content(body.clone()).unwrap();
+
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn normalize_chat_tool_message_object_content_leaves_non_tool_object_unchanged() {
+        let body = Bytes::from_static(
+            br#"{"model":"x","messages":[{"role":"user","content":{"not":"accepted here"}},{"role":"assistant","content":{"not":"accepted here"}}]}"#,
+        );
+        let out = normalize_chat_tool_message_object_content(body.clone()).unwrap();
+
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn normalize_chat_tool_schema_required_nulls_drops_nested_required_null() {
+        let body = Bytes::from_static(
+            br#"{
+                "model":"x",
+                "messages":[{"role":"user","content":"hi"}],
+                "tools":[{
+                    "type":"function",
+                    "function":{
+                        "name":"lookup",
+                        "parameters":{
+                            "type":"object",
+                            "required":null,
+                            "properties":{
+                                "filters":{
+                                    "type":"object",
+                                    "required":null,
+                                    "properties":{"tag":{"type":"string"}}
+                                }
+                            }
+                        }
+                    }
+                }]
+            }"#,
+        );
+
+        let out = normalize_chat_tool_schema_required_nulls(body).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let parameters = &parsed["tools"][0]["function"]["parameters"];
+
+        assert!(parameters.get("required").is_none());
+        assert!(parameters["properties"]["filters"]
+            .get("required")
+            .is_none());
+        assert_eq!(parameters["type"], "object");
+    }
+
+    #[test]
+    fn normalize_chat_tool_schema_required_nulls_preserves_invalid_required_type() {
+        let body = Bytes::from_static(
+            br#"{
+                "model":"x",
+                "messages":[{"role":"user","content":"hi"}],
+                "tools":[{
+                    "type":"function",
+                    "function":{
+                        "name":"lookup",
+                        "parameters":{"type":"object","required":"query"}
+                    }
+                }]
+            }"#,
+        );
+
+        let out = normalize_chat_tool_schema_required_nulls(body).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+
+        assert_eq!(
+            parsed["tools"][0]["function"]["parameters"]["required"],
+            "query"
+        );
+    }
+
     /// A chat request on a chat-encoder model that yields engine-equivalent
     /// ids (encode succeeded) is NOT a failure — the offload worked.
     #[test]
@@ -1141,6 +1890,17 @@ mod tests {
             Some(&value),
             Some(&tokens)
         ));
+    }
+
+    /// Tool requests intentionally keep tokenization at the engine, so a
+    /// missing ingress tokenization result is an expected omission.
+    #[test]
+    fn offload_failed_false_for_tool_request() {
+        let value = serde_json::json!({
+            "messages":[{"role":"user","content":"hi"}],
+            "tools":[{"type":"function","function":{"name":"lookup"}}]
+        });
+        assert!(!ingress_tokenize_offload_failed(true, Some(&value), None));
     }
 
     /// Non-chat-encoder models never expected the offload → not a failure even

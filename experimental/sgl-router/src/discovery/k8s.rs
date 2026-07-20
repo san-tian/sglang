@@ -138,6 +138,13 @@ fn extract_workers(es: &EndpointSlice, mode: WorkerMode) -> Vec<WorkerSpec> {
                 mode,
                 model_ids: Vec::new(),
                 bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: crate::discovery::default_prefill_capacity_milli(),
             });
         }
     }

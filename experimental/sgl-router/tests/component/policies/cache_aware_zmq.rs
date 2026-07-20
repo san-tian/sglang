@@ -42,6 +42,13 @@ fn build_worker(url: &str, model: &str) -> Arc<Worker> {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId(model.into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }))
 }
 
@@ -60,6 +67,7 @@ async fn zmq_indexer_routes_to_publishing_worker_e2e() {
 
     // 1. Tokenizer registry — use the in-tree tiny fixture.
     let cfg = sgl_router::config::Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
         server: sgl_router::config::ServerConfig {
             host: "0".into(),
             port: 0,
@@ -71,15 +79,28 @@ async fn zmq_indexer_routes_to_publishing_worker_e2e() {
             policy: sgl_router::config::PolicyKind::CacheAwareZmq,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             sticky: None,
         },
         discovery: sgl_router::config::DiscoveryBackend::StaticUrls(
             sgl_router::config::StaticUrlsDiscoveryConfig {
                 urls: vec!["http://placeholder:0".into()],
+                bearer_keys: Vec::new(),
             },
         ),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     };
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
 
@@ -109,6 +130,11 @@ async fn zmq_indexer_routes_to_publishing_worker_e2e() {
             cache_threshold: 0.0,
             balance_abs_threshold: 32,
             balance_rel_threshold: 1.1,
+            hit_load_abs_threshold: 0,
+            hit_load_rel_threshold: f32::INFINITY,
+            use_reported_load: false,
+            tree_source: sgl_router::config::CacheTreeSource::Zmq,
+            ..CacheAwareConfig::default()
         },
         kv_index.tree(),
         Arc::clone(&tokenizers),

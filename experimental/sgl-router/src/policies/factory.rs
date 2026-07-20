@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::cache_state::RemoteCacheStateClient;
 use crate::config::{Config, ModelConfig, PolicyKind};
 use crate::discovery::ModelId;
 use crate::policies::{
@@ -11,6 +12,7 @@ use crate::policies::{
     random::RandomPolicy,
     round_robin::RoundRobinPolicy,
     sticky::StickyPolicy,
+    tiered_spillover::{CacheAwareSpilloverPolicy, TieredSpilloverPolicy},
     Policy, PolicyRegistry,
 };
 use crate::tokenizer::TokenizerRegistry;
@@ -28,7 +30,10 @@ fn build_sticky_fallback(kind: PolicyKind) -> Arc<dyn Policy> {
         PolicyKind::Random => Arc::new(RandomPolicy::new()),
         PolicyKind::PowerOfTwo => Arc::new(PowerOfTwoChoicesPolicy::new()),
         PolicyKind::LoadBased => Arc::new(LoadBasedPolicy::new()),
-        PolicyKind::CacheAwareZmq | PolicyKind::Sticky => {
+        PolicyKind::CacheAwareZmq
+        | PolicyKind::Sticky
+        | PolicyKind::TieredSpillover
+        | PolicyKind::CacheAwareSpillover => {
             unreachable!("sticky fallback is validated to be dependency-free in Cli::into_config")
         }
     }
@@ -58,6 +63,7 @@ pub fn build_policy(
     tree: Arc<HashTree>,
     tokenizers: Arc<TokenizerRegistry>,
     block_size_oracle: Arc<BlockSizeOracle>,
+    remote_cache_state: Option<Arc<RemoteCacheStateClient>>,
 ) -> Arc<dyn Policy> {
     match model.policy {
         PolicyKind::RoundRobin => Arc::new(RoundRobinPolicy::new()),
@@ -66,14 +72,29 @@ pub fn build_policy(
         PolicyKind::LoadBased => Arc::new(LoadBasedPolicy::new()),
         PolicyKind::CacheAwareZmq => {
             let cache_cfg = model.cache_aware.unwrap_or_default();
-            Arc::new(CacheAwareZmqPolicy::new(
-                cache_cfg,
-                tree,
-                tokenizers,
-                block_size_oracle,
-            ))
+            let policy = CacheAwareZmqPolicy::new(cache_cfg, tree, tokenizers, block_size_oracle);
+            let policy = match remote_cache_state {
+                Some(client) => policy.with_remote_cache_state(client),
+                None => policy,
+            };
+            Arc::new(policy)
         }
         PolicyKind::Sticky => build_sticky(model),
+        PolicyKind::TieredSpillover => Arc::new(TieredSpilloverPolicy::new(
+            model.tiered_spillover.unwrap_or_default(),
+        )),
+        PolicyKind::CacheAwareSpillover => {
+            let cache_cfg = model.cache_aware.unwrap_or_default();
+            let primary = CacheAwareZmqPolicy::new(cache_cfg, tree, tokenizers, block_size_oracle);
+            let primary = match remote_cache_state {
+                Some(client) => primary.with_remote_cache_state(client),
+                None => primary,
+            };
+            Arc::new(CacheAwareSpilloverPolicy::new(
+                model.tiered_spillover.unwrap_or_default(),
+                primary,
+            ))
+        }
     }
 }
 
@@ -108,6 +129,16 @@ pub fn build_policy_kind_only(kind: PolicyKind) -> Arc<dyn Policy> {
                 build_sticky_fallback(s.fallback_policy),
             ))
         }
+        PolicyKind::TieredSpillover => Arc::new(TieredSpilloverPolicy::new(Default::default())),
+        PolicyKind::CacheAwareSpillover => Arc::new(CacheAwareSpilloverPolicy::new(
+            Default::default(),
+            CacheAwareZmqPolicy::new(
+                crate::config::CacheAwareConfig::default(),
+                Arc::new(HashTree::new()),
+                Arc::new(TokenizerRegistry::default()),
+                BlockSizeOracle::new(),
+            ),
+        )),
     }
 }
 
@@ -119,6 +150,13 @@ pub fn build_registry(
 ) -> Result<PolicyRegistry> {
     let reg = PolicyRegistry::default();
     let m = &cfg.model;
+    let remote_cache_state = match cfg.cache_state_url.as_ref() {
+        Some(url) => Some(Arc::new(RemoteCacheStateClient::new(
+            url.clone(),
+            Duration::from_millis(cfg.cache_state_timeout_ms),
+        ))),
+        None => None,
+    };
     reg.insert(
         ModelId(m.id.clone()),
         build_policy(
@@ -126,6 +164,7 @@ pub fn build_registry(
             Arc::clone(&tree),
             Arc::clone(&tokenizers),
             Arc::clone(&block_size_oracle),
+            remote_cache_state,
         ),
     );
     Ok(reg)
@@ -153,13 +192,14 @@ mod tests {
     use super::*;
     use crate::config::{
         ActiveLoadConfig, Config, DiscoveryBackend, ModelConfig, ProxyConfig, ServerConfig,
-        StaticUrlsDiscoveryConfig,
+        StaticUrlsDiscoveryConfig, TraceConfig,
     };
 
     use crate::config::PolicyKind;
 
     fn cfg_with_model(id: &str, policy: PolicyKind) -> Config {
         Config {
+            runtime_mode: crate::config::RuntimeMode::Gateway,
             server: ServerConfig {
                 host: "0".into(),
                 port: 0,
@@ -171,13 +211,26 @@ mod tests {
                 policy,
                 circuit_breaker: None,
                 cache_aware: None,
+                tiered_spillover: None,
                 sticky: None,
             },
             discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
                 urls: vec!["http://placeholder:0".into()],
+                bearer_keys: Vec::new(),
             }),
             proxy: ProxyConfig::default(),
             active_load: ActiveLoadConfig::default(),
+            trace: TraceConfig::default(),
+            priority_override: crate::config::PriorityOverrideConfig::default(),
+            worker_introspect_key: None,
+            load_poll_interval_secs: None,
+            cache_tree_page_size: None,
+            cache_tree_bigram: false,
+            cache_tree_max_nodes: 1_000_000,
+            cache_state_url: None,
+            cache_state_timeout_ms: 20,
+            alias_fallback: None,
+            external_model: None,
         }
     }
 
@@ -190,6 +243,8 @@ mod tests {
         let _ = build_policy_kind_only(PolicyKind::LoadBased);
         let _ = build_policy_kind_only(PolicyKind::CacheAwareZmq);
         let _ = build_policy_kind_only(PolicyKind::Sticky);
+        let _ = build_policy_kind_only(PolicyKind::TieredSpillover);
+        let _ = build_policy_kind_only(PolicyKind::CacheAwareSpillover);
     }
 
     #[test]
@@ -244,6 +299,34 @@ mod tests {
         assert!(
             dbg.contains("StickyPolicy"),
             "expected StickyPolicy debug repr, got: {dbg}",
+        );
+    }
+
+    #[test]
+    fn tiered_spillover_builds_via_factory() {
+        let cfg = cfg_with_model("modelA", PolicyKind::TieredSpillover);
+        let tree = Arc::new(HashTree::new());
+        let tokenizers = Arc::new(TokenizerRegistry::default());
+        let reg = build_registry(&cfg, tree, tokenizers, BlockSizeOracle::new()).unwrap();
+        let p = reg.get(&ModelId("modelA".into())).unwrap();
+        let dbg = format!("{p:?}");
+        assert!(
+            dbg.contains("TieredSpilloverPolicy"),
+            "expected TieredSpilloverPolicy debug repr, got: {dbg}",
+        );
+    }
+
+    #[test]
+    fn cache_aware_spillover_builds_via_factory() {
+        let cfg = cfg_with_model("modelA", PolicyKind::CacheAwareSpillover);
+        let tree = Arc::new(HashTree::new());
+        let tokenizers = Arc::new(TokenizerRegistry::default());
+        let reg = build_registry(&cfg, tree, tokenizers, BlockSizeOracle::new()).unwrap();
+        let p = reg.get(&ModelId("modelA".into())).unwrap();
+        let dbg = format!("{p:?}");
+        assert!(
+            dbg.contains("CacheAwareSpilloverPolicy"),
+            "expected CacheAwareSpilloverPolicy debug repr, got: {dbg}",
         );
     }
 }

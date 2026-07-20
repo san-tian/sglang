@@ -47,6 +47,9 @@ RUN mkdir -p src && echo "fn main() {}" > src/main.rs \
 
 ######################## STAGE 2 — builder ##############################
 FROM rust:${RUST_VERSION}-${DEBIAN_VERSION} AS builder
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --locked --version ^0.1
 WORKDIR /work
 
@@ -75,12 +78,15 @@ COPY experimental/sgl-router/src ./src
 # (gitignored upstream) and `cargo chef cook` may have mutated it during the
 # dep-cook step, so a strict --locked check would spuriously fail.
 RUN cargo build --release --bin sgl-router \
-    && strip target/release/sgl-router
+    && strip target/release/sgl-router \
+    && mkdir -p /runtime-libs \
+    && cp -L /usr/lib/x86_64-linux-gnu/libz.so.1 /runtime-libs/libz.so.1
 
 ######################## STAGE 3 — runtime ##############################
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 COPY --from=builder /work/target/release/sgl-router /usr/local/bin/sgl-router
+COPY --from=builder /runtime-libs/libz.so.1 /lib/x86_64-linux-gnu/libz.so.1
 
 # Default config path; mount your own via `-v <host-path>:/etc/sgl-router`.
 ENV SGL_ROUTER_CONFIG=/etc/sgl-router/sgl-router.yaml

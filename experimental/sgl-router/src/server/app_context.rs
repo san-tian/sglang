@@ -3,14 +3,18 @@
 
 use crate::config::Config;
 
+use crate::health::circuit_breaker::CircuitBreaker;
 use crate::policies::active_load::ActiveLoadRegistry;
 use crate::policies::PolicyRegistry;
 use crate::proxy::Proxy;
+use crate::router_state::{RouterStateClient, RouterStateLoadOverlay};
 use crate::server::metrics::MetricsRegistry;
+use crate::server::trace::TraceSink;
 use crate::tokenizer::TokenizerRegistry;
 use crate::workers::WorkerRegistry;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct AppContext {
@@ -30,6 +34,21 @@ pub struct AppContext {
     /// (active_load gauge + stale_requests_total), and PD resolver
     /// (decode_affinity_total).
     pub metrics: Arc<MetricsRegistry>,
+    /// Serializes policy selection with router-local pending reservation.
+    /// Without this small critical section, concurrent requests can all score
+    /// the same stale `/get_load` snapshot before any of them increments the
+    /// local pending counter.
+    pub selection_lock: Mutex<()>,
+    /// Optional single-writer cross-router reservation client. When set,
+    /// request handlers reserve pending work in router-state before proxying,
+    /// and release it when the local pending guard is dropped.
+    pub router_state_client: Option<Arc<dyn RouterStateClient>>,
+    /// Snapshot overlay populated from router-state and attached to workers
+    /// so TTFT-first scoring sees pending work from sibling gateway replicas.
+    pub router_state_overlay: Option<Arc<RouterStateLoadOverlay>>,
+    pub alias_fallback_breaker: Option<Arc<CircuitBreaker>>,
+    pub external_model_breaker: Option<Arc<CircuitBreaker>>,
+    pub trace_sink: Option<Arc<TraceSink>>,
     ready: AtomicBool,
 }
 
@@ -63,7 +82,53 @@ impl AppContext {
         policies: Arc<PolicyRegistry>,
         active_load: Arc<ActiveLoadRegistry>,
     ) -> Self {
-        let metrics = MetricsRegistry::new();
+        Self::with_active_load_and_router_state(
+            config,
+            tokenizers,
+            proxy,
+            registry,
+            policies,
+            active_load,
+            None,
+            None,
+        )
+    }
+
+    pub fn with_active_load_and_router_state(
+        config: Config,
+        tokenizers: Arc<TokenizerRegistry>,
+        proxy: Arc<Proxy>,
+        registry: Arc<WorkerRegistry>,
+        policies: Arc<PolicyRegistry>,
+        active_load: Arc<ActiveLoadRegistry>,
+        router_state_client: Option<Arc<dyn RouterStateClient>>,
+        router_state_overlay: Option<Arc<RouterStateLoadOverlay>>,
+    ) -> Self {
+        Self::with_active_load_router_state_and_metrics(
+            config,
+            tokenizers,
+            proxy,
+            registry,
+            policies,
+            active_load,
+            router_state_client,
+            router_state_overlay,
+            MetricsRegistry::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_active_load_router_state_and_metrics(
+        config: Config,
+        tokenizers: Arc<TokenizerRegistry>,
+        proxy: Arc<Proxy>,
+        registry: Arc<WorkerRegistry>,
+        policies: Arc<PolicyRegistry>,
+        active_load: Arc<ActiveLoadRegistry>,
+        router_state_client: Option<Arc<dyn RouterStateClient>>,
+        router_state_overlay: Option<Arc<RouterStateLoadOverlay>>,
+        metrics: Arc<MetricsRegistry>,
+    ) -> Self {
         // Wire the per-worker active-load gauge so `sgl_router_active_load`
         // mirrors the live counter on every register / drop / sweep.
         // Without this, the metric is permanently 0 in production even
@@ -74,6 +139,15 @@ impl AppContext {
         // after the policy registry, so inject it now. No-op for policies
         // that don't emit metrics.
         policies.attach_metrics(Arc::clone(&metrics));
+        let alias_fallback_breaker = config
+            .alias_fallback
+            .as_ref()
+            .map(|_| Arc::new(CircuitBreaker::new()));
+        let external_model_breaker = config
+            .external_model
+            .as_ref()
+            .map(|_| Arc::new(CircuitBreaker::new()));
+        let trace_sink = TraceSink::from_config(&config.trace);
         Self {
             config,
             tokenizers,
@@ -82,6 +156,12 @@ impl AppContext {
             policies,
             active_load,
             metrics,
+            selection_lock: Mutex::new(()),
+            router_state_client,
+            router_state_overlay,
+            alias_fallback_breaker,
+            external_model_breaker,
+            trace_sink,
             ready: AtomicBool::new(false),
         }
     }
@@ -100,6 +180,7 @@ impl AppContext {
     pub fn stub() -> Self {
         Self {
             config: Config {
+                runtime_mode: crate::config::RuntimeMode::Gateway,
                 server: crate::config::ServerConfig {
                     host: "x".into(),
                     port: 0,
@@ -111,15 +192,28 @@ impl AppContext {
                     policy: crate::config::PolicyKind::RoundRobin,
                     circuit_breaker: None,
                     cache_aware: None,
+                    tiered_spillover: None,
                     sticky: None,
                 },
                 discovery: crate::config::DiscoveryBackend::StaticUrls(
                     crate::config::StaticUrlsDiscoveryConfig {
                         urls: vec!["http://placeholder:0".into()],
+                        bearer_keys: Vec::new(),
                     },
                 ),
                 proxy: crate::config::ProxyConfig::default(),
                 active_load: crate::config::ActiveLoadConfig::default(),
+                trace: crate::config::TraceConfig::default(),
+                priority_override: crate::config::PriorityOverrideConfig::default(),
+                worker_introspect_key: None,
+                load_poll_interval_secs: None,
+                cache_tree_page_size: None,
+                cache_tree_bigram: false,
+                cache_tree_max_nodes: 1_000_000,
+                cache_state_url: None,
+                cache_state_timeout_ms: 20,
+                alias_fallback: None,
+                external_model: None,
             },
             tokenizers: Arc::new(TokenizerRegistry::default()),
             proxy: Arc::new(Proxy::new(std::time::Duration::from_secs(60)).expect("stub proxy")),
@@ -127,6 +221,12 @@ impl AppContext {
             policies: Arc::new(PolicyRegistry::default()),
             active_load: ActiveLoadRegistry::with_defaults(),
             metrics: MetricsRegistry::new(),
+            selection_lock: Mutex::new(()),
+            router_state_client: None,
+            router_state_overlay: None,
+            alias_fallback_breaker: None,
+            external_model_breaker: None,
+            trace_sink: None,
             ready: AtomicBool::new(false),
         }
     }

@@ -33,7 +33,7 @@
 //!    available for a PD-mode model" (new `NoPrefillWorkersAvailable`)
 //!    — only the resolver has the cohort context to tell which is which.
 
-use crate::discovery::{ModelId, WorkerMode};
+use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerRoute};
 use crate::workers::{Worker, WorkerRegistry};
 use std::sync::Arc;
 
@@ -53,8 +53,8 @@ pub enum PdPools {
     Plain { workers: Vec<Arc<Worker>> },
     /// PD-disaggregation deployment: the model has prefill and/or decode
     /// workers. Either OR BOTH pools may be empty (e.g. every prefill
-    /// worker's circuit breaker is open, or every PD worker on the
-    /// model is currently unhealthy). The `*_candidates` helpers are
+    /// worker's circuit breaker is open or its load/health probe failed). The
+    /// `*_candidates` helpers are
     /// the only safe consumers — they map an empty pool to the
     /// appropriate `NoPrefillWorkersAvailable` / `NoDecodeWorkersAvailable`
     /// error. Callers that read this variant directly MUST treat an
@@ -94,14 +94,16 @@ impl PdPoolResolver {
         Self { workers }
     }
 
-    /// Classify a model and return its pool partition over healthy
-    /// workers. Workers whose circuit breaker is open are filtered out
-    /// at this layer so the policy never has to re-check.
+    /// Classify a model and return its pool partition over usable workers.
+    /// Workers whose circuit breaker is open are filtered out at this layer.
+    /// For PD pools, a worker whose latest load or health probe failed is also removed,
+    /// so prefill/decode dispatch, `/get_load`, and readiness share the same
+    /// availability signal. Plain pools retain their breaker-only semantics.
     ///
-    /// Returns `Err(NoHealthyWorkers)` only when the model has zero
-    /// **registered** workers (healthy or not). When the model is
-    /// registered as PD but every PD worker is currently unhealthy
-    /// (any failure path that flips `breaker.allow()` to false),
+    /// Returns `Err(NoHealthyWorkers)` when the model has zero registered
+    /// workers, or when a plain pool has no breaker-admitted workers. When the
+    /// model is registered as PD but every PD worker is currently unusable
+    /// (breaker-open or introspection-probe-failed),
     /// returns `Ok(Pd { prefill: [], decode: [] })` so
     /// `prefill_candidates` / `decode_candidates` can surface the more
     /// specific `NoPrefillWorkersAvailable` / `NoDecodeWorkersAvailable`
@@ -109,16 +111,22 @@ impl PdPoolResolver {
     /// code whether the empty pool is empty by registration or by
     /// transient health state.
     pub fn resolve(&self, model: &ModelId) -> Result<PdPools, PdResolveError> {
-        let all = self.workers.healthy_workers_for(model);
+        let registered = self.workers.workers_for(model);
+        if registered.is_empty() {
+            return Err(PdResolveError::NoHealthyWorkers);
+        }
+        let pd_intent = registered
+            .iter()
+            .any(|w| matches!(w.mode(), WorkerMode::Prefill | WorkerMode::Decode));
+        let all = if pd_intent {
+            self.workers.routable_workers_for(model)
+        } else {
+            self.workers.healthy_workers_for(model)
+        };
         if all.is_empty() {
-            // No healthy workers — distinguish "model never registered"
-            // (true 404-ish, operator misconfiguration) from "PD model
-            // with all breakers currently open" (transient health
-            // issue, deserves the per-pool code).
-            let registered = self.workers.workers_for(model);
-            let pd_intent = registered
-                .iter()
-                .any(|w| matches!(w.mode(), WorkerMode::Prefill | WorkerMode::Decode));
+            // A registered PD model with every breaker open or every load
+            // probe failed retains its PD shape so callers surface the
+            // pool-specific 503 rather than the generic error.
             return if pd_intent {
                 Ok(PdPools::Pd {
                     prefill: Vec::new(),
@@ -183,8 +191,14 @@ impl PdPoolResolver {
     }
 
     /// Pick a decode worker for a PD-mode handoff with **host affinity**
-    /// to the prefill worker. Resolves the decode pool for `model`, then
-    /// applies the affinity rules in [`select_decode_with_affinity`].
+    /// to the prefill worker. Resolves the decode pool for `model`, applies
+    /// priority and context-window eligibility filtering, then the affinity
+    /// rules in [`select_decode_with_affinity`].
+    ///
+    /// `request_priority` is the effective request priority; decode workers
+    /// whose `min_priority` exceeds it are removed. `required_context_tokens`
+    /// is the prompt plus output budget computed at ingress; a limited decode
+    /// worker is removed when the request is unknown or exceeds its ceiling.
     ///
     /// Returns `Err(NoDecodeWorkersAvailable)` if the decode pool is
     /// empty (PD-mode partial failure) — the chat handler then maps to
@@ -195,10 +209,230 @@ impl PdPoolResolver {
         &self,
         model: &ModelId,
         prefill_url: &str,
+        request_priority: i64,
+        required_context_tokens: Option<usize>,
     ) -> Result<Arc<Worker>, PdResolveError> {
-        let candidates = self.decode_candidates(model)?;
-        select_decode_with_affinity(prefill_url, &candidates)
+        self.decode_with_affinity_avoiding(
+            model,
+            prefill_url,
+            request_priority,
+            required_context_tokens,
+            None,
+        )
+    }
+
+    /// Resolve one alternate decode while excluding a worker whose dispatch
+    /// just failed before request acceptance. This is deliberately a
+    /// single-worker exclusion: the chat path performs at most one retry.
+    pub fn decode_with_affinity_excluding(
+        &self,
+        model: &ModelId,
+        prefill_url: &str,
+        request_priority: i64,
+        required_context_tokens: Option<usize>,
+        excluded: &WorkerId,
+    ) -> Result<Arc<Worker>, PdResolveError> {
+        self.decode_with_affinity_avoiding(
+            model,
+            prefill_url,
+            request_priority,
+            required_context_tokens,
+            Some(excluded),
+        )
+    }
+
+    fn decode_with_affinity_avoiding(
+        &self,
+        model: &ModelId,
+        prefill_url: &str,
+        request_priority: i64,
+        required_context_tokens: Option<usize>,
+        excluded: Option<&WorkerId>,
+    ) -> Result<Arc<Worker>, PdResolveError> {
+        let mut candidates = self.decode_candidates(model)?;
+        if let Some(excluded) = excluded {
+            candidates.retain(|worker| &worker.id != excluded);
+        }
+        let eligible = filter_eligible(&candidates, request_priority);
+        let context_eligible = filter_context_eligible(&eligible.workers, required_context_tokens);
+        select_decode_with_affinity(prefill_url, &context_eligible.workers)
             .ok_or(PdResolveError::NoDecodeWorkersAvailable)
+    }
+}
+
+/// Why context-window filtering removed one or more workers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextFilterReason {
+    /// The request's known prompt-plus-output budget exceeds a worker limit.
+    OverLimit,
+    /// The request shape could not be tokenized exactly enough to prove that
+    /// it fits. Limited workers are excluded conservatively.
+    UnknownLength,
+}
+
+/// Outcome of [`filter_context_eligible`].
+#[derive(Debug)]
+pub struct ContextEligibleCandidates {
+    pub workers: Vec<Arc<Worker>>,
+    pub excluded_any: bool,
+    pub excluded_all: bool,
+    pub reason: Option<ContextFilterReason>,
+}
+
+/// Whether at least one candidate declares a router-enforced context limit.
+pub fn has_context_limited_worker(workers: &[Arc<Worker>]) -> bool {
+    workers.iter().any(|w| w.max_context_tokens().is_some())
+}
+
+/// Remove workers that cannot safely serve the request's total context.
+///
+/// Workers without `max_context_tokens` remain eligible and defer validation
+/// to their engine. A limited worker is eligible only when the router has a
+/// reliable prompt-plus-output token count and that count is within the
+/// declared limit. Unknown request length never spills onto a limited worker.
+pub fn filter_context_eligible(
+    workers: &[Arc<Worker>],
+    required_context_tokens: Option<usize>,
+) -> ContextEligibleCandidates {
+    let reason = required_context_tokens
+        .map(|_| ContextFilterReason::OverLimit)
+        .unwrap_or(ContextFilterReason::UnknownLength);
+    let eligible: Vec<Arc<Worker>> = workers
+        .iter()
+        .filter(|worker| match worker.max_context_tokens() {
+            None => true,
+            Some(limit) => required_context_tokens.is_some_and(|required| required <= limit),
+        })
+        .cloned()
+        .collect();
+    let excluded = eligible.len() != workers.len();
+
+    ContextEligibleCandidates {
+        excluded_all: excluded && eligible.is_empty(),
+        excluded_any: excluded && !eligible.is_empty(),
+        workers: eligible,
+        reason: excluded.then_some(reason),
+    }
+}
+
+/// Outcome of [`filter_eligible`]: the candidate set the policy should
+/// select from, plus whether the eligibility filter excluded workers or
+/// emptied the set entirely.
+#[derive(Debug)]
+pub struct EligibleCandidates {
+    /// The workers the policy should choose among. Empty ONLY when
+    /// `excluded_all` is true (the input was non-empty but every worker was
+    /// gated above the request priority); the caller must reject the request
+    /// rather than select from an empty set.
+    pub workers: Vec<Arc<Worker>>,
+    /// True when eligibility filtering removed at least one worker but left a
+    /// non-empty set (so `workers` is a strict, non-empty subset of the
+    /// input). Drives the `worker_excluded` observability counter.
+    pub excluded_any: bool,
+    /// True when filtering removed EVERY candidate from a non-empty input —
+    /// i.e. the request's priority qualifies for no healthy worker. `workers`
+    /// is empty in this case and the caller MUST fail the request (503
+    /// `NoHealthyWorkers`) rather than spill it onto a gated worker. This is
+    /// the hard-isolation contract: an internal/long (priority-0) request is
+    /// rejected outright before it can ever reach a capacity-gated worker
+    /// (e.g. an RTX-6000), even when that worker is the only one healthy.
+    /// A loud condition — the caller increments `priority_filtered_total
+    /// {reason="empty_set_rejected"}` and logs a warning.
+    pub excluded_all: bool,
+}
+
+/// Restrict `workers` to those that declare support for a router-facing API
+/// route. This lets heterogeneous pools carry compatibility proxies that only
+/// implement part of the public API surface without leaking passthrough
+/// requests to them.
+pub fn filter_route_eligible(workers: &[Arc<Worker>], route: WorkerRoute) -> EligibleCandidates {
+    let eligible: Vec<Arc<Worker>> = workers
+        .iter()
+        .filter(|w| w.supports_route(route))
+        .cloned()
+        .collect();
+
+    if eligible.is_empty() && !workers.is_empty() {
+        return EligibleCandidates {
+            workers: Vec::new(),
+            excluded_any: false,
+            excluded_all: true,
+        };
+    }
+
+    let excluded_any = eligible.len() != workers.len();
+    EligibleCandidates {
+        workers: eligible,
+        excluded_any,
+        excluded_all: false,
+    }
+}
+
+/// Restrict `workers` to those eligible for a request of the given
+/// `request_priority`, removing every worker whose
+/// [`Worker::min_priority`] exceeds it. A worker with `min_priority = None`
+/// accepts any request and is always retained.
+///
+/// **Hard exclusion**: an ineligible worker is never returned, even if the
+/// eligible subset is heavily loaded — the policy will queue on / pick
+/// among eligible workers rather than spill onto an ineligible one. This
+/// is what keeps internal/long requests (priority `0`) off a capacity-
+/// gated worker (e.g. an RTX-6000 tagged `min_priority=100`) whose smaller
+/// context window they would otherwise overflow.
+///
+/// **Hard isolation on empty set**: if filtering removes ALL candidates
+/// (e.g. an internal priority-0 request when only `min_priority=100`
+/// workers are healthy), the returned `workers` is EMPTY and `excluded_all`
+/// is set. The caller MUST reject the request (503) rather than fall back to
+/// the unfiltered set — spilling a long internal request onto the gated
+/// worker is exactly the failure mode this feature prevents, so isolation is
+/// preserved even at the cost of availability when no eligible capacity is
+/// healthy. (An empty *input* — no healthy workers at all — yields an empty
+/// set with `excluded_all = false`, since nothing was excluded; the caller's
+/// existing no-healthy-workers path handles it identically.)
+///
+/// A free function (not a `Policy` method) for the same reason as
+/// [`select_decode_with_affinity`]: candidate-set shaping is orthogonal to
+/// the in-pool scoring the `Policy` trait abstracts, and threading it
+/// through every policy impl would couple unrelated concerns.
+///
+/// # Trust boundary
+///
+/// The entire isolation guarantee rests on `request_priority` being a
+/// **trusted, gateway-controlled** signal, NOT a client-supplied one. In the
+/// production topology the API gateway (APIM) overrides the request body's
+/// `priority` per API-key class (high-priority prod key → `100`, internal →
+/// `0`) before the request reaches this router, and a client cannot raise its
+/// own priority. If this router were ever exposed so that callers could set
+/// `priority` directly, any caller could set `priority=100` and reach a gated
+/// worker — the gate would no longer isolate capacity. Deployments MUST keep
+/// the router behind a gateway that owns the `priority` field.
+pub fn filter_eligible(workers: &[Arc<Worker>], request_priority: i64) -> EligibleCandidates {
+    let eligible: Vec<Arc<Worker>> = workers
+        .iter()
+        .filter(|w| match w.min_priority() {
+            Some(min) => request_priority >= min,
+            None => true,
+        })
+        .cloned()
+        .collect();
+
+    // Distinguish "filtering emptied a non-empty pool" (hard-isolation
+    // rejection) from "the pool was already empty" (ordinary no-healthy-
+    // workers, nothing excluded). Only the former sets `excluded_all`.
+    if eligible.is_empty() && !workers.is_empty() {
+        return EligibleCandidates {
+            workers: Vec::new(),
+            excluded_any: false,
+            excluded_all: true,
+        };
+    }
+
+    let excluded_any = eligible.len() != workers.len();
+    EligibleCandidates {
+        workers: eligible,
+        excluded_any,
+        excluded_all: false,
     }
 }
 
@@ -299,7 +533,7 @@ fn host_of(worker_url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{ModelId, WorkerId, WorkerSpec};
+    use crate::discovery::{ModelId, WorkerId, WorkerRouteSet, WorkerSpec};
 
     fn spec(id: &str, mode: WorkerMode, model: &str) -> WorkerSpec {
         WorkerSpec {
@@ -308,6 +542,13 @@ mod tests {
             mode,
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }
     }
 
@@ -317,6 +558,203 @@ mod tests {
             let _ = r.add(s.clone());
         }
         r
+    }
+
+    /// Build a standalone worker with an optional `min_priority` tag for
+    /// exercising [`filter_eligible`] directly (no registry needed).
+    fn tagged_worker(id: &str, min_priority: Option<i64>) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode: WorkerMode::Plain,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        }))
+    }
+
+    fn route_worker(id: &str, routes: WorkerRouteSet) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode: WorkerMode::Plain,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes,
+            prefill_capacity_milli: 1000,
+        }))
+    }
+
+    #[test]
+    fn filter_eligible_keeps_all_when_none_tagged() {
+        let ws = vec![tagged_worker("a", None), tagged_worker("b", None)];
+        let out = filter_eligible(&ws, 0);
+        assert_eq!(out.workers.len(), 2);
+        assert!(!out.excluded_any);
+        assert!(!out.excluded_all);
+    }
+
+    #[test]
+    fn filter_route_eligible_removes_chat_only_from_passthrough() {
+        let ws = vec![
+            route_worker("amd-chat-only", WorkerRouteSet::chat_only()),
+            route_worker("b200-all", WorkerRouteSet::all()),
+        ];
+
+        let chat = filter_route_eligible(&ws, WorkerRoute::Chat);
+        assert_eq!(chat.workers.len(), 2);
+        assert!(!chat.excluded_any);
+
+        let responses = filter_route_eligible(&ws, WorkerRoute::Responses);
+        assert_eq!(responses.workers.len(), 1);
+        assert_eq!(responses.workers[0].id.0, "b200-all");
+        assert!(responses.excluded_any);
+        assert!(!responses.excluded_all);
+    }
+
+    #[test]
+    fn filter_eligible_excludes_low_priority_from_tagged_worker() {
+        // One untagged B200, one RTX tagged min_priority=100.
+        let b200 = tagged_worker("b200", None);
+        let rtx = tagged_worker("rtx", Some(100));
+        let ws = vec![Arc::clone(&b200), Arc::clone(&rtx)];
+
+        // priority=0 (internal) → only the B200 is eligible.
+        let out = filter_eligible(&ws, 0);
+        assert_eq!(out.workers.len(), 1);
+        assert_eq!(out.workers[0].url, b200.url);
+        assert!(out.excluded_any);
+        assert!(!out.excluded_all);
+    }
+
+    #[test]
+    fn filter_eligible_includes_tagged_worker_for_high_priority() {
+        let b200 = tagged_worker("b200", None);
+        let rtx = tagged_worker("rtx", Some(100));
+        let ws = vec![Arc::clone(&b200), Arc::clone(&rtx)];
+
+        // priority=100 (production) → both eligible.
+        let out = filter_eligible(&ws, 100);
+        assert_eq!(out.workers.len(), 2);
+        assert!(!out.excluded_any);
+        assert!(!out.excluded_all);
+    }
+
+    #[test]
+    fn filter_eligible_boundary_priority_equal_to_min_is_eligible() {
+        let rtx = tagged_worker("rtx", Some(100));
+        let ws = vec![Arc::clone(&rtx)];
+        // priority == min_priority is eligible (>=).
+        let out = filter_eligible(&ws, 100);
+        assert_eq!(out.workers.len(), 1);
+        assert!(!out.excluded_all);
+        // one below the threshold → empty eligible set → hard rejection.
+        let out = filter_eligible(&ws, 99);
+        assert!(out.workers.is_empty());
+        assert!(out.excluded_all);
+    }
+
+    #[test]
+    fn filter_eligible_empty_set_is_rejected_not_fallback() {
+        // Only a tagged worker is healthy; a low-priority request filters it
+        // out entirely → hard isolation: return an EMPTY set with
+        // `excluded_all` so the caller 503s rather than spilling the request
+        // onto the gated worker.
+        let rtx = tagged_worker("rtx", Some(100));
+        let ws = vec![Arc::clone(&rtx)];
+        let out = filter_eligible(&ws, 0);
+        assert!(
+            out.workers.is_empty(),
+            "gated-only pool must NOT serve a sub-threshold request",
+        );
+        assert!(out.excluded_all);
+        assert!(!out.excluded_any);
+    }
+
+    #[test]
+    fn filter_eligible_empty_input_stays_empty_without_rejection_flag() {
+        // No healthy workers at all: empty set, but nothing was *excluded* —
+        // `excluded_all` stays false so this maps to the ordinary
+        // no-healthy-workers path, not the priority-rejection counter.
+        let ws: Vec<Arc<Worker>> = vec![];
+        let out = filter_eligible(&ws, 0);
+        assert!(out.workers.is_empty());
+        assert!(!out.excluded_all);
+        assert!(!out.excluded_any);
+    }
+
+    fn context_worker(id: &str, max_context_tokens: Option<usize>) -> Arc<Worker> {
+        Arc::new(Worker::new(WorkerSpec {
+            id: WorkerId(id.into()),
+            url: format!("http://{id}:30000"),
+            mode: WorkerMode::Plain,
+            model_ids: vec![ModelId("m".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        }))
+    }
+
+    #[test]
+    fn context_filter_keeps_request_within_worker_limit() {
+        let limited = context_worker("amd", Some(500_000));
+        let out = filter_context_eligible(&[Arc::clone(&limited)], Some(500_000));
+        assert_eq!(out.workers.len(), 1);
+        assert!(!out.excluded_any);
+        assert!(!out.excluded_all);
+        assert_eq!(out.reason, None);
+    }
+
+    #[test]
+    fn context_filter_routes_over_limit_request_to_unlimited_worker() {
+        let limited = context_worker("amd", Some(500_000));
+        let unlimited = context_worker("b200", None);
+        let out = filter_context_eligible(
+            &[Arc::clone(&limited), Arc::clone(&unlimited)],
+            Some(500_001),
+        );
+        assert_eq!(out.workers.len(), 1);
+        assert_eq!(out.workers[0].url, unlimited.url);
+        assert!(out.excluded_any);
+        assert!(!out.excluded_all);
+        assert_eq!(out.reason, Some(ContextFilterReason::OverLimit));
+    }
+
+    #[test]
+    fn context_filter_excludes_limited_worker_for_unknown_length() {
+        let limited = context_worker("amd", Some(500_000));
+        let unlimited = context_worker("b200", None);
+        let out = filter_context_eligible(&[Arc::clone(&limited), Arc::clone(&unlimited)], None);
+        assert_eq!(out.workers.len(), 1);
+        assert_eq!(out.workers[0].url, unlimited.url);
+        assert_eq!(out.reason, Some(ContextFilterReason::UnknownLength));
+    }
+
+    #[test]
+    fn context_filter_rejects_when_only_limited_worker_cannot_serve() {
+        let limited = context_worker("amd", Some(500_000));
+        for required in [Some(500_001), None] {
+            let out = filter_context_eligible(&[Arc::clone(&limited)], required);
+            assert!(out.workers.is_empty());
+            assert!(out.excluded_all);
+            assert!(!out.excluded_any);
+        }
     }
 
     /// Model with only Plain workers → Plain partition.
@@ -499,6 +937,13 @@ mod tests {
             mode,
             model_ids: vec![ModelId(model.into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }
     }
 
@@ -517,7 +962,7 @@ mod tests {
         let prefill_url = "http://host_a:30000";
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), prefill_url)
+            .decode_with_affinity(&ModelId("m".into()), prefill_url, 0, None)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_a:30001",
@@ -552,11 +997,39 @@ mod tests {
         assert!(!d1.breaker.allow(), "d1 breaker must be open");
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000")
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_b:30001",
             "breaker-open affinity peer must fall back to the remote healthy peer",
+        );
+    }
+
+    /// A failed `/get_load` probe is an availability signal, not merely a
+    /// large load value. The PD resolver must skip that decode before host
+    /// affinity can pin the request to it.
+    #[test]
+    fn decoder_falls_back_when_affinity_peer_load_probe_failed() {
+        let r = registry(&[
+            spec_with_url("p1", "http://host_a:30000", WorkerMode::Prefill, "m"),
+            spec_with_url("d1", "http://host_a:30001", WorkerMode::Decode, "m"),
+            spec_with_url("d2", "http://host_b:30001", WorkerMode::Decode, "m"),
+        ]);
+        let resolver = PdPoolResolver::new(r);
+        let failed = resolver
+            .workers
+            .workers_for(&ModelId("m".into()))
+            .into_iter()
+            .find(|w| w.url == "http://host_a:30001")
+            .unwrap();
+        failed.set_reported_load(crate::workers::worker::REPORTED_LOAD_FAILED);
+
+        let chosen = resolver
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
+            .unwrap();
+        assert_eq!(
+            chosen.url, "http://host_b:30001",
+            "load-probe-failed affinity peer must be excluded before selection",
         );
     }
 
@@ -604,7 +1077,7 @@ mod tests {
         }
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000")
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap();
         assert!(
             chosen.url == "http://host_b:30001" || chosen.url == "http://host_c:30001",
@@ -640,7 +1113,7 @@ mod tests {
         let _g = d1.load_guard();
 
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000")
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap();
         assert_eq!(
             chosen.url, "http://host_c:30001",
@@ -660,7 +1133,7 @@ mod tests {
         )]);
         let resolver = PdPoolResolver::new(r);
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000")
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
     }
@@ -676,7 +1149,7 @@ mod tests {
         ]);
         let resolver = PdPoolResolver::new(r);
         let chosen = resolver
-            .decode_with_affinity(&ModelId("m".into()), "not-a-url")
+            .decode_with_affinity(&ModelId("m".into()), "not-a-url", 0, None)
             .unwrap();
         // Both d1 and d2 are at load 0 → either is acceptable. The
         // assertion is only that the function returns Some, not None
@@ -724,7 +1197,7 @@ mod tests {
         // preserves PD shape and decode_with_affinity surfaces the
         // per-pool code.
         let err = resolver
-            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000")
+            .decode_with_affinity(&ModelId("m".into()), "http://host_a:30000", 0, None)
             .unwrap_err();
         assert_eq!(err, PdResolveError::NoDecodeWorkersAvailable);
 

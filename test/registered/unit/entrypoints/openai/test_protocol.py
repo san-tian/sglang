@@ -161,6 +161,58 @@ class TestChatCompletionRequest(unittest.TestCase):
         )
         self.assertEqual(request2.tool_choice, "auto")
 
+    def test_chat_completion_tool_message_object_content(self):
+        """Tool result content objects are serialized for compatibility."""
+        messages = [
+            {"role": "user", "content": "What is in this image?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "recognize_image",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": {"message": "beauty products / cosmetics assortment"},
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_2",
+                "content": {"image_url": "https://example.com/image.png"},
+            },
+        ]
+
+        request = ChatCompletionRequest(model="test-model", messages=messages)
+
+        self.assertEqual(
+            request.messages[2].content,
+            '{"message":"beauty products / cosmetics assortment"}',
+        )
+        self.assertEqual(
+            request.messages[3].content,
+            '{"image_url":"https://example.com/image.png"}',
+        )
+
+    def test_chat_completion_non_tool_message_rejects_object_content(self):
+        """Only tool result messages accept object content."""
+        with self.assertRaises(ValidationError):
+            ChatCompletionRequest(
+                model="test-model",
+                messages=[
+                    {"role": "system", "content": {"message": "not accepted"}},
+                    {"role": "user", "content": "Hello"},
+                ],
+            )
+
     def test_chat_completion_sglang_extensions(self):
         """Test chat completion with SGLang extensions"""
         messages = [{"role": "user", "content": "Hello"}]
@@ -235,9 +287,7 @@ class TestChatCompletionRequest(unittest.TestCase):
         self.assertFalse(request.chat_template_kwargs.get("enable_thinking"))
 
     def test_chat_completion_reasoning_effort_max(self):
-        """`max` is an sglang extension on chat completion's top-level
-        `reasoning_effort` only; the Responses-API-style nested
-        `reasoning.effort` path stays aligned with OpenAI's three levels."""
+        """`max` is an sglang extension accepted on both chat effort shapes."""
         from pydantic import ValidationError
 
         messages = [{"role": "user", "content": "Hello"}]
@@ -256,14 +306,87 @@ class TestChatCompletionRequest(unittest.TestCase):
                 reasoning_effort="ultra",
             )
 
-        # Nested reasoning.effort=max is NOT promoted by normalize_reasoning_inputs:
-        # the Responses API path keeps the OpenAI low/medium/high contract.
         request = ChatCompletionRequest(
             model="test-model",
             messages=messages,
             reasoning={"effort": "max"},
         )
-        self.assertNotEqual(request.reasoning_effort, "max")
+        self.assertEqual(request.reasoning_effort, "max")
+
+    def test_chat_completion_thinking_disabled_compat_fields(self):
+        messages = [{"role": "user", "content": "Hello"}]
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=messages,
+            thinking={"type": "disabled"},
+            return_reasoning=False,
+        )
+        self.assertFalse(request.chat_template_kwargs.get("thinking"))
+        self.assertFalse(request.chat_template_kwargs.get("enable_thinking"))
+
+    def test_chat_completion_enable_thinking_false_compat_field(self):
+        messages = [{"role": "user", "content": "Hello"}]
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=messages,
+            enable_thinking=False,
+        )
+        self.assertFalse(request.chat_template_kwargs.get("enable_thinking"))
+
+    def test_chat_completion_accepts_responses_style_text_parts(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Hello"}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Hi"}],
+                },
+            ],
+        )
+
+        user_part = request.messages[0].content[0]
+        assistant_part = request.messages[1].content[0]
+        self.assertEqual(user_part.type, "text")
+        self.assertEqual(user_part.text, "Hello")
+        self.assertEqual(assistant_part.type, "text")
+        self.assertEqual(assistant_part.text, "Hi")
+
+    def test_chat_completion_accepts_responses_style_image_parts(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,AAAA",
+                            "detail": "low",
+                            "max_dynamic_patch": 4,
+                        }
+                    ],
+                }
+            ],
+        )
+
+        image_part = request.messages[0].content[0]
+        self.assertEqual(image_part.type, "image_url")
+        self.assertEqual(image_part.image_url.url, "data:image/png;base64,AAAA")
+        self.assertEqual(image_part.image_url.detail, "low")
+        self.assertEqual(image_part.image_url.max_dynamic_patch, 4)
+
+    def test_chat_completion_return_reasoning_false_does_not_disable_thinking(self):
+        messages = [{"role": "user", "content": "Hello"}]
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=messages,
+            return_reasoning=False,
+        )
+        self.assertIsNone(request.chat_template_kwargs)
 
     def test_chat_completion_json_format(self):
         """Test chat completion json format"""

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use sgl_router::config::StaticUrlsDiscoveryConfig;
+use sgl_router::config::{StaticUrlsDiscoveryConfig, WorkerBearerKeyConfig};
 use sgl_router::discovery::{DiscoveryEvent, WorkerMode};
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 async fn emits_one_added_per_url_with_plain_seed() {
     let cfg = StaticUrlsDiscoveryConfig {
         urls: vec!["http://x:30000".into(), "http://y:30000".into()],
+        bearer_keys: Vec::new(),
     };
     let (tx, mut rx) = mpsc::channel(16);
     let _h = sgl_router::discovery::static_urls::spawn(cfg, tx)
@@ -56,6 +57,7 @@ async fn emits_one_added_per_url_with_plain_seed() {
 async fn emits_one_event_and_parks_until_receiver_dropped() {
     let cfg = StaticUrlsDiscoveryConfig {
         urls: vec!["http://x:30000".into()],
+        bearer_keys: Vec::new(),
     };
     let (tx, mut rx) = mpsc::channel(16);
     let h = sgl_router::discovery::static_urls::spawn(cfg, tx)
@@ -90,7 +92,8 @@ async fn static_urls_pd_role_resolved_end_to_end() {
     use axum::{routing::get, Json, Router};
     use serde_json::json;
     use sgl_router::config::{
-        ActiveLoadConfig, Config, DiscoveryBackend, ObservabilityConfig, ProxyConfig, ServerConfig,
+        ActiveLoadConfig, Config, DiscoveryBackend, ObservabilityConfig, ProxyConfig, RuntimeMode,
+        ServerConfig,
     };
     use sgl_router::discovery::{spawn_discovery, WorkerId};
     use sgl_router::workers::{manager, WorkerRegistry};
@@ -121,6 +124,7 @@ async fn static_urls_pd_role_resolved_end_to_end() {
     });
 
     let cfg = Config {
+        runtime_mode: RuntimeMode::Gateway,
         server: ServerConfig {
             host: "127.0.0.1".into(),
             port: 0,
@@ -132,13 +136,26 @@ async fn static_urls_pd_role_resolved_end_to_end() {
             policy: sgl_router::config::PolicyKind::RoundRobin,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             sticky: None,
         },
         discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
             urls: vec![url.clone()],
+            bearer_keys: Vec::new(),
         }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     };
 
     let registry = Arc::new(WorkerRegistry::default());
@@ -170,4 +187,31 @@ async fn static_urls_pd_role_resolved_end_to_end() {
     );
 
     let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn emits_worker_bearer_token_for_matching_url() {
+    let cfg = StaticUrlsDiscoveryConfig {
+        urls: vec!["http://x:30000/".into()],
+        bearer_keys: vec![WorkerBearerKeyConfig {
+            worker_url: "http://x:30000".into(),
+            bearer_token: "sk-worker".into(),
+        }],
+    };
+    let (tx, mut rx) = mpsc::channel(16);
+    let _h = sgl_router::discovery::static_urls::spawn(cfg, tx)
+        .await
+        .unwrap();
+
+    let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    match event {
+        DiscoveryEvent::Added(spec) => {
+            assert_eq!(spec.url, "http://x:30000/");
+            assert_eq!(spec.bearer_token.as_deref(), Some("sk-worker"));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
 }

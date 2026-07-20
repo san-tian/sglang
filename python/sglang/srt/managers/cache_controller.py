@@ -237,6 +237,11 @@ class HiCacheController:
 
         if isinstance(mem_pool_device, HybridLinearKVPool):
             mem_pool_device = mem_pool_device.full_kv_pool
+        from sglang.srt.mem_cache.cp_layersplit_pool import CpLayerSplitKVPool
+
+        self.is_cp_layersplit = isinstance(mem_pool_device, CpLayerSplitKVPool)
+        if self.is_cp_layersplit:
+            mem_pool_device = mem_pool_device.owned_pool
         self.mem_pool_device = mem_pool_device
         self.mem_pool_host = mem_pool_host
         self.write_policy = write_policy
@@ -272,11 +277,6 @@ class HiCacheController:
             "write_back",
         ]:
             raise ValueError(f"Invalid write policy: {write_policy}")
-
-        if write_policy == "write_back":
-            logger.warning(
-                "write_back policy will be deprecated in future releases; please migrate to write_through_selective with appropriate configuration for better performance and reliability."
-            )
 
         # self.write_queue = PriorityQueue[CacheOperation]()
         self.load_queue: List[CacheOperation] = []
@@ -483,7 +483,7 @@ class HiCacheController:
 
             if (
                 self.storage_backend_type
-                in ["hf3fs", "mooncake", "eic", "nixl", "simm"]
+                in ["hf3fs", "mooncake", "eic", "nixl", "simm", "mori"]
             ) or (
                 self.storage_backend_type == "dynamic"
                 and bool(self.storage_config.extra_config.get("interface_v1", 0))
@@ -626,6 +626,7 @@ class HiCacheController:
             tp_lcm_size=tp_lcm_size,
             should_split_heads=should_split_heads,
             extra_config=storage_backend_extra_config,
+            is_cp_layersplit=self.is_cp_layersplit,
         )
 
     def reset(self):
@@ -1002,18 +1003,12 @@ class HiCacheController:
 
         storage_query_count = 0
         hash_value = []
+        page_hashes = self.get_hash_str(
+            tokens_to_fetch, last_hash, page_size=self.page_size
+        )
 
-        for start in range(
-            0, len(tokens_to_fetch), self.page_size * STORAGE_BATCH_SIZE
-        ):
-            end = min(start + self.page_size * STORAGE_BATCH_SIZE, len(tokens_to_fetch))
-            batch_tokens = tokens_to_fetch[start:end]
-            batch_hashes = []
-            for i in range(0, len(batch_tokens), self.page_size):
-                last_hash = self.get_hash_str(
-                    batch_tokens[i : i + self.page_size], last_hash
-                )
-                batch_hashes.append(last_hash)
+        for start in range(0, len(page_hashes), STORAGE_BATCH_SIZE):
+            batch_hashes = page_hashes[start : start + STORAGE_BATCH_SIZE]
             extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
             hit_page_num = self.storage_backend.batch_exists(batch_hashes, extra_info)
             hash_value.extend(batch_hashes[:hit_page_num])

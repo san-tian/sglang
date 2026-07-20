@@ -53,6 +53,13 @@ pub struct ServerInfo {
     pub disaggregation_role: Option<DisaggregationRole>,
 }
 
+/// Minimal OpenAI-compatible model discovery result for non-SGLang
+/// backends such as vLLM.
+#[derive(Debug, Clone, Default)]
+pub struct OpenAIModelsInfo {
+    pub model_ids: Vec<String>,
+}
+
 /// PD classification derived from a worker's `/server_info` response.
 ///
 /// `Some(_)` means the worker self-disclosed its role and we should trust
@@ -88,6 +95,35 @@ impl WorkerIntrospector {
         Self { client }
     }
 
+    /// Build with the production `/server_info` timeout and an optional
+    /// bearer token applied as a default `Authorization` header on every
+    /// `/server_info` request. Use this when the workers run SGLang with
+    /// `--api-key`: their `/server_info` is key-protected (only `/health*`
+    /// and `/metrics` are exempt), so an unauthenticated introspect gets
+    /// 401, the worker registers with empty model_ids, and
+    /// `cache_aware_zmq` silently degrades to min-load. `None` => no header
+    /// (workers with no `--api-key`), identical to [`default`].
+    ///
+    /// The token is the worker pool's shared SGLang api-key, NOT a
+    /// per-request client credential — introspection happens at startup
+    /// before any client request exists.
+    pub fn with_optional_key(bearer: Option<&str>) -> Self {
+        let mut builder = reqwest::Client::builder().timeout(SERVER_INFO_TIMEOUT);
+        if let Some(token) = bearer {
+            let mut headers = reqwest::header::HeaderMap::new();
+            // A non-parseable token (control chars, etc.) is an operator
+            // misconfiguration; surface it loudly at startup rather than
+            // silently dropping auth and emitting confusing 401s later.
+            let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .expect("worker introspect key must be a valid HTTP header value");
+            value.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+            builder = builder.default_headers(headers);
+        }
+        let client = builder.build().expect("introspector http client builds");
+        Self { client }
+    }
+
     /// Reuse a caller-owned `reqwest::Client`. Useful in tests that want
     /// to assert request shape via a fake HTTP transport, or to share a
     /// connection pool across components.
@@ -106,8 +142,20 @@ impl WorkerIntrospector {
     /// responses and JSON-parse errors short-circuit immediately —
     /// the worker answered authoritatively, retrying won't help.
     pub async fn fetch(&self, worker_url: &str) -> ServerInfo {
+        self.fetch_with_bearer(worker_url, None).await
+    }
+
+    /// Fetch `/server_info`, optionally overriding the client's default
+    /// Authorization header with a worker-specific bearer token.
+    pub async fn fetch_with_bearer(&self, worker_url: &str, bearer: Option<&str>) -> ServerInfo {
         let server_info_url = format!("{}/server_info", worker_url.trim_end_matches('/'));
-        let parsed = match Self::fetch_with_retry(&self.client, &server_info_url, worker_url).await
+        let parsed = match Self::fetch_with_retry(
+            &self.client,
+            &server_info_url,
+            worker_url,
+            bearer,
+        )
+        .await
         {
             Some(p) => p,
             None => return ServerInfo::default(),
@@ -148,6 +196,36 @@ impl WorkerIntrospector {
         }
     }
 
+    /// Fetch an OpenAI-compatible `/v1/models` listing. Intended for vLLM
+    /// workers, which do not expose SGLang `/server_info`.
+    pub async fn fetch_openai_models_with_bearer(
+        &self,
+        worker_url: &str,
+        bearer: Option<&str>,
+    ) -> OpenAIModelsInfo {
+        let models_url = openai_models_url(worker_url);
+        let parsed = match Self::fetch_openai_models_with_retry(
+            &self.client,
+            &models_url,
+            worker_url,
+            bearer,
+        )
+        .await
+        {
+            Some(p) => p,
+            None => return OpenAIModelsInfo::default(),
+        };
+        let model_ids = parsed
+            .data
+            .into_iter()
+            .filter_map(|m| {
+                let id = m.id.trim().to_string();
+                (!id.is_empty()).then_some(id)
+            })
+            .collect();
+        OpenAIModelsInfo { model_ids }
+    }
+
     /// Issue the `/server_info` GET with bounded retry on transient
     /// errors. Returns `Some(body)` on success, `None` after exhausting
     /// retries (the caller falls back to default `ServerInfo`).
@@ -155,10 +233,18 @@ impl WorkerIntrospector {
         client: &reqwest::Client,
         server_info_url: &str,
         worker_url: &str,
+        bearer: Option<&str>,
     ) -> Option<ServerInfoBody> {
         let mut delay = FETCH_BACKOFF_BASE;
         for attempt in 1..=FETCH_MAX_ATTEMPTS {
-            match client.get(server_info_url).send().await {
+            let mut req = client.get(server_info_url);
+            if let Some(token) = bearer {
+                let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                    .expect("worker bearer token must be a valid HTTP header value");
+                value.set_sensitive(true);
+                req = req.header(reqwest::header::AUTHORIZATION, value);
+            }
+            match req.send().await {
                 Err(e) => {
                     warn!(
                         worker_url = %worker_url,
@@ -206,6 +292,80 @@ impl WorkerIntrospector {
             "introspect: /server_info failed after retries; registering worker with empty model_ids"
         );
         None
+    }
+
+    async fn fetch_openai_models_with_retry(
+        client: &reqwest::Client,
+        models_url: &str,
+        worker_url: &str,
+        bearer: Option<&str>,
+    ) -> Option<OpenAIModelsBody> {
+        let mut delay = FETCH_BACKOFF_BASE;
+        for attempt in 1..=FETCH_MAX_ATTEMPTS {
+            let mut req = client.get(models_url);
+            if let Some(token) = bearer {
+                let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                    .expect("worker bearer token must be a valid HTTP header value");
+                value.set_sensitive(true);
+                req = req.header(reqwest::header::AUTHORIZATION, value);
+            }
+            match req.send().await {
+                Err(e) => {
+                    warn!(
+                        worker_url = %worker_url,
+                        attempt,
+                        error = %e,
+                        "introspect: /v1/models request failed; will retry"
+                    );
+                }
+                Ok(resp) if resp.status().is_server_error() => {
+                    warn!(
+                        worker_url = %worker_url,
+                        attempt,
+                        status = %resp.status(),
+                        "introspect: /v1/models returned 5xx; will retry"
+                    );
+                }
+                Ok(resp) if !resp.status().is_success() => {
+                    warn!(
+                        worker_url = %worker_url,
+                        status = %resp.status(),
+                        "introspect: /v1/models returned non-2xx; registering worker with empty model_ids"
+                    );
+                    return None;
+                }
+                Ok(resp) => match resp.json::<OpenAIModelsBody>().await {
+                    Ok(body) => return Some(body),
+                    Err(e) => {
+                        warn!(
+                            worker_url = %worker_url,
+                            error = %e,
+                            "introspect: /v1/models JSON parse failed; registering worker with empty model_ids"
+                        );
+                        return None;
+                    }
+                },
+            }
+            if attempt < FETCH_MAX_ATTEMPTS {
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+        }
+        warn!(
+            worker_url = %worker_url,
+            attempts = FETCH_MAX_ATTEMPTS,
+            "introspect: /v1/models failed after retries; registering worker with empty model_ids"
+        );
+        None
+    }
+}
+
+fn openai_models_url(worker_url: &str) -> String {
+    let base = worker_url.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{base}/models")
+    } else {
+        format!("{base}/v1/models")
     }
 }
 
@@ -332,6 +492,18 @@ struct ServerInfoBody {
     disaggregation_bootstrap_port: Option<u16>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct OpenAIModelsBody {
+    #[serde(default)]
+    data: Vec<OpenAIModelEntry>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OpenAIModelEntry {
+    #[serde(default)]
+    id: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct KvEventsBlock {
     // Forward-compatibility: the only publisher implementation
@@ -381,8 +553,66 @@ mod tests {
         (format!("http://127.0.0.1:{port}"), tx)
     }
 
+    async fn spawn_fake_openai_worker(body: Value) -> (String, oneshot::Sender<()>) {
+        let body = Arc::new(body);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get({
+                    let body = body.clone();
+                    move || {
+                        let body = body.clone();
+                        async move { Json((*body).clone()) }
+                    }
+                }),
+            )
+            .route(
+                "/models",
+                get(move || {
+                    let body = body.clone();
+                    async move { Json((*body).clone()) }
+                }),
+            );
+        let (tx, rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = rx.await;
+                })
+                .await;
+        });
+        (format!("http://127.0.0.1:{port}"), tx)
+    }
+
     fn fast_introspector() -> WorkerIntrospector {
         WorkerIntrospector::new(Duration::from_millis(500))
+    }
+
+    #[tokio::test]
+    async fn fetch_openai_models_discovers_model_ids() {
+        let (url, _shutdown) = spawn_fake_openai_worker(json!({
+            "object": "list",
+            "data": [{"id": "glm-5.2-fp8-1m-mtp"}, {"id": ""}]
+        }))
+        .await;
+        let info = fast_introspector()
+            .fetch_openai_models_with_bearer(&url, None)
+            .await;
+        assert_eq!(info.model_ids, vec!["glm-5.2-fp8-1m-mtp"]);
+    }
+
+    #[tokio::test]
+    async fn openai_models_url_accepts_v1_base_url() {
+        let (url, _shutdown) = spawn_fake_openai_worker(json!({
+            "data": [{"id": "m"}]
+        }))
+        .await;
+        let info = fast_introspector()
+            .fetch_openai_models_with_bearer(&format!("{url}/v1"), None)
+            .await;
+        assert_eq!(info.model_ids, vec!["m"]);
     }
 
     /// The PRIMARY `/server_info` path (the introspector, not the discovery.rs
@@ -621,5 +851,98 @@ mod tests {
         .await;
         let got = fast_introspector().fetch(&url).await;
         assert!(got.disaggregation_role.is_none());
+    }
+
+    /// A worker whose `/server_info` is protected by a bearer key: it
+    /// returns 200 with the expected `Authorization` header, else 401.
+    /// Mirrors SGLang's `--api-key` middleware (which exempts `/health*`
+    /// + `/metrics` but NOT `/server_info`).
+    async fn spawn_key_protected_worker(
+        expected_bearer: &'static str,
+        body: Value,
+    ) -> (String, oneshot::Sender<()>) {
+        use axum::http::{HeaderMap, StatusCode};
+        use axum::response::IntoResponse;
+        let body = Arc::new(body);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = Router::new().route(
+            "/server_info",
+            get(move |headers: HeaderMap| {
+                let body = body.clone();
+                async move {
+                    match headers.get(axum::http::header::AUTHORIZATION) {
+                        Some(v) if v == expected_bearer => {
+                            (StatusCode::OK, Json((*body).clone())).into_response()
+                        }
+                        _ => (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
+                    }
+                }
+            }),
+        );
+        let (tx, rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = rx.await;
+                })
+                .await;
+        });
+        (format!("http://127.0.0.1:{port}"), tx)
+    }
+
+    /// `with_optional_key(Some(..))` must present the bearer token on the
+    /// `/server_info` request so a key-protected worker answers 200 and
+    /// the kv_events block is parsed. Regression guard for the
+    /// cache_aware_zmq-on-authenticated-workers fix: without the header
+    /// the worker 401s, introspection yields empty `ServerInfo`, and
+    /// cache-aware routing silently degrades to min-load.
+    #[tokio::test]
+    async fn fetch_sends_bearer_key_to_protected_worker() {
+        let (url, _shutdown) = spawn_key_protected_worker(
+            "Bearer secret-pool-key",
+            json!({
+                "served_model_name": "m",
+                "kv_events": {
+                    "publisher": "zmq",
+                    "endpoint_host": "127.0.0.1",
+                    "endpoint_port_base": 5557,
+                    "topic": "",
+                    "block_size": 64,
+                    "dp_size": 1,
+                }
+            }),
+        )
+        .await;
+        let got = WorkerIntrospector::with_optional_key(Some("secret-pool-key"))
+            .fetch(&url)
+            .await;
+        assert_eq!(
+            got.served_model_name.as_deref(),
+            Some("m"),
+            "authenticated introspect must resolve the model name"
+        );
+        assert!(
+            got.event_config.is_some(),
+            "authenticated introspect must parse the kv_events block"
+        );
+    }
+
+    /// `with_optional_key(None)` sends no `Authorization`, so a
+    /// key-protected worker 401s and introspection yields empty
+    /// `ServerInfo` — confirming the header is conditional on the key
+    /// being configured (no accidental default credential).
+    #[tokio::test]
+    async fn fetch_without_key_is_unauthorized_on_protected_worker() {
+        let (url, _shutdown) =
+            spawn_key_protected_worker("Bearer secret-pool-key", json!({"served_model_name": "m"}))
+                .await;
+        let got = WorkerIntrospector::with_optional_key(None)
+            .fetch(&url)
+            .await;
+        assert!(
+            got.served_model_name.is_none() && got.event_config.is_none(),
+            "unauthenticated introspect against a key-protected worker must yield empty ServerInfo"
+        );
     }
 }

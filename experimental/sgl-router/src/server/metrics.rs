@@ -26,6 +26,9 @@
 //! | `sgl_router_overlap_blocks` | Histogram | `model_id` |
 //! | `sgl_router_active_load` | Gauge | `worker_url`, `kind` |
 //! | `sgl_router_workers` | Gauge | `mode` |
+//! | `sgl_router_worker_pool_member` | Gauge | `worker_id`, `worker_url`, `mode` |
+//! | `sgl_router_worker_routable` | Gauge | `worker_id`, `worker_url`, `mode` |
+//! | `sgl_router_worker_working` | Gauge | `worker_id`, `worker_url`, `mode` |
 //! | `sgl_router_worker_health` | Gauge | `worker_url` |
 //! | `sgl_router_worker_cb_state` | Gauge | `worker_url` |
 //! | `sgl_router_worker_inflight_requests` | Gauge | `worker_url` |
@@ -33,8 +36,20 @@
 //! | `sgl_router_decode_affinity_total` | Counter | `outcome` |
 //! | `sgl_router_sticky_total` | Counter | `outcome` |
 //! | `sgl_router_ingress_tokenize_errors_total` | Counter | `model_id` |
+//! | `sgl_router_reasoning_effort_normalized_total` | Counter | `route`, `requested_class`, `effective` |
+//! | `sgl_router_priority_filtered_total` | Counter | `reason` |
+//! | `sgl_router_context_filtered_total` | Counter | `reason` |
+//! | `sgl_router_external_queue_admission_total` | Counter | `outcome` |
+//! | `sgl_router_alias_route_total` | Counter | `alias_model_id`, `route`, `reason` |
+//! | `sgl_router_remote_cache_state_query_total` | Counter | `outcome` |
+//! | `sgl_router_remote_cache_state_feed_total` | Counter | `outcome` |
+//! | `sgl_router_sse_client_disconnects_total` | Counter | `phase` |
+//! | `sgl_router_sls_log_batches_total` | Counter | `result` |
+//! | `sgl_router_sls_log_entries_sent_total` | Counter | none |
+//! | `sgl_router_sls_log_entries_dropped_total` | Counter | `reason` |
+//! | `sgl_router_sls_log_queue_depth` | Gauge | none |
 //!
-//! The four `sgl_router_worker*` gauges and `sgl_router_workers` are sampled
+//! The `sgl_router_worker*` gauges and `sgl_router_workers` are sampled
 //! at scrape time from the live [`crate::workers::WorkerRegistry`] (passed to
 //! [`MetricsRegistry::render_with_workers`]) rather than pushed — there is no
 //! health-check loop to push from, and pull-on-scrape means a removed worker
@@ -145,6 +160,69 @@ impl DecodeAffinityOutcome {
     }
 }
 
+/// Outcome of pre-selection priority-eligibility filtering
+/// (`filter_eligible`). Distinguishes a normal exclusion (at least one
+/// worker was gated out, eligible set still non-empty) from a hard-isolation
+/// rejection (filtering emptied the set, so the request was 503'd rather than
+/// spilled onto a gated worker).
+#[derive(Debug, Clone, Copy)]
+pub enum PriorityFilterOutcome {
+    /// At least one worker was excluded; a non-empty eligible subset was
+    /// passed to the policy.
+    WorkerExcluded,
+    /// Filtering removed every candidate from a non-empty pool; the request
+    /// was REJECTED (503) rather than spilled onto a gated worker. A loud,
+    /// actionable signal: either high-priority capacity is under-provisioned,
+    /// or an internal/low-priority request arrived while only gated workers
+    /// were healthy. Hard-isolation guarantee — see `filter_eligible`.
+    EmptySetRejected,
+}
+
+impl PriorityFilterOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkerExcluded => "worker_excluded",
+            Self::EmptySetRejected => "empty_set_rejected",
+        }
+    }
+}
+
+/// Outcome of per-worker context-window eligibility filtering.
+#[derive(Debug, Clone, Copy)]
+pub enum ContextFilterOutcome {
+    WorkerExcludedOverLimit,
+    WorkerExcludedUnknownLength,
+    EmptySetRejectedOverLimit,
+    EmptySetRejectedUnknownLength,
+}
+
+impl ContextFilterOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkerExcludedOverLimit => "worker_excluded_over_limit",
+            Self::WorkerExcludedUnknownLength => "worker_excluded_unknown_length",
+            Self::EmptySetRejectedOverLimit => "empty_set_rejected_over_limit",
+            Self::EmptySetRejectedUnknownLength => "empty_set_rejected_unknown_length",
+        }
+    }
+}
+
+/// External queue admission decision outcome.
+#[derive(Debug, Clone, Copy)]
+pub enum ExternalQueueAdmissionOutcome {
+    Admitted,
+    Rejected,
+}
+
+impl ExternalQueueAdmissionOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Admitted => "admitted",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
 /// Sticky-policy selection outcome — see `StickyPolicy::select` for the
 /// four branches.
 #[derive(Debug, Clone, Copy)]
@@ -184,6 +262,59 @@ impl StaleRequestOutcome {
     }
 }
 
+/// Downstream SSE client-disconnect phase label.
+#[derive(Debug, Clone, Copy)]
+pub enum SseClientDisconnectPhase {
+    BeforeFirstUpstreamByte,
+    AfterFirstUpstreamByte,
+}
+
+impl SseClientDisconnectPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::BeforeFirstUpstreamByte => "before_first_upstream_byte",
+            Self::AfterFirstUpstreamByte => "after_first_upstream_byte",
+        }
+    }
+}
+
+/// Remote cache-state query outcome. Kept intentionally small so enabling the
+/// optional distributed service cannot introduce unbounded metric labels.
+#[derive(Debug, Clone, Copy)]
+pub enum RemoteCacheStateQueryOutcome {
+    Hit,
+    Miss,
+    Failure,
+    FallbackLocalHit,
+}
+
+impl RemoteCacheStateQueryOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::Miss => "miss",
+            Self::Failure => "failure",
+            Self::FallbackLocalHit => "fallback_local_hit",
+        }
+    }
+}
+
+/// Remote cache-state feed outcome.
+#[derive(Debug, Clone, Copy)]
+pub enum RemoteCacheStateFeedOutcome {
+    Success,
+    Failure,
+}
+
+impl RemoteCacheStateFeedOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+        }
+    }
+}
+
 /// Active-load kind label — separates the two axes of per-worker load.
 #[derive(Debug, Clone, Copy)]
 pub enum ActiveLoadKind {
@@ -198,6 +329,20 @@ impl ActiveLoadKind {
             Self::DecodeBlocks => "decode_blocks",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SlsBatchResult {
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SlsDropReason {
+    QueueFull,
+    WorkerStopped,
+    SendError,
+    ShutdownLimit,
 }
 
 /// The shared metrics registry, held on `AppContext`. Cheap to clone — all
@@ -225,6 +370,23 @@ pub struct MetricsRegistry {
     decode_affinity_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     sticky_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
     ingress_tokenize_errors_total: Mutex<HashMap<String, Arc<AtomicU64>>>,
+    reasoning_effort_normalized_total:
+        Mutex<HashMap<ReasoningEffortNormalizationKey, Arc<AtomicU64>>>,
+    priority_filtered_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    context_filtered_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    external_queue_admission_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    alias_route_total: Mutex<HashMap<AliasRouteKey, Arc<AtomicU64>>>,
+    remote_cache_state_query_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    remote_cache_state_feed_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    sse_client_disconnects_total: Mutex<HashMap<&'static str, Arc<AtomicU64>>>,
+    sls_log_batches_success: AtomicU64,
+    sls_log_batches_error: AtomicU64,
+    sls_log_entries_sent: AtomicU64,
+    sls_log_entries_dropped_queue_full: AtomicU64,
+    sls_log_entries_dropped_worker_stopped: AtomicU64,
+    sls_log_entries_dropped_send_error: AtomicU64,
+    sls_log_entries_dropped_shutdown_limit: AtomicU64,
+    sls_log_queue_depth: AtomicI64,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
@@ -233,6 +395,20 @@ struct RequestKey {
     model_id: String,
     mode: &'static str,
     outcome: &'static str,
+}
+
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+struct AliasRouteKey {
+    alias_model_id: String,
+    route: &'static str,
+    reason: &'static str,
+}
+
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+struct ReasoningEffortNormalizationKey {
+    route: &'static str,
+    requested_class: &'static str,
+    effective: &'static str,
 }
 
 /// Labels for the edge `requests_total` (intake) counter. `route` is the matched
@@ -257,6 +433,7 @@ struct EdgeResponseKey {
 /// the live registry on every scrape — see [`MetricsRegistry::render_with_workers`].
 #[derive(Debug, Clone)]
 pub struct WorkerSnapshot {
+    pub worker_id: String,
     pub worker_url: String,
     /// `"plain"`, `"prefill"`, or `"decode"`.
     pub mode: &'static str,
@@ -266,6 +443,30 @@ pub struct WorkerSnapshot {
     pub cb_state: u8,
     /// In-flight request count for this worker (`Worker::active_load`).
     pub inflight: i64,
+    /// Router-local pending request reservations for this worker.
+    pub pending_requests: i64,
+    /// Router-local pending prompt-token reservations for this worker.
+    pub pending_tokens: i64,
+    /// Cross-replica pending request reservations for this worker, when the
+    /// router-state overlay is enabled.
+    pub global_pending_requests: i64,
+    /// Cross-replica pending prompt-token reservations for this worker, when
+    /// the router-state overlay is enabled.
+    pub global_pending_tokens: i64,
+    /// Worker-reported real load (`Worker::reported_load`): summed
+    /// `num_waiting_reqs` from `/get_load` when the load poller is enabled,
+    /// or a sentinel (`-1` = unset/not polled, `-2` = last poll failed).
+    /// Exposed so operators can verify the real-load signal that drives
+    /// cache_aware_zmq's spill decisions.
+    pub reported_load: i64,
+    /// Router can currently consider this worker for normal routing. This is
+    /// derived from the circuit-breaker admit decision and the load-poller
+    /// failure sentinel; it is intended as an operator-facing status bit, not
+    /// a replacement for the policy's full candidate filtering.
+    pub routable: bool,
+    /// Worker is actively doing or waiting on work according to the router's
+    /// local/global reservations or the worker-reported load signal.
+    pub working: bool,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
@@ -502,6 +703,152 @@ impl MetricsRegistry {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Bump the bounded reasoning compatibility counter. All three labels are
+    /// supplied by enums in `reasoning_compat`; raw client values never become
+    /// metric labels, so future effort strings cannot create unbounded series.
+    pub fn record_reasoning_effort_normalized(
+        &self,
+        route: &'static str,
+        requested_class: &'static str,
+        effective: &'static str,
+    ) {
+        let key = ReasoningEffortNormalizationKey {
+            route,
+            requested_class,
+            effective,
+        };
+        let mut guard = self.reasoning_effort_normalized_total.lock();
+        let counter = guard
+            .entry(key)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_priority_filtered_total{reason}`.
+    ///
+    /// Counts requests affected by pre-selection priority-eligibility
+    /// filtering: `worker_excluded` when a gated worker (e.g. an RTX-6000
+    /// tagged `min_priority=100`) was removed from a low-priority request's
+    /// candidate set but eligible workers remained, and `empty_set_rejected`
+    /// when filtering emptied the candidate set so the request was rejected
+    /// (503) rather than spilled onto a gated worker. The latter staying near
+    /// zero is the health signal: a climbing `empty_set_rejected` means
+    /// eligible (e.g. B200) capacity is under-provisioned or unhealthy.
+    pub fn record_priority_filtered(&self, outcome: PriorityFilterOutcome) {
+        let mut guard = self.priority_filtered_total.lock();
+        let counter = guard
+            .entry(outcome.as_str())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_context_filtered_total{reason}`.
+    pub fn record_context_filtered(&self, outcome: ContextFilterOutcome) {
+        let mut guard = self.context_filtered_total.lock();
+        let counter = guard
+            .entry(outcome.as_str())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_external_queue_admission_total{outcome}`.
+    pub fn record_external_queue_admission(&self, outcome: ExternalQueueAdmissionOutcome) {
+        let mut guard = self.external_queue_admission_total.lock();
+        let counter = guard
+            .entry(outcome.as_str())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_alias_route_total{alias_model_id,route,reason}`.
+    pub fn record_alias_route(
+        &self,
+        alias_model_id: &str,
+        route: &'static str,
+        reason: &'static str,
+    ) {
+        let key = AliasRouteKey {
+            alias_model_id: alias_model_id.to_owned(),
+            route,
+            reason,
+        };
+        let mut guard = self.alias_route_total.lock();
+        let counter = guard
+            .entry(key)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_remote_cache_state_query_total{outcome}`.
+    pub fn record_remote_cache_state_query(&self, outcome: RemoteCacheStateQueryOutcome) {
+        let mut guard = self.remote_cache_state_query_total.lock();
+        let counter = guard
+            .entry(outcome.as_str())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_remote_cache_state_feed_total{outcome}`.
+    pub fn record_remote_cache_state_feed(&self, outcome: RemoteCacheStateFeedOutcome) {
+        let mut guard = self.remote_cache_state_feed_total.lock();
+        let counter = guard
+            .entry(outcome.as_str())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Bump `sgl_router_sse_client_disconnects_total{phase}`.
+    pub fn record_sse_client_disconnect(&self, phase: SseClientDisconnectPhase) {
+        let mut guard = self.sse_client_disconnects_total.lock();
+        let counter = guard
+            .entry(phase.as_str())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        drop(guard);
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_sls_batch(&self, result: SlsBatchResult) {
+        let counter = match result {
+            SlsBatchResult::Success => &self.sls_log_batches_success,
+            SlsBatchResult::Error => &self.sls_log_batches_error,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_sls_entries_sent(&self, count: u64) {
+        self.sls_log_entries_sent
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn record_sls_drop(&self, reason: SlsDropReason, count: u64) {
+        let counter = match reason {
+            SlsDropReason::QueueFull => &self.sls_log_entries_dropped_queue_full,
+            SlsDropReason::WorkerStopped => &self.sls_log_entries_dropped_worker_stopped,
+            SlsDropReason::SendError => &self.sls_log_entries_dropped_send_error,
+            SlsDropReason::ShutdownLimit => &self.sls_log_entries_dropped_shutdown_limit,
+        };
+        counter.fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn adjust_sls_queue_depth(&self, delta: i64) {
+        self.sls_log_queue_depth.fetch_add(delta, Ordering::Relaxed);
+    }
+
     /// Render the registry as a Prometheus 0.0.4 exposition-format string
     /// with no live worker snapshot. The per-worker gauges emit only their
     /// HELP/TYPE headers and a zeroed pool-size series. Production scrapes
@@ -689,6 +1036,50 @@ impl MetricsRegistry {
         let mut sorted: Vec<&WorkerSnapshot> = workers.iter().collect();
         sorted.sort_by(|a, b| a.worker_url.cmp(&b.worker_url));
 
+        // worker_pool_member (registered workers with stable operator labels)
+        out.push_str(
+            "# HELP sgl_router_worker_pool_member Registered worker membership sampled from the router registry. Value is always 1 for present workers; absent workers stop emitting on the next scrape.\n",
+        );
+        out.push_str("# TYPE sgl_router_worker_pool_member gauge\n");
+        for w in &sorted {
+            out.push_str(&format!(
+                "sgl_router_worker_pool_member{{worker_id=\"{}\",worker_url=\"{}\",mode=\"{}\"}} 1\n",
+                escape_label(&w.worker_id),
+                escape_label(&w.worker_url),
+                w.mode,
+            ));
+        }
+
+        // worker_routable (operator-facing availability bit)
+        out.push_str(
+            "# HELP sgl_router_worker_routable Worker is currently available for normal routing: circuit breaker admits and /get_load has not most recently failed.\n",
+        );
+        out.push_str("# TYPE sgl_router_worker_routable gauge\n");
+        for w in &sorted {
+            out.push_str(&format!(
+                "sgl_router_worker_routable{{worker_id=\"{}\",worker_url=\"{}\",mode=\"{}\"}} {}\n",
+                escape_label(&w.worker_id),
+                escape_label(&w.worker_url),
+                w.mode,
+                u8::from(w.routable),
+            ));
+        }
+
+        // worker_working (operator-facing busy/idle bit)
+        out.push_str(
+            "# HELP sgl_router_worker_working Worker is currently doing or waiting on work according to router in-flight/pending reservations or positive worker-reported load.\n",
+        );
+        out.push_str("# TYPE sgl_router_worker_working gauge\n");
+        for w in &sorted {
+            out.push_str(&format!(
+                "sgl_router_worker_working{{worker_id=\"{}\",worker_url=\"{}\",mode=\"{}\"}} {}\n",
+                escape_label(&w.worker_id),
+                escape_label(&w.worker_url),
+                w.mode,
+                u8::from(w.working),
+            ));
+        }
+
         // worker_health (1=breaker would admit a request, 0=breaker open)
         out.push_str(
             "# HELP sgl_router_worker_health Worker health: 1 = circuit breaker admits requests, 0 = rejecting (open within cooldown, or half-open with a probe in flight). May read 1 while sgl_router_worker_cb_state=1 (open but cooldown elapsed).\n",
@@ -725,6 +1116,19 @@ impl MetricsRegistry {
                 "sgl_router_worker_inflight_requests{{worker_url=\"{}\"}} {}\n",
                 escape_label(&w.worker_url),
                 w.inflight,
+            ));
+        }
+
+        // worker_reported_load (real request pressure from /get_load; -1 unset, -2 poll failed)
+        out.push_str(
+            "# HELP sgl_router_worker_reported_load Worker-reported real load (summed num_reqs + num_waiting_reqs from /get_load) when the load poller is on; -1 = unset/not polled, -2 = latest /get_load or /health probe failed (treated as high load).\n",
+        );
+        out.push_str("# TYPE sgl_router_worker_reported_load gauge\n");
+        for w in &sorted {
+            out.push_str(&format!(
+                "sgl_router_worker_reported_load{{worker_url=\"{}\"}} {}\n",
+                escape_label(&w.worker_url),
+                w.reported_load,
             ));
         }
 
@@ -805,6 +1209,233 @@ impl MetricsRegistry {
         }
         drop(guard);
 
+        // reasoning_effort_normalized_total
+        out.push_str(
+            "# HELP sgl_router_reasoning_effort_normalized_total Gateway reasoning-effort compatibility decisions; unknown raw values are grouped into requested_class=unknown.\n",
+        );
+        out.push_str("# TYPE sgl_router_reasoning_effort_normalized_total counter\n");
+        let guard = self.reasoning_effort_normalized_total.lock();
+        let mut entries: Vec<(&ReasoningEffortNormalizationKey, u64)> = guard
+            .iter()
+            .map(|(key, value)| (key, value.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by(|a, b| {
+            a.0.route
+                .cmp(b.0.route)
+                .then(a.0.requested_class.cmp(b.0.requested_class))
+                .then(a.0.effective.cmp(b.0.effective))
+        });
+        for (key, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_reasoning_effort_normalized_total{{route=\"{}\",requested_class=\"{}\",effective=\"{}\"}} {}\n",
+                key.route, key.requested_class, key.effective, value,
+            ));
+        }
+        drop(guard);
+
+        // priority_filtered_total
+        out.push_str(
+            "# HELP sgl_router_priority_filtered_total Requests affected by pre-selection priority-eligibility filtering (worker_excluded = a gated worker removed from a low-priority request but eligible workers remained; empty_set_rejected = filtering emptied the candidate set so the request was rejected with 503 rather than spilled onto a gated worker).\n",
+        );
+        out.push_str("# TYPE sgl_router_priority_filtered_total counter\n");
+        let guard = self.priority_filtered_total.lock();
+        let mut entries: Vec<(&&str, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|e| *e.0);
+        for (reason, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_priority_filtered_total{{reason=\"{}\"}} {}\n",
+                reason, value,
+            ));
+        }
+        drop(guard);
+
+        // context_filtered_total
+        out.push_str(
+            "# HELP sgl_router_context_filtered_total Requests affected by per-worker context-window eligibility filtering. Limited workers are excluded when the prompt-plus-output budget exceeds their ceiling or cannot be computed reliably; empty_set variants indicate a 503 rejection.\n",
+        );
+        out.push_str("# TYPE sgl_router_context_filtered_total counter\n");
+        let guard = self.context_filtered_total.lock();
+        let mut entries: Vec<(&&str, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|e| *e.0);
+        for (reason, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_context_filtered_total{{reason=\"{}\"}} {}\n",
+                reason, value,
+            ));
+        }
+        drop(guard);
+
+        // external_queue_admission_total
+        out.push_str(
+            "# HELP sgl_router_external_queue_admission_total External queue admission decisions (admitted = at least one eligible worker within threshold; rejected = every eligible worker above threshold and request returned 429).\n",
+        );
+        out.push_str("# TYPE sgl_router_external_queue_admission_total counter\n");
+        let guard = self.external_queue_admission_total.lock();
+        let mut entries: Vec<(&&str, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|e| *e.0);
+        for (outcome, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_external_queue_admission_total{{outcome=\"{}\"}} {}\n",
+                outcome, value,
+            ));
+        }
+        drop(guard);
+
+        // alias_route_total
+        out.push_str(
+            "# HELP sgl_router_alias_route_total Explicit model-alias routing decisions.\n",
+        );
+        out.push_str("# TYPE sgl_router_alias_route_total counter\n");
+        let guard = self.alias_route_total.lock();
+        let mut entries: Vec<(&AliasRouteKey, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by(|a, b| {
+            a.0.alias_model_id
+                .cmp(&b.0.alias_model_id)
+                .then(a.0.route.cmp(b.0.route))
+                .then(a.0.reason.cmp(b.0.reason))
+        });
+        for (key, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_alias_route_total{{alias_model_id=\"{}\",route=\"{}\",reason=\"{}\"}} {}\n",
+                escape_label(&key.alias_model_id),
+                key.route,
+                key.reason,
+                value,
+            ));
+        }
+        drop(guard);
+
+        // remote_cache_state_query_total
+        out.push_str(
+            "# HELP sgl_router_remote_cache_state_query_total Remote cache-state query outcomes from cache-aware routing.\n",
+        );
+        out.push_str("# TYPE sgl_router_remote_cache_state_query_total counter\n");
+        let guard = self.remote_cache_state_query_total.lock();
+        let mut entries: Vec<(&&str, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|e| *e.0);
+        for (outcome, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_remote_cache_state_query_total{{outcome=\"{}\"}} {}\n",
+                outcome, value,
+            ));
+        }
+        drop(guard);
+
+        // remote_cache_state_feed_total
+        out.push_str(
+            "# HELP sgl_router_remote_cache_state_feed_total Remote cache-state route-history feed outcomes.\n",
+        );
+        out.push_str("# TYPE sgl_router_remote_cache_state_feed_total counter\n");
+        let guard = self.remote_cache_state_feed_total.lock();
+        let mut entries: Vec<(&&str, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|e| *e.0);
+        for (outcome, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_remote_cache_state_feed_total{{outcome=\"{}\"}} {}\n",
+                outcome, value,
+            ));
+        }
+        drop(guard);
+
+        // sse_client_disconnects_total
+        out.push_str(
+            "# HELP sgl_router_sse_client_disconnects_total Downstream SSE client disconnects observed by the proxy pump, labelled by whether the upstream had produced a response chunk.\n",
+        );
+        out.push_str("# TYPE sgl_router_sse_client_disconnects_total counter\n");
+        let guard = self.sse_client_disconnects_total.lock();
+        let mut entries: Vec<(&&str, u64)> = guard
+            .iter()
+            .map(|(k, v)| (k, v.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|e| *e.0);
+        for (phase, value) in entries {
+            out.push_str(&format!(
+                "sgl_router_sse_client_disconnects_total{{phase=\"{}\"}} {}\n",
+                phase, value,
+            ));
+        }
+        drop(guard);
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_batches_total SLS log batches completed by result.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_batches_total counter\n");
+        out.push_str(&format!(
+            "sgl_router_sls_log_batches_total{{result=\"success\"}} {}\n",
+            self.sls_log_batches_success.load(Ordering::Relaxed),
+        ));
+        out.push_str(&format!(
+            "sgl_router_sls_log_batches_total{{result=\"error\"}} {}\n",
+            self.sls_log_batches_error.load(Ordering::Relaxed),
+        ));
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_entries_sent_total SLS log entries successfully sent.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_entries_sent_total counter\n");
+        out.push_str(&format!(
+            "sgl_router_sls_log_entries_sent_total {}\n",
+            self.sls_log_entries_sent.load(Ordering::Relaxed),
+        ));
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_entries_dropped_total SLS log entries dropped without retry, by reason.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_entries_dropped_total counter\n");
+        for (reason, value) in [
+            (
+                "queue_full",
+                self.sls_log_entries_dropped_queue_full
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "worker_stopped",
+                self.sls_log_entries_dropped_worker_stopped
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "send_error",
+                self.sls_log_entries_dropped_send_error
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "shutdown_limit",
+                self.sls_log_entries_dropped_shutdown_limit
+                    .load(Ordering::Relaxed),
+            ),
+        ] {
+            out.push_str(&format!(
+                "sgl_router_sls_log_entries_dropped_total{{reason=\"{reason}\"}} {value}\n",
+            ));
+        }
+
+        out.push_str(
+            "# HELP sgl_router_sls_log_queue_depth Entries waiting in the bounded SLS log queue.\n",
+        );
+        out.push_str("# TYPE sgl_router_sls_log_queue_depth gauge\n");
+        out.push_str(&format!(
+            "sgl_router_sls_log_queue_depth {}\n",
+            self.sls_log_queue_depth.load(Ordering::Relaxed),
+        ));
+
         out
     }
 }
@@ -871,6 +1502,13 @@ mod tests {
         assert!(out.contains("# TYPE sgl_router_decode_affinity_total counter"));
         assert!(out.contains("# TYPE sgl_router_sticky_total counter"));
         assert!(out.contains("# TYPE sgl_router_ingress_tokenize_errors_total counter"));
+        assert!(out.contains("# TYPE sgl_router_reasoning_effort_normalized_total counter"));
+        assert!(out.contains("# TYPE sgl_router_priority_filtered_total counter"));
+        assert!(out.contains("# TYPE sgl_router_context_filtered_total counter"));
+        assert!(out.contains("# TYPE sgl_router_external_queue_admission_total counter"));
+        assert!(out.contains("# TYPE sgl_router_remote_cache_state_query_total counter"));
+        assert!(out.contains("# TYPE sgl_router_remote_cache_state_feed_total counter"));
+        assert!(out.contains("# TYPE sgl_router_sse_client_disconnects_total counter"));
         // Pool-size series exist (at 0) for all three modes even with no
         // workers, so dashboards have a stable series to graph.
         assert!(out.contains(r#"sgl_router_workers{mode="plain"} 0"#));
@@ -905,6 +1543,63 @@ mod tests {
         assert!(out.contains(
             r#"sgl_router_request_duration_seconds_bucket{model_id="tiny",le="+Inf"} 3"#
         ));
+    }
+
+    #[test]
+    fn priority_filtered_counts_both_outcomes_separately() {
+        let reg = MetricsRegistry::new();
+        reg.record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
+        reg.record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
+        reg.record_priority_filtered(PriorityFilterOutcome::EmptySetRejected);
+        let out = reg.render();
+        assert!(
+            out.contains(r#"sgl_router_priority_filtered_total{reason="worker_excluded"} 2"#),
+            "got:\n{out}",
+        );
+        assert!(
+            out.contains(r#"sgl_router_priority_filtered_total{reason="empty_set_rejected"} 1"#),
+            "got:\n{out}",
+        );
+    }
+
+    #[test]
+    fn context_filtered_counts_distinct_reasons() {
+        let reg = MetricsRegistry::new();
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::WorkerExcludedUnknownLength);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedOverLimit);
+        reg.record_context_filtered(ContextFilterOutcome::EmptySetRejectedUnknownLength);
+        let out = reg.render();
+        for reason in [
+            "worker_excluded_over_limit",
+            "worker_excluded_unknown_length",
+            "empty_set_rejected_over_limit",
+            "empty_set_rejected_unknown_length",
+        ] {
+            assert!(
+                out.contains(&format!(
+                    "sgl_router_context_filtered_total{{reason=\"{reason}\"}} 1"
+                )),
+                "got:\n{out}",
+            );
+        }
+    }
+
+    #[test]
+    fn external_queue_admission_counts_both_outcomes_separately() {
+        let reg = MetricsRegistry::new();
+        reg.record_external_queue_admission(ExternalQueueAdmissionOutcome::Admitted);
+        reg.record_external_queue_admission(ExternalQueueAdmissionOutcome::Rejected);
+        reg.record_external_queue_admission(ExternalQueueAdmissionOutcome::Rejected);
+        let out = reg.render();
+        assert!(
+            out.contains(r#"sgl_router_external_queue_admission_total{outcome="admitted"} 1"#),
+            "got:\n{out}",
+        );
+        assert!(
+            out.contains(r#"sgl_router_external_queue_admission_total{outcome="rejected"} 2"#),
+            "got:\n{out}",
+        );
     }
 
     #[test]
@@ -1025,22 +1720,53 @@ mod tests {
     }
 
     #[test]
+    fn record_reasoning_effort_normalized_uses_bounded_labels() {
+        let reg = MetricsRegistry::new();
+        reg.record_reasoning_effort_normalized("/v1/responses", "unknown", "off");
+        reg.record_reasoning_effort_normalized("/v1/responses", "unknown", "off");
+        reg.record_reasoning_effort_normalized("/v1/messages", "low", "high");
+        let out = reg.render();
+        assert!(out.contains(
+            r#"sgl_router_reasoning_effort_normalized_total{route="/v1/responses",requested_class="unknown",effective="off"} 2"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_reasoning_effort_normalized_total{route="/v1/messages",requested_class="low",effective="high"} 1"#
+        ));
+    }
+
+    #[test]
     fn render_with_workers_emits_per_worker_gauges_and_pool_size() {
         let reg = MetricsRegistry::new();
         let workers = vec![
             WorkerSnapshot {
+                worker_id: "p0".into(),
                 worker_url: "http://p0:30000".into(),
                 mode: "prefill",
                 healthy: true,
                 cb_state: 0,
                 inflight: 5,
+                pending_requests: 0,
+                pending_tokens: 0,
+                global_pending_requests: 0,
+                global_pending_tokens: 0,
+                reported_load: 5,
+                routable: true,
+                working: true,
             },
             WorkerSnapshot {
+                worker_id: "d0".into(),
                 worker_url: "http://d0:30000".into(),
                 mode: "decode",
                 healthy: false,
                 cb_state: 1,
                 inflight: 0,
+                pending_requests: 0,
+                pending_tokens: 0,
+                global_pending_requests: 0,
+                global_pending_tokens: 0,
+                reported_load: -1,
+                routable: false,
+                working: false,
             },
         ];
         let out = reg.render_with_workers(&workers);
@@ -1048,6 +1774,26 @@ mod tests {
         assert!(out.contains(r#"sgl_router_workers{mode="prefill"} 1"#));
         assert!(out.contains(r#"sgl_router_workers{mode="decode"} 1"#));
         assert!(out.contains(r#"sgl_router_workers{mode="plain"} 0"#));
+        // Pool membership carries worker_id for Grafana tables.
+        assert!(out.contains(
+            r#"sgl_router_worker_pool_member{worker_id="p0",worker_url="http://p0:30000",mode="prefill"} 1"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_worker_pool_member{worker_id="d0",worker_url="http://d0:30000",mode="decode"} 1"#
+        ));
+        // Operator-facing status bits.
+        assert!(out.contains(
+            r#"sgl_router_worker_routable{worker_id="p0",worker_url="http://p0:30000",mode="prefill"} 1"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_worker_routable{worker_id="d0",worker_url="http://d0:30000",mode="decode"} 0"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_worker_working{worker_id="p0",worker_url="http://p0:30000",mode="prefill"} 1"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_worker_working{worker_id="d0",worker_url="http://d0:30000",mode="decode"} 0"#
+        ));
         // Health: healthy prefill = 1, unhealthy decode = 0.
         assert!(out.contains(r#"sgl_router_worker_health{worker_url="http://p0:30000"} 1"#));
         assert!(out.contains(r#"sgl_router_worker_health{worker_url="http://d0:30000"} 0"#));
@@ -1069,6 +1815,12 @@ mod tests {
         let out = reg.render();
         // Headers present, but no per-worker series lines.
         assert!(out.contains("# TYPE sgl_router_worker_health gauge"));
+        assert!(out.contains("# TYPE sgl_router_worker_pool_member gauge"));
+        assert!(out.contains("# TYPE sgl_router_worker_routable gauge"));
+        assert!(out.contains("# TYPE sgl_router_worker_working gauge"));
+        assert!(!out.contains("sgl_router_worker_pool_member{"));
+        assert!(!out.contains("sgl_router_worker_routable{"));
+        assert!(!out.contains("sgl_router_worker_working{"));
         assert!(!out.contains("sgl_router_worker_health{"));
         assert!(!out.contains("sgl_router_worker_cb_state{"));
         assert!(!out.contains("sgl_router_worker_inflight_requests{"));
@@ -1141,6 +1893,21 @@ mod tests {
         reg.record_stale_request(StaleRequestOutcome::Expired);
         let out = reg.render();
         assert!(out.contains(r#"sgl_router_stale_requests_total{outcome="expired"} 3"#));
+    }
+
+    #[test]
+    fn sse_client_disconnect_counter_increments_by_phase() {
+        let reg = MetricsRegistry::new();
+        reg.record_sse_client_disconnect(SseClientDisconnectPhase::BeforeFirstUpstreamByte);
+        reg.record_sse_client_disconnect(SseClientDisconnectPhase::BeforeFirstUpstreamByte);
+        reg.record_sse_client_disconnect(SseClientDisconnectPhase::AfterFirstUpstreamByte);
+        let out = reg.render();
+        assert!(out.contains(
+            r#"sgl_router_sse_client_disconnects_total{phase="before_first_upstream_byte"} 2"#
+        ));
+        assert!(out.contains(
+            r#"sgl_router_sse_client_disconnects_total{phase="after_first_upstream_byte"} 1"#
+        ));
     }
 
     #[test]

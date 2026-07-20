@@ -8,11 +8,13 @@ pub mod sse;
 use crate::health::circuit_breaker::CircuitBreaker;
 use crate::server::error::ApiError;
 use crate::server::header_utils::should_forward_request_header;
+use crate::server::trace::{TraceContext, TraceEvent, TraceSink};
 use anyhow::Context;
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Response};
 use bytes::Bytes;
 use reqwest::{Client, Url};
+use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -64,6 +66,11 @@ impl Proxy {
     /// misses both the wrapped reqwest timeout and the `io::ErrorKind::TimedOut`
     /// cases.
     fn classify_reqwest_error_for(worker: Url, e: reqwest::Error, path: &str) -> ApiError {
+        // A connect timeout is safe for the PD chat path to retry on another
+        // decode because the first worker never accepted the request. Preserve
+        // it as `UpstreamUnreachable` (with the reqwest source chain) instead
+        // of collapsing it into the broader response-timeout variant.
+        let is_connect = e.is_connect();
         let source = anyhow::Error::new(e).context(format!("worker {worker}: post {path}"));
         let is_timeout = source.chain().any(|c| {
             c.downcast_ref::<reqwest::Error>()
@@ -72,7 +79,9 @@ impl Proxy {
             c.downcast_ref::<std::io::Error>()
                 .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
         });
-        if is_timeout {
+        if is_connect {
+            ApiError::UpstreamUnreachable { worker, source }
+        } else if is_timeout {
             ApiError::UpstreamTimeout { worker }
         } else {
             ApiError::UpstreamUnreachable { worker, source }
@@ -101,6 +110,118 @@ impl Proxy {
                 worker: worker_url.to_string(),
             });
         }
+        self.forward_json_to_without_admission(worker_url, breaker, path, headers, body)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn forward_json_to_traced(
+        &self,
+        worker_url: &str,
+        breaker: &CircuitBreaker,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        trace_sink: Option<Arc<TraceSink>>,
+        trace_ctx: TraceContext,
+    ) -> Result<Response<Body>, ApiError> {
+        let request_body = body.clone();
+        let result = self
+            .forward_json_to_with_body(worker_url, breaker, path, headers, body)
+            .await;
+        match result {
+            Ok((mut response, response_body)) => {
+                emit_json_trace(
+                    trace_sink,
+                    &trace_ctx,
+                    worker_url,
+                    &request_body,
+                    Ok(&response),
+                    Some(&response_body),
+                );
+                trace_ctx.add_response_header(&mut response);
+                Ok(response)
+            }
+            Err(error) => {
+                emit_error_trace(trace_sink, &trace_ctx, worker_url, &request_body, &error);
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn forward_json_to_without_admission(
+        &self,
+        worker_url: &str,
+        breaker: &CircuitBreaker,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+    ) -> Result<Response<Body>, ApiError> {
+        self.forward_json_to_without_admission_with_body(worker_url, breaker, path, headers, body)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn forward_json_to_without_admission_traced(
+        &self,
+        worker_url: &str,
+        breaker: &CircuitBreaker,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        trace_sink: Option<Arc<TraceSink>>,
+        trace_ctx: TraceContext,
+    ) -> Result<Response<Body>, ApiError> {
+        let request_body = body.clone();
+        let result = self
+            .forward_json_to_without_admission_with_body(worker_url, breaker, path, headers, body)
+            .await;
+        match result {
+            Ok((mut response, response_body)) => {
+                emit_json_trace(
+                    trace_sink,
+                    &trace_ctx,
+                    worker_url,
+                    &request_body,
+                    Ok(&response),
+                    Some(&response_body),
+                );
+                trace_ctx.add_response_header(&mut response);
+                Ok(response)
+            }
+            Err(error) => {
+                emit_error_trace(trace_sink, &trace_ctx, worker_url, &request_body, &error);
+                Err(error)
+            }
+        }
+    }
+
+    async fn forward_json_to_with_body(
+        &self,
+        worker_url: &str,
+        breaker: &CircuitBreaker,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+    ) -> Result<(Response<Body>, Bytes), ApiError> {
+        if !breaker.allow() {
+            return Err(ApiError::BreakerOpen {
+                worker: worker_url.to_string(),
+            });
+        }
+        self.forward_json_to_without_admission_with_body(worker_url, breaker, path, headers, body)
+            .await
+    }
+
+    async fn forward_json_to_without_admission_with_body(
+        &self,
+        worker_url: &str,
+        breaker: &CircuitBreaker,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+    ) -> Result<(Response<Body>, Bytes), ApiError> {
         let worker_url = parse_worker_url(worker_url, breaker)?;
         let url = worker_url.join(path).map_err(|e| {
             ApiError::Internal(anyhow::Error::new(e).context(format!("join worker path {path}")))
@@ -143,13 +264,79 @@ impl Proxy {
         } else {
             breaker.record_success();
         }
-        let mut out = Response::new(Body::from(bytes));
+        let mut out = Response::new(Body::from(bytes.clone()));
         *out.status_mut() = status;
         out.headers_mut().insert(
             HeaderName::from_static("content-type"),
             HeaderValue::from_static("application/json"),
         );
-        Ok(out)
+        Ok((out, bytes))
+    }
+
+    /// Lightweight synthetic generation probe used to recover an open
+    /// upstream breaker without binding recovery to a real user request.
+    ///
+    /// The probe sends a non-streaming, max_tokens=1 chat completion and
+    /// records the breaker outcome from the complete short response. It is
+    /// intentionally separate from `forward_json_to` because callers use it
+    /// only after `breaker.allow()` admitted the half-open probe slot.
+    pub async fn probe_chat_completion(
+        &self,
+        worker_url: &str,
+        breaker: &CircuitBreaker,
+        headers: &HeaderMap,
+        model_id: &str,
+        timeout: Duration,
+    ) -> Result<(), ApiError> {
+        let worker_url = parse_worker_url(worker_url, breaker)?;
+        let url = worker_url.join("/v1/chat/completions").map_err(|e| {
+            ApiError::Internal(anyhow::Error::new(e).context("join probe chat path"))
+        })?;
+        let body = Bytes::from(
+            serde_json::to_vec(&json!({
+                "model": model_id,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+                "stream": false
+            }))
+            .map_err(|e| ApiError::Internal(anyhow::Error::new(e).context("build probe body")))?,
+        );
+        let mut req = self.client.post(url.clone()).body(body);
+        for (k, v) in headers {
+            if should_forward_request_header(k) {
+                req = req.header(k, v);
+            }
+        }
+        let resp = req
+            .header("content-type", "application/json")
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| {
+                breaker.record_failure();
+                Self::classify_reqwest_error_for(worker_url.clone(), e, "/v1/chat/completions")
+            })?;
+        let status = resp.status();
+        match resp.bytes().await {
+            Ok(_) if status.is_success() => {
+                breaker.record_success();
+                Ok(())
+            }
+            Ok(_) => {
+                breaker.record_failure();
+                Err(ApiError::UpstreamStatus { status })
+            }
+            Err(e) => {
+                tracing::warn!(
+                    upstream = %url,
+                    status = %status,
+                    error = ?e,
+                    "alias fallback probe body read failed",
+                );
+                breaker.record_failure();
+                Err(ApiError::UpstreamStatus { status })
+            }
+        }
     }
 
     /// Breaker-gated streaming POST: checks `breaker.allow()` first, records
@@ -177,12 +364,84 @@ impl Proxy {
         body: Bytes,
         stream_guards: Option<Box<dyn Send + 'static>>,
         on_first_byte: Option<Box<dyn FnOnce() + Send + 'static>>,
+        on_client_disconnect: Option<Box<dyn FnOnce(sse::ClientDisconnectPhase) + Send + 'static>>,
     ) -> Result<Response<Body>, ApiError> {
         if !breaker.allow() {
             return Err(ApiError::BreakerOpen {
                 worker: worker_url.to_string(),
             });
         }
+        self.forward_streaming_to_without_admission(
+            worker_url,
+            breaker,
+            path,
+            headers,
+            body,
+            stream_guards,
+            on_first_byte,
+            on_client_disconnect,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn forward_streaming_to_traced(
+        &self,
+        worker_url: &str,
+        breaker: &Arc<CircuitBreaker>,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        stream_guards: Option<Box<dyn Send + 'static>>,
+        on_first_byte: Option<Box<dyn FnOnce() + Send + 'static>>,
+        on_client_disconnect: Option<Box<dyn FnOnce(sse::ClientDisconnectPhase) + Send + 'static>>,
+        trace_sink: Option<Arc<TraceSink>>,
+        trace_ctx: TraceContext,
+    ) -> Result<Response<Body>, ApiError> {
+        let request_body = body.clone();
+        let status_probe = self
+            .forward_streaming_to(
+                worker_url,
+                breaker,
+                path,
+                headers,
+                body,
+                stream_guards,
+                on_first_byte,
+                on_client_disconnect,
+            )
+            .await;
+        match status_probe {
+            Ok(mut response) => {
+                trace_ctx.add_response_header(&mut response);
+                emit_stream_trace(
+                    trace_sink,
+                    &trace_ctx,
+                    worker_url,
+                    &request_body,
+                    response.status().as_u16(),
+                );
+                Ok(response)
+            }
+            Err(error) => {
+                emit_error_trace(trace_sink, &trace_ctx, worker_url, &request_body, &error);
+                Err(error)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn forward_streaming_to_without_admission(
+        &self,
+        worker_url: &str,
+        breaker: &Arc<CircuitBreaker>,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        stream_guards: Option<Box<dyn Send + 'static>>,
+        on_first_byte: Option<Box<dyn FnOnce() + Send + 'static>>,
+        on_client_disconnect: Option<Box<dyn FnOnce(sse::ClientDisconnectPhase) + Send + 'static>>,
+    ) -> Result<Response<Body>, ApiError> {
         let worker_url = parse_worker_url(worker_url, breaker)?;
         let url = worker_url.join(path).map_err(|e| {
             ApiError::Internal(anyhow::Error::new(e).context(format!("join worker path {path}")))
@@ -244,6 +503,7 @@ impl Proxy {
             stream_guards,
             on_complete,
             first_byte_hook,
+            on_client_disconnect,
         );
         let mut out = Response::new(body);
         *out.status_mut() = status;
@@ -254,6 +514,163 @@ impl Proxy {
         );
         Ok(out)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn forward_streaming_to_without_admission_traced(
+        &self,
+        worker_url: &str,
+        breaker: &Arc<CircuitBreaker>,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        stream_guards: Option<Box<dyn Send + 'static>>,
+        on_first_byte: Option<Box<dyn FnOnce() + Send + 'static>>,
+        on_client_disconnect: Option<Box<dyn FnOnce(sse::ClientDisconnectPhase) + Send + 'static>>,
+        trace_sink: Option<Arc<TraceSink>>,
+        trace_ctx: TraceContext,
+    ) -> Result<Response<Body>, ApiError> {
+        let request_body = body.clone();
+        let result = self
+            .forward_streaming_to_without_admission(
+                worker_url,
+                breaker,
+                path,
+                headers,
+                body,
+                stream_guards,
+                on_first_byte,
+                on_client_disconnect,
+            )
+            .await;
+        match result {
+            Ok(mut response) => {
+                trace_ctx.add_response_header(&mut response);
+                emit_stream_trace(
+                    trace_sink,
+                    &trace_ctx,
+                    worker_url,
+                    &request_body,
+                    response.status().as_u16(),
+                );
+                Ok(response)
+            }
+            Err(error) => {
+                emit_error_trace(trace_sink, &trace_ctx, worker_url, &request_body, &error);
+                Err(error)
+            }
+        }
+    }
+}
+
+fn emit_json_trace(
+    trace_sink: Option<Arc<TraceSink>>,
+    trace_ctx: &TraceContext,
+    worker_url: &str,
+    request_body: &[u8],
+    result: Result<&Response<Body>, &ApiError>,
+    response_body: Option<&[u8]>,
+) {
+    let Some(sink) = trace_sink else {
+        return;
+    };
+    let (status_code, error) = match result {
+        Ok(response) => (Some(response.status().as_u16()), None),
+        Err(error) => (Some(error.status_code().as_u16()), Some(error.to_string())),
+    };
+    let (request_body, request_body_truncated, request_body_bytes) =
+        sink.capture_limited(request_body);
+    let (response_body, response_body_truncated, response_body_bytes) = response_body
+        .map(|body| sink.capture_limited(body))
+        .unwrap_or((None, false, 0));
+    let event = TraceEvent {
+        trace_id: trace_ctx.trace_id.clone(),
+        method: trace_ctx.method,
+        path: trace_ctx.path,
+        model: trace_ctx.model.clone(),
+        worker_url: worker_url.to_string(),
+        status_code,
+        latency_ms: trace_ctx.started.elapsed().as_millis() as u64,
+        stream: trace_ctx.stream,
+        request_body,
+        request_body_truncated,
+        request_body_bytes,
+        response_body,
+        response_body_truncated,
+        response_body_bytes,
+        error,
+        message_entries: sink.message_entries_from_body(&trace_ctx.request_body),
+    };
+    sink.emit(event);
+}
+
+fn emit_stream_trace(
+    trace_sink: Option<Arc<TraceSink>>,
+    trace_ctx: &TraceContext,
+    worker_url: &str,
+    request_body: &[u8],
+    status_code: u16,
+) {
+    let Some(sink) = trace_sink else {
+        return;
+    };
+    let (request_body, request_body_truncated, request_body_bytes) =
+        sink.capture_limited(request_body);
+    // Streaming response bytes are intentionally not buffered in the router
+    // trace path; preserving SSE passthrough semantics is more important than
+    // capturing generated output here. The local debug proxy can capture full
+    // stream bytes when callers opt into proxy mode.
+    let event = TraceEvent {
+        trace_id: trace_ctx.trace_id.clone(),
+        method: trace_ctx.method,
+        path: trace_ctx.path,
+        model: trace_ctx.model.clone(),
+        worker_url: worker_url.to_string(),
+        status_code: Some(status_code),
+        latency_ms: trace_ctx.started.elapsed().as_millis() as u64,
+        stream: true,
+        request_body,
+        request_body_truncated,
+        request_body_bytes,
+        response_body: None,
+        response_body_truncated: false,
+        response_body_bytes: 0,
+        error: None,
+        message_entries: sink.message_entries_from_body(&trace_ctx.request_body),
+    };
+    sink.emit(event);
+}
+
+fn emit_error_trace(
+    trace_sink: Option<Arc<TraceSink>>,
+    trace_ctx: &TraceContext,
+    worker_url: &str,
+    request_body: &[u8],
+    error: &ApiError,
+) {
+    let Some(sink) = trace_sink else {
+        return;
+    };
+    let (request_body, request_body_truncated, request_body_bytes) =
+        sink.capture_limited(request_body);
+    let event = TraceEvent {
+        trace_id: trace_ctx.trace_id.clone(),
+        method: trace_ctx.method,
+        path: trace_ctx.path,
+        model: trace_ctx.model.clone(),
+        worker_url: worker_url.to_string(),
+        status_code: Some(error.status_code().as_u16()),
+        latency_ms: trace_ctx.started.elapsed().as_millis() as u64,
+        stream: trace_ctx.stream,
+        request_body,
+        request_body_truncated,
+        request_body_bytes,
+        response_body: None,
+        response_body_truncated: false,
+        response_body_bytes: 0,
+        error: Some(error.to_string()),
+        message_entries: sink.message_entries_from_body(&trace_ctx.request_body),
+    };
+    sink.emit(event);
 }
 
 #[cfg(test)]

@@ -1,0 +1,584 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
+// SPDX-License-Identifier: Apache-2.0
+
+//! Integration tests for the `/v1/messages` Anthropic passthrough route.
+//!
+//! The mock worker echoes the same `chat` handler onto `/v1/messages`, so a
+//! request hitting the router's `/v1/messages` route is forwarded to the
+//! worker's `/v1/messages` and the body comes back. This asserts the
+//! passthrough contract: no translation, no `input_ids` injection.
+
+use sgl_router::config::{
+    ActiveLoadConfig, Config, DiscoveryBackend, ModelConfig, ObservabilityConfig, PolicyKind,
+    ProxyConfig, ServerConfig, StaticUrlsDiscoveryConfig,
+};
+use sgl_router::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
+use sgl_router::policies::factory::build_registry_with_defaults as build_policy_registry;
+use sgl_router::proxy::Proxy;
+use sgl_router::server::app::build_router;
+use sgl_router::server::app_context::AppContext;
+use sgl_router::tokenizer::TokenizerRegistry;
+use sgl_router::workers::WorkerRegistry;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use std::sync::Arc;
+use std::time::Duration;
+use tower::ServiceExt;
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn build_ctx_with_worker(url: &str) -> Arc<AppContext> {
+    let cfg = Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
+        server: ServerConfig {
+            host: "0".into(),
+            port: 0,
+        },
+        observability: ObservabilityConfig::default(),
+        model: ModelConfig {
+            id: "tiny".into(),
+            tokenizer_path: "tests/fixtures/tiny_tokenizer.json".into(),
+            policy: PolicyKind::RoundRobin,
+            circuit_breaker: None,
+            cache_aware: None,
+            tiered_spillover: None,
+            sticky: None,
+        },
+        discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
+            urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
+        }),
+        proxy: ProxyConfig::default(),
+        active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
+    };
+    let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
+    let registry = Arc::new(WorkerRegistry::default());
+    let _ = registry.add(WorkerSpec {
+        id: WorkerId("w1".into()),
+        url: url.to_string(),
+        mode: WorkerMode::Plain,
+        model_ids: vec![ModelId("tiny".into())],
+        bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
+    });
+    let policies = Arc::new(build_policy_registry(&cfg).unwrap());
+    let proxy = Arc::new(Proxy::new(TEST_TIMEOUT).unwrap());
+    Arc::new(AppContext::new(cfg, tokenizers, proxy, registry, policies))
+}
+
+/// Same as `build_ctx_with_worker` but registers the worker in PD prefill mode,
+/// so the `/v1/messages` route hits its PD-reject guard instead of forwarding.
+fn build_ctx_with_prefill_worker(url: &str) -> Arc<AppContext> {
+    let cfg = Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
+        server: ServerConfig {
+            host: "0".into(),
+            port: 0,
+        },
+        observability: ObservabilityConfig::default(),
+        model: ModelConfig {
+            id: "tiny".into(),
+            tokenizer_path: "tests/fixtures/tiny_tokenizer.json".into(),
+            policy: PolicyKind::RoundRobin,
+            circuit_breaker: None,
+            cache_aware: None,
+            tiered_spillover: None,
+            sticky: None,
+        },
+        discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
+            urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
+        }),
+        proxy: ProxyConfig::default(),
+        active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
+    };
+    let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
+    let registry = Arc::new(WorkerRegistry::default());
+    let _ = registry.add(WorkerSpec {
+        id: WorkerId("w1".into()),
+        url: url.to_string(),
+        mode: WorkerMode::Prefill,
+        model_ids: vec![ModelId("tiny".into())],
+        bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
+    });
+    let policies = Arc::new(build_policy_registry(&cfg).unwrap());
+    let proxy = Arc::new(Proxy::new(TEST_TIMEOUT).unwrap());
+    Arc::new(AppContext::new(cfg, tokenizers, proxy, registry, policies))
+}
+
+fn build_cache_aware_ctx_with_workers(urls: [&str; 2]) -> Arc<AppContext> {
+    let cfg = Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
+        server: ServerConfig {
+            host: "0".into(),
+            port: 0,
+        },
+        observability: ObservabilityConfig::default(),
+        model: ModelConfig {
+            id: "tiny".into(),
+            tokenizer_path: "tests/fixtures/tiny_tokenizer.json".into(),
+            policy: PolicyKind::CacheAwareZmq,
+            circuit_breaker: None,
+            cache_aware: Some(sgl_router::config::CacheAwareConfig {
+                cache_threshold: 0.0,
+                balance_abs_threshold: usize::MAX,
+                use_reported_load: true,
+                tree_source: sgl_router::config::CacheTreeSource::RouteHistory,
+                ..sgl_router::config::CacheAwareConfig::default()
+            }),
+            tiered_spillover: None,
+            sticky: None,
+        },
+        discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
+            urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
+        }),
+        proxy: ProxyConfig::default(),
+        active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: Some(2),
+        cache_tree_page_size: Some(1),
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
+    };
+    let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
+    let registry = Arc::new(WorkerRegistry::default());
+    for (idx, url) in urls.iter().enumerate() {
+        let id = WorkerId(format!("w{idx}"));
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: (*url).to_string(),
+                mode: WorkerMode::Plain,
+                model_ids: vec![ModelId("tiny".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: Default::default(),
+                prefill_capacity_milli: 1000,
+            })
+            .unwrap();
+        registry
+            .get(&id)
+            .expect("worker was registered")
+            .set_reported_load(if idx == 0 { 0 } else { 10 });
+    }
+    let block_size_oracle = sgl_router::policies::kv_events::BlockSizeOracle::new();
+    block_size_oracle
+        .try_set(1)
+        .expect("test block size should seed");
+    let policies = Arc::new(
+        sgl_router::policies::factory::build_registry(
+            &cfg,
+            Arc::new(sgl_router::policies::kv_events::HashTree::new()),
+            Arc::clone(&tokenizers),
+            block_size_oracle,
+        )
+        .unwrap(),
+    );
+    let proxy = Arc::new(Proxy::new(TEST_TIMEOUT).unwrap());
+    Arc::new(AppContext::new(cfg, tokenizers, proxy, registry, policies))
+}
+
+async fn send_messages(app: axum::Router, body: Value) -> StatusCode {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+    app.oneshot(req).await.unwrap().status()
+}
+
+#[tokio::test]
+async fn messages_non_streaming_passthrough_200() {
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let ctx = build_ctx_with_worker(&worker.url);
+    let app = build_router(ctx);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "tiny",
+        "max_tokens": 16,
+        "stream": false,
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn count_tokens_passthrough_200() {
+    // count_tokens shares the /v1/messages worker-selection path but forwards
+    // to /v1/messages/count_tokens. The mock worker serves that path (echoing
+    // the chat handler), so a 200 confirms the router routed to the correct
+    // upstream path. The body carries no `stream`, so it takes the buffered
+    // path — Claude Code calls this before each turn once claude-proxy is gone.
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let ctx = build_ctx_with_worker(&worker.url);
+    let app = build_router(ctx);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "tiny",
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages/count_tokens")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn count_tokens_missing_model_returns_400() {
+    // Router-side validation (missing `model`) must surface as an Anthropic
+    // error envelope before any worker forward — same as /v1/messages.
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let ctx = build_ctx_with_worker(&worker.url);
+    let app = build_router(ctx);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages/count_tokens")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn messages_streaming_passthrough_sse() {
+    let chunks: Vec<&'static str> = vec![
+        "data: {\"type\":\"content_block_delta\"}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n",
+        "data: [DONE]\n\n",
+    ];
+    let worker = crate::common::mock_worker::MockWorker::start(chunks.clone()).await;
+    let ctx = build_ctx_with_worker(&worker.url);
+    let app = build_router(ctx);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "tiny",
+        "stream": true,
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers().get("content-type").unwrap().to_str().unwrap(),
+        "text/event-stream"
+    );
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let data = crate::common::streaming::parse_sse_data(&bytes);
+    assert_eq!(data.len(), 3);
+    assert_eq!(data[2], "[DONE]");
+}
+
+#[tokio::test]
+async fn messages_missing_model_returns_400() {
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let ctx = build_ctx_with_worker(&worker.url);
+    let app = build_router(ctx);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "max_tokens": 16,
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    // Router-originated errors on this endpoint are Anthropic-shaped.
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["type"], "error", "envelope type must be 'error'");
+    assert_eq!(v["error"]["type"], "invalid_request_error");
+    assert!(v["error"]["message"].as_str().unwrap().contains("model"));
+}
+
+#[tokio::test]
+async fn messages_body_forwarded_unchanged_no_input_ids() {
+    // Core passthrough invariant: the Anthropic body reaches the worker
+    // byte-identical, with no `input_ids` injected (the worker tokenizes).
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let ctx = build_ctx_with_worker(&worker.url);
+    let app = build_router(ctx);
+
+    let sent = serde_json::to_vec(&serde_json::json!({
+        "model": "tiny",
+        "max_tokens": 16,
+        "stream": false,
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(sent.clone()))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let forwarded = worker.captured.lock().unwrap().last_body.clone();
+    let fwd: Value = serde_json::from_slice(&forwarded.unwrap()).unwrap();
+    assert!(fwd.get("input_ids").is_none(), "must not inject input_ids");
+    assert_eq!(fwd, serde_json::from_slice::<Value>(&sent).unwrap());
+}
+
+#[tokio::test]
+async fn messages_prompt_tokens_feed_cache_aware_route_history() {
+    let first = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let second = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let ctx = build_cache_aware_ctx_with_workers([&first.url, &second.url]);
+    let app = build_router(ctx);
+
+    let body = json!({
+        "model": "tiny",
+        "system": "shared messages system",
+        "messages": [{"role": "user", "content": "repeatable messages prefix"}],
+        "max_tokens": 16,
+        "stream": false,
+    });
+    assert_eq!(
+        send_messages(app.clone(), body.clone()).await,
+        StatusCode::OK
+    );
+    {
+        let first_seen = first.captured.lock().unwrap().last_body.is_some();
+        let second_seen = second.captured.lock().unwrap().last_body.is_some();
+        assert!(
+            first_seen && !second_seen,
+            "first request should use min-load"
+        );
+    }
+
+    first.captured.lock().unwrap().last_body = None;
+    assert_eq!(send_messages(app, body).await, StatusCode::OK);
+    let first_seen = first.captured.lock().unwrap().last_body.is_some();
+    let second_seen = second.captured.lock().unwrap().last_body.is_some();
+    assert!(
+        first_seen && !second_seen,
+        "second request should reuse the route-history prefix hit"
+    );
+}
+
+#[tokio::test]
+async fn messages_rejects_pd_disaggregated_mode() {
+    // The passthrough does not do chat.rs's decode-peer + bootstrap injection,
+    // so it must reject PD mode explicitly rather than silently forwarding to a
+    // single prefill worker and hanging.
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let ctx = build_ctx_with_prefill_worker(&worker.url);
+    let app = build_router(ctx);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "tiny",
+        "stream": false,
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn messages_pd_rejection_wins_over_priority_filter() {
+    // Ordering regression (codex super-review round 5): when a PD-mode model's
+    // only prefill candidate is priority-gated AND the request is below the
+    // threshold, the permanent "PD not supported on this route" 400 must win
+    // over the eligibility filter's transient empty-set 503. PD-unsupported is
+    // a route/client error; reporting it as no-healthy-workers would mislead
+    // Anthropic clients and operators.
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let cfg = Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
+        server: ServerConfig {
+            host: "0".into(),
+            port: 0,
+        },
+        observability: ObservabilityConfig::default(),
+        model: ModelConfig {
+            id: "tiny".into(),
+            tokenizer_path: "tests/fixtures/tiny_tokenizer.json".into(),
+            policy: PolicyKind::RoundRobin,
+            circuit_breaker: None,
+            cache_aware: None,
+            tiered_spillover: None,
+            sticky: None,
+        },
+        discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
+            urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
+        }),
+        proxy: ProxyConfig::default(),
+        active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
+    };
+    let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
+    let registry = Arc::new(WorkerRegistry::default());
+    let _ = registry.add(WorkerSpec {
+        id: WorkerId("w1".into()),
+        url: worker.url.clone(),
+        mode: WorkerMode::Prefill,
+        model_ids: vec![ModelId("tiny".into())],
+        bootstrap_port: None,
+        min_priority: Some(100),
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
+    });
+    let policies = Arc::new(build_policy_registry(&cfg).unwrap());
+    let proxy = Arc::new(Proxy::new(TEST_TIMEOUT).unwrap());
+    let ctx = Arc::new(AppContext::new(cfg, tokenizers, proxy, registry, policies));
+    let app = build_router(ctx);
+
+    // priority 0 (absent) is below the gate — without correct ordering the
+    // filter would empty the set and 503 before the PD check runs.
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "tiny",
+        "stream": false,
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::BAD_REQUEST,
+        "PD-unsupported (400) must win over the priority filter's empty-set 503",
+    );
+}
+
+#[tokio::test]
+async fn messages_upstream_error_is_anthropic_shaped_and_does_not_leak_url() {
+    // Register an unreachable worker so the proxy returns UpstreamUnreachable.
+    // The Anthropic error envelope must be sanitized — no worker URL in the body.
+    let ctx = build_ctx_with_worker("http://127.0.0.1:1"); // port 1: connection refused fast
+    let app = build_router(ctx);
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "tiny",
+        "stream": false,
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    // Upstream-unreachable maps to 502 (BAD_GATEWAY) via ApiError.
+    assert!(res.status().is_server_error(), "got {}", res.status());
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap()["type"],
+        "error",
+        "envelope must be Anthropic-shaped: {text}"
+    );
+    // The worker URL must NOT leak into the client-facing message.
+    assert!(
+        !text.contains("127.0.0.1"),
+        "worker URL leaked into client error: {text}"
+    );
+}

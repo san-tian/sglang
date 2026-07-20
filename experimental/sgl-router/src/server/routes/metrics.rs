@@ -12,6 +12,7 @@
 use crate::discovery::WorkerMode;
 use crate::server::app_context::AppContext;
 use crate::server::metrics::WorkerSnapshot;
+use crate::workers::worker::reported_load_allows_routing;
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
@@ -33,7 +34,11 @@ pub async fn metrics(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
             // One lock acquisition for both health + state so the two gauges
             // can't report a torn (self-contradictory) pair for one scrape.
             let cb = w.breaker.snapshot();
+            let reported_load = w.reported_load();
+            let pending_requests = saturating_i64(w.pending_load());
+            let global_pending_requests = saturating_i64(w.global_pending_load());
             WorkerSnapshot {
+                worker_id: w.id.0.clone(),
                 worker_url: w.url.clone(),
                 mode: match w.mode() {
                     WorkerMode::Plain => "plain",
@@ -45,7 +50,17 @@ pub async fn metrics(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
                 // Saturating rather than `as i64`: a guard-accounting
                 // underflow would wrap usize and render as a nonsensical
                 // negative gauge; clamp to a large positive ceiling instead.
-                inflight: i64::try_from(w.active_load()).unwrap_or(i64::MAX),
+                inflight: saturating_i64(w.active_load()),
+                pending_requests,
+                pending_tokens: saturating_i64(w.pending_token_load()),
+                global_pending_requests,
+                global_pending_tokens: saturating_i64(w.global_pending_token_load()),
+                reported_load,
+                routable: cb.admit && reported_load_allows_routing(reported_load),
+                working: w.active_load() > 0
+                    || w.pending_load() > 0
+                    || w.global_pending_load() > 0
+                    || reported_load > 0,
             }
         })
         .collect();
@@ -55,6 +70,10 @@ pub async fn metrics(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
         [(CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)],
         body,
     )
+}
+
+fn saturating_i64(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
@@ -138,6 +157,13 @@ mod tests {
                 mode: WorkerMode::Prefill,
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .unwrap();
         let app = crate::server::app::build_router(ctx.clone());
@@ -162,6 +188,24 @@ mod tests {
         assert!(body.contains(r#"sgl_router_worker_cb_state{worker_url="http://p0:30000"} 0"#));
         assert!(
             body.contains(r#"sgl_router_worker_inflight_requests{worker_url="http://p0:30000"} 0"#)
+        );
+        assert!(
+            body.contains(
+                r#"sgl_router_worker_pool_member{worker_id="p0",worker_url="http://p0:30000",mode="prefill"} 1"#
+            ),
+            "got:\n{body}"
+        );
+        assert!(
+            body.contains(
+                r#"sgl_router_worker_routable{worker_id="p0",worker_url="http://p0:30000",mode="prefill"} 1"#
+            ),
+            "got:\n{body}"
+        );
+        assert!(
+            body.contains(
+                r#"sgl_router_worker_working{worker_id="p0",worker_url="http://p0:30000",mode="prefill"} 0"#
+            ),
+            "got:\n{body}"
         );
     }
 }

@@ -4,8 +4,9 @@
 //! Cache-management admin endpoints.
 
 use crate::server::app_context::AppContext;
+use crate::server::entry_auth::{GatewayKeyClass, GatewayKeyIdentity};
 use crate::workers::worker::Worker;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -37,6 +38,33 @@ pub struct FlushCacheResult {
     pub failed: Vec<FailedWorker>,
     pub total_workers: usize,
     pub message: String,
+}
+
+/// Gateway wrapper for the fleet-wide cache control operation. Production
+/// entry authentication inserts an identity; only internal keys may invoke
+/// this control-plane route. The optional identity preserves the historical
+/// unauthenticated library-router contract used by unit tests and embedders.
+pub async fn flush_cache_for_gateway(
+    State(ctx): State<Arc<AppContext>>,
+    identity: Option<Extension<GatewayKeyIdentity>>,
+) -> Response {
+    if identity
+        .as_ref()
+        .is_some_and(|Extension(identity)| identity.class() != GatewayKeyClass::Internal)
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": {
+                    "type": "authorization_error",
+                    "code": "internal_key_required",
+                    "message": "internal API key required"
+                }
+            })),
+        )
+            .into_response();
+    }
+    flush_cache(State(ctx)).await
 }
 
 impl FlushCacheResult {
@@ -143,16 +171,17 @@ async fn fan_out_flush(
     client: &Client,
     timeout: Duration,
 ) -> (Vec<String>, Vec<FailedWorker>) {
-    // Snapshot the URLs into owned Strings up front so the per-worker stream
-    // does not borrow the `workers` slice across the await points.
-    let urls: Vec<String> = workers.iter().map(|w| w.url.clone()).collect();
-
-    let outcomes = stream::iter(urls)
-        .map(|url| {
+    let outcomes = stream::iter(workers.iter().cloned())
+        .map(|worker| {
             let client = client.clone();
             async move {
+                let url = worker.url.clone();
                 let flush_url = format!("{}/flush_cache", url.trim_end_matches('/'));
-                let result = client.post(&flush_url).timeout(timeout).send().await;
+                let mut request = client.post(&flush_url).timeout(timeout);
+                if let Some(token) = worker.bearer_token() {
+                    request = request.bearer_auth(token);
+                }
+                let result = request.send().await;
                 (url, result)
             }
         })
@@ -213,6 +242,40 @@ mod tests {
         (format!("http://127.0.0.1:{port}"), tx)
     }
 
+    async fn spawn_fake_authenticated_flush_worker(
+        expected_token: &str,
+    ) -> (String, oneshot::Sender<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let expected = format!("Bearer {expected_token}");
+        let app = Router::new().route(
+            "/flush_cache",
+            post(move |headers: axum::http::HeaderMap| {
+                let expected = expected.clone();
+                async move {
+                    if headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        == Some(expected.as_str())
+                    {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::UNAUTHORIZED
+                    }
+                }
+            }),
+        );
+        let (tx, rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = rx.await;
+                })
+                .await;
+        });
+        (format!("http://127.0.0.1:{port}"), tx)
+    }
+
     /// Reserve a port then drop the listener so a connect attempt fails fast
     /// with ConnectionRefused (no waiting on the connect timeout).
     fn unused_port() -> u16 {
@@ -231,9 +294,37 @@ mod tests {
                     mode: WorkerMode::Plain,
                     model_ids: vec![ModelId("stub-model".into())],
                     bootstrap_port: None,
+                    min_priority: None,
+                    max_context_tokens: None,
+                    bearer_token: None,
+                    backend: Default::default(),
+                    tier: Default::default(),
+                    routes: crate::discovery::WorkerRouteSet::all(),
+                    prefill_capacity_milli: 1000,
                 })
                 .expect("worker accepted");
         }
+        Arc::new(ctx)
+    }
+
+    fn ctx_with_protected_worker(url: &str, bearer_token: &str) -> Arc<AppContext> {
+        let ctx = AppContext::stub();
+        ctx.registry
+            .add(WorkerSpec {
+                id: WorkerId("protected".into()),
+                url: url.to_string(),
+                mode: WorkerMode::Plain,
+                model_ids: vec![ModelId("stub-model".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: Some(bearer_token.to_string()),
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
+            })
+            .expect("worker accepted");
         Arc::new(ctx)
     }
 
@@ -263,6 +354,15 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["total_workers"], 2);
         assert_eq!(body["successful"].as_array().unwrap().len(), 2);
+        assert!(body["failed"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn protected_worker_receives_its_bearer_token() {
+        let (url, _shutdown) = spawn_fake_authenticated_flush_worker("worker-secret").await;
+        let (status, body) = post_flush(ctx_with_protected_worker(&url, "worker-secret")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["successful"], serde_json::json!([url]));
         assert!(body["failed"].as_array().unwrap().is_empty());
     }
 
@@ -350,6 +450,13 @@ mod tests {
                 mode: WorkerMode::Prefill,
                 model_ids: vec![ModelId("stub-model".into())],
                 bootstrap_port: Some(8998),
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .expect("prefill accepted");
         ctx.registry
@@ -359,6 +466,13 @@ mod tests {
                 mode: WorkerMode::Decode,
                 model_ids: vec![ModelId("stub-model".into())],
                 bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             })
             .expect("decode accepted");
 

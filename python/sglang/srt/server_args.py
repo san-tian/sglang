@@ -315,7 +315,7 @@ MAMBA_RADIX_CACHE_STRATEGY_CHOICES = [
 
 MAMBA_BACKEND_CHOICES = ["triton", "flashinfer"]
 
-LINEAR_ATTN_KERNEL_BACKEND_CHOICES = ["triton", "cutedsl", "flashinfer"]
+LINEAR_ATTN_KERNEL_BACKEND_CHOICES = ["triton", "cutedsl", "flashinfer", "flashkda"]
 
 
 # Allow external code to add more choices
@@ -716,11 +716,20 @@ class ServerArgs:
                 "fcfs",
                 "dfs-weight",
                 "lof",
+                "prefill-length-aware",
                 "priority",
                 "routing-key",
             ],
         ),
     ] = "fcfs"
+    prefill_length_aware_aging_rate: A[
+        float,
+        "Uncached prefill tokens removed from a waiting request's scheduling work score per second when --schedule-policy prefill-length-aware is selected.",
+    ] = 256.0
+    prefill_length_aware_max_wait_seconds: A[
+        float,
+        "Maximum queue wait before a request enters the same-priority FCFS overdue class when --schedule-policy prefill-length-aware is selected.",
+    ] = 30.0
     enable_priority_scheduling: A[
         bool,
         "Enable priority scheduling. Requests with higher priority integer values will be scheduled first by default.",
@@ -782,6 +791,14 @@ class ServerArgs:
         "layer-major within a page) instead of the default per-layer "
         "(layer-major) layout. Requires the Triton attention / linear-attn / "
         "Mamba backends.",
+    ] = False
+    enable_unified_memory: A[
+        bool,
+        "Replace the statically-partitioned hybrid-model pools (full-attn KV + "
+        "SWA/Mamba state) with one byte buffer split dynamically between "
+        "sub-pools. Requires the Triton attention / linear-attn / Mamba "
+        "backends; not yet compatible with PD disaggregation or speculative "
+        "decoding.",
     ] = False
     disable_chunked_prefix_cache: A[
         bool,
@@ -940,6 +957,10 @@ class ServerArgs:
     ] = None
     enable_dsa_prefill_context_parallel: A[bool, Arg(no_cli=True)] = False
     dsa_prefill_cp_mode: A[str, Arg(no_cli=True)] = "round-robin-split"
+    enable_dsa_prefill_cp_layersplit: A[
+        bool,
+        "Enable cp layer-split: each CP rank stores KV only for its owned layer block.",
+    ] = False
     enable_prefill_context_parallel: A[bool, Arg(no_cli=True)] = False
     prefill_cp_mode: A[str, Arg(no_cli=True)] = "in-seq-split"
     # DP attention
@@ -1923,6 +1944,7 @@ class ServerArgs:
                 "dynamic",
                 "eic",
                 "simm",
+                "mori",
             ],
         ),
     ] = None
@@ -2571,6 +2593,7 @@ class ServerArgs:
         self._handle_ssl_validation()
         # Validate transcription/ASR-specific server args (model-independent).
         self._handle_asr_validation()
+        self._validate_prefill_length_aware_args()
 
         # Validate PD disaggregation flags early (before dummy-model short-circuit).
         from sglang.srt.arg_groups.pd_disaggregation_hook import (
@@ -2588,6 +2611,9 @@ class ServerArgs:
         self._handle_legacy_cp_arguments()
         self._validate_prefill_only_disable_kv_cache_args()
         self._handle_dcp_validation()
+
+        # Validate --enable-dsa-prefill-cp-layersplit guardrails early (no model
+        # config needed).
 
         if self.model_path.lower() in ["none", "dummy"]:
             # Skip for dummy models
@@ -2715,6 +2741,8 @@ class ServerArgs:
         self._handle_cache_compatibility()
 
         self._handle_page_major_kv_layout()
+
+        self._handle_unified_memory_pool()
 
         # Handle diffusion LLM inference.
         self._handle_dllm_inference()
@@ -3043,12 +3071,31 @@ class ServerArgs:
 
     def _handle_xpu_backends(self):
         if self.device == "xpu":
-            if self.cuda_graph_config.prefill.backend != Backend.DISABLED:
+            # Decode graph is opt-in on XPU: unless the user explicitly set
+            # --cuda-graph-backend-decode (or --cuda-graph-config), keep it
+            # disabled so the default startup doesn't require graph capture.
+            if (Phase.DECODE, "backend") not in self._cuda_graph_config_locked:
+                self.cuda_graph_config.decode.backend = Backend.DISABLED
+            elif self.cuda_graph_config.decode.backend not in (
+                Backend.DISABLED,
+                Backend.FULL,
+            ):
                 logger.warning(
-                    "XPU platform does not support piecewise CUDA graph, "
-                    "disabling prefill cuda graph."
+                    "XPU platform only supports decode backend 'full'; "
+                    "disabling unsupported decode backend '%s'.",
+                    self.cuda_graph_config.decode.backend,
                 )
-            self.cuda_graph_config.prefill.backend = Backend.DISABLED
+                self.cuda_graph_config.decode.backend = Backend.DISABLED
+
+            if self.cuda_graph_config.prefill.backend not in (
+                Backend.DISABLED,
+                Backend.TC_PIECEWISE,
+            ):
+                logger.warning(
+                    "XPU platform currently only supports prefill tc_piecewise CUDA graph; "
+                    "disabling unsupported prefill backend."
+                )
+                self.cuda_graph_config.prefill.backend = Backend.DISABLED
 
     # ------------------------------------------------------------------
     # CUDA graph configuration resolution
@@ -3204,11 +3251,27 @@ class ServerArgs:
         memory-saver rejection in its own __init__; config-time rules can be
         added here as they're discovered.
         """
+        from sglang.srt.configs.model_config import is_deepseek_v4
+
         rules = [
-            # MLA prefill takes a different attn-forward path under BCG (no
-            # tc_piecewise gate), causing q.view shape mismatches. Disable
-            # until the MLA prefill path is BCG-aware.
+            # MLA prefill takes a different attn-forward path under BCG.
             ("MLA attention", lambda: self.use_mla_backend()),
+            # DSV4 is BCG-compatible but introduces heavy memory pressure: the
+            # c4 indexer scratch is pinned in the capture pool and OOMs. Disable.
+            (
+                "DeepSeek-V4 (heavy capture-pool memory pressure)",
+                lambda: is_deepseek_v4(self.get_model_config().hf_config),
+            ),
+            # CP all_gather replay size mismatch under BCG.
+            ("context parallel (attn_cp_size > 1)", lambda: self.attn_cp_size > 1),
+            # BCG capture + LoRA adapter weights exceed host RAM headroom.
+            ("LoRA", lambda: bool(self.lora_paths) or bool(self.enable_lora)),
+            # BCG bucket sizes exceed FlashInfer MoE A2A's dispatch cap.
+            ("MoE A2A backend", lambda: self.moe_a2a_backend != "none"),
+            # DP-attn × BCG capture/replay not yet validated.
+            ("DP attention", lambda: self.enable_dp_attention),
+            # Multimodal prefill replay faults under BCG.
+            ("multimodal model", lambda: self.get_model_config().is_multimodal),
         ]
         for name, predicate in rules:
             if predicate():
@@ -3754,6 +3817,7 @@ class ServerArgs:
                         # DSACPLayerCommunicator does not all-reduce attention-TP
                         # partial o_proj outputs before replicated dense FFNs.
                         self.attn_cp_size = self.tp_size // self.dp_size
+            #self._validate_cp_layersplit_args()
                         self.cuda_graph_config.prefill.backend = Backend.DISABLED
                         logger.warning(
                             "Enabled DSA context parallel: "
@@ -3839,6 +3903,7 @@ class ServerArgs:
                     # DSACPLayerCommunicator does not all-reduce attention-TP
                     # partial o_proj outputs before replicated dense FFNs.
                     self.attn_cp_size = self.tp_size // self.dp_size
+            #self._validate_cp_layersplit_args()
                     self.cuda_graph_config.prefill.backend = Backend.DISABLED
                     logger.warning(
                         f"Enable Context Parallel opt for MLA, "
@@ -5122,6 +5187,26 @@ class ServerArgs:
 
         # SM100+ FlashInfer GDN decode requires bf16 state; SM90 uses float32.
         decode = self.linear_attn_decode_backend or self.linear_attn_backend
+
+        # FlashKDA is a prefill-only KDA kernel (no decode kernel) but shares the
+        # backend choice list, so guard it from being selected for decode: error
+        # on an explicit --linear-attn-decode-backend flashkda, and fall back to
+        # triton decode when it was only inherited from base=flashkda (prefill
+        # keeps FlashKDA).
+        if decode == "flashkda":
+            if self.linear_attn_decode_backend == "flashkda":
+                raise ValueError(
+                    "--linear-attn-decode-backend flashkda is not supported: "
+                    "FlashKDA is prefill-only. Use "
+                    "--linear-attn-prefill-backend flashkda (decode stays on triton)."
+                )
+            self.linear_attn_decode_backend = "triton"
+            decode = "triton"
+            logger.info(
+                "FlashKDA is prefill-only; using triton for KDA decode "
+                "(FlashKDA stays on prefill)."
+            )
+
         if (
             decode == "flashinfer"
             and self.mamba_ssm_dtype != "bfloat16"
@@ -5769,6 +5854,61 @@ class ServerArgs:
                 "HiSparse uses a dedicated pool family that is not the no-op MHA pool."
             )
 
+    def _validate_cp_layersplit_args(self):
+        """Validate --enable-dsa-prefill-cp-layersplit guardrails.
+
+        Runs before the dummy-model short-circuit so misuse is caught early.
+        Checks that require model config (num_hidden_layers divisibility and
+        MLA/DSA arch) are enforced in build_kv_pool_maybe_layersplit at pool
+        construction time in model_runner_kv_cache_mixin._init_pools().
+        """
+        if not self.enable_dsa_prefill_cp_layersplit:
+            return
+
+        if not (self.enable_prefill_cp and self.attn_cp_size > 1):
+            raise ValueError(
+                "--enable-dsa-prefill-cp-layersplit requires "
+                "--enable-prefill-cp with attn_cp_size > 1 "
+                f"(got enable_prefill_cp={self.enable_prefill_cp}, "
+                f"attn_cp_size={self.attn_cp_size})"
+            )
+
+        if self.disaggregation_mode != "prefill":
+            raise ValueError(
+                "--enable-dsa-prefill-cp-layersplit requires "
+                f"--disaggregation-mode prefill (got {self.disaggregation_mode!r})"
+            )
+
+        if self.enable_hierarchical_cache:
+            if not envs.SGLANG_ENABLE_UNIFIED_RADIX_TREE.get():
+                raise ValueError(
+                    "--enable-dsa-prefill-cp-layersplit with --enable-hierarchical-cache "
+                    "requires the unified radix cache: set SGLANG_ENABLE_UNIFIED_RADIX_TREE=1. "
+                    "L2 HiCache for layer-split is implemented only on the UnifiedRadixCache "
+                    "path (a DSA model otherwise routes to HiRadixCache, which does not "
+                    "support the layer-split wrapper)."
+                )
+            if self.hicache_storage_backend is not None and (
+                self.hicache_storage_backend not in ("file", "mooncake")
+            ):
+                raise ValueError(
+                    "--enable-dsa-prefill-cp-layersplit + L3 only supports the 'file' "
+                    "and 'mooncake' storage backends (only their storage keys are "
+                    f"namespaced by CP rank); got {self.hicache_storage_backend!r}."
+                )
+            if self.hicache_size > 0:
+                raise ValueError(
+                    "--enable-dsa-prefill-cp-layersplit with --enable-hierarchical-cache "
+                    "requires ratio-based host sizing (--hicache-size 0 / use --hicache-ratio); "
+                    "byte-budget host sizing can diverge across CP ranks."
+                )
+
+        if self.speculative_algorithm is not None:
+            raise ValueError(
+                f"--enable-dsa-prefill-cp-layersplit is incompatible with speculative decoding "
+                f"(speculative_algorithm={self.speculative_algorithm!r})."
+            )
+
     def _handle_prefill_only_disable_kv_cache(self):
         """Validate --prefill-only-disable-kv-cache backend constraint.
 
@@ -5860,7 +6000,7 @@ class ServerArgs:
         if (
             self.hicache_mem_layout == "page_first"
             and self.hicache_io_backend == "kernel"
-            and is_hip()
+            and False  # allow page_first on ROCm
         ):
             self.hicache_mem_layout = "layer_first"
             logger.warning(
@@ -6335,7 +6475,49 @@ class ServerArgs:
                         "NCCL_ALGO is set to 'allreduce:tree' and custom all reduce is disabled for deterministic inference when TP size > 1."
                     )
 
+    def _handle_unified_memory_pool(self):
+        if not self.enable_unified_memory:
+            return
+        assert self.disaggregation_mode == "null", (
+            "--enable-unified-memory is not yet compatible with PD " "disaggregation."
+        )
+        assert self.speculative_algorithm is None, (
+            "--enable-unified-memory is not yet compatible with speculative "
+            "decoding."
+        )
+        assert not (self.enable_hierarchical_cache or self.enable_lmcache), (
+            "--enable-unified-memory is not yet compatible with hierarchical / "
+            "host-tiered KV cache (--enable-hierarchical-cache / --enable-lmcache): "
+            "the unified-memory-pool init wires up no host pools, and its device mamba / "
+            "full-attention slots are VIRTUAL — the host-offload path does not "
+            "translate them to physical."
+        )
+        assert self.dcp_size == 1, (
+            "--enable-unified-memory is not yet compatible with decode context "
+            "parallelism (--dcp-size > 1): the pool has no DCP-aware masked write "
+            "path (UnifiedMHATokenToKVPool.set_kv_buffer asserts dcp_kv_mask is None), "
+            "so a DCP run would boot and then fail on the first KV write."
+        )
+        # Only monolithic decode cuda-graph capture is wired; piecewise prefill
+        # capture is not. Guard when the user opts into it.
+        _cg_cfg = self.cuda_graph_config
+        if _cg_cfg is not None and _cg_cfg.prefill.backend == Backend.TC_PIECEWISE:
+            raise ValueError(
+                "--enable-unified-memory supports monolithic (decode) "
+                "cuda-graph capture only; disable piecewise prefill capture "
+                "(e.g. --cuda-graph-backend-prefill=disabled)."
+            )
+        # The strided-layout Triton requirement is enforced via
+        # --enable-page-major-kv-layout (implied by the unified pool in
+        # _handle_page_major_kv_layout); the model-family gate is enforced at pool
+        # construction in model_runner_kv_cache_mixin._init_pools.
+
     def _handle_page_major_kv_layout(self):
+        # The unified pool stores state in the page-major envelope-strided layout, so
+        # enabling it implies --enable-page-major-kv-layout — routing it through the
+        # single page-major path + stride-aware Triton asserts (set before the guard).
+        if self.enable_unified_memory:
+            self.enable_page_major_kv_layout = True
         if not self.enable_page_major_kv_layout:
             return
         # Only the Triton attention kernels read the strided 4-D envelope K/V
@@ -6937,6 +7119,29 @@ class ServerArgs:
             self._mamba_cache_chunk_size = max(chunk_size, self.page_size)
         return self._mamba_cache_chunk_size
 
+    def _validate_prefill_length_aware_args(self) -> None:
+        if (
+            self.schedule_policy == "prefill-length-aware"
+            and self.disaggregation_mode == "decode"
+        ):
+            raise ValueError(
+                "--schedule-policy prefill-length-aware cannot be used by a decode-only worker"
+            )
+        if (
+            not math.isfinite(self.prefill_length_aware_aging_rate)
+            or self.prefill_length_aware_aging_rate < 0
+        ):
+            raise ValueError(
+                "--prefill-length-aware-aging-rate must be finite and non-negative"
+            )
+        if (
+            not math.isfinite(self.prefill_length_aware_max_wait_seconds)
+            or self.prefill_length_aware_max_wait_seconds <= 0
+        ):
+            raise ValueError(
+                "--prefill-length-aware-max-wait-seconds must be finite and greater than 0"
+            )
+
     def check_server_args(self):
         # Check parallel size constraints
         assert (
@@ -7040,7 +7245,8 @@ class ServerArgs:
             assert self.schedule_policy in [
                 "fcfs",
                 "lof",
-            ], f"To use priority scheduling, schedule_policy must be 'fcfs' or 'lof'. '{self.schedule_policy}' is not supported."
+                "prefill-length-aware",
+            ], f"To use priority scheduling, schedule_policy must be 'fcfs', 'lof', or 'prefill-length-aware'. '{self.schedule_policy}' is not supported."
             if self.default_priority_value is None:
                 logger.warning(
                     "--default-priority-value is not set while --enable-priority-scheduling is enabled. "
@@ -7056,6 +7262,8 @@ class ServerArgs:
                 logger.warning(
                     "--default-priority-value has no effect without --enable-priority-scheduling"
                 )
+
+        self._validate_prefill_length_aware_args()
 
         # Check hisparse
         from sglang.srt.arg_groups.hisparse_hook import validate_hisparse

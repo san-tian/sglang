@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::Config;
-use crate::discovery::{DiscoveryEvent, ModelId, WorkerId, WorkerMode, WorkerSpec};
+use crate::discovery::{DiscoveryEvent, ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerSpec};
 use crate::health::circuit_breaker::CircuitBreakerConfig;
 use crate::policies::active_load::ActiveLoadRegistry;
 use crate::policies::kv_events::KvEventIndex;
@@ -60,7 +60,9 @@ pub async fn run(rx: mpsc::Receiver<DiscoveryEvent>, registry: Arc<WorkerRegistr
 /// (threshold = 3).
 ///
 /// Uses the default HTTP client (2-second timeout) for `/server_info`
-/// introspection.  Tests that want a tighter timeout call
+/// introspection, carrying the optional `worker_introspect_key` from
+/// `cfg` as a bearer `Authorization` header so key-protected workers
+/// answer 200 instead of 401.  Tests that want a tighter timeout call
 /// [`run_with_introspector`] directly.
 pub async fn run_with_config(
     rx: mpsc::Receiver<DiscoveryEvent>,
@@ -69,15 +71,14 @@ pub async fn run_with_config(
     kv_index: Option<Arc<KvEventIndex>>,
     active_load: Option<Arc<ActiveLoadRegistry>>,
 ) {
-    run_with_introspector(
-        rx,
-        registry,
-        cfg,
-        kv_index,
-        active_load,
-        Arc::new(WorkerIntrospector::default()),
-    )
-    .await
+    // Introspection runs at startup before any client request exists, so
+    // it can't reuse a forwarded client `Authorization`; it needs the
+    // pool's shared worker key from config (None => unauthenticated).
+    let introspector = Arc::new(WorkerIntrospector::with_optional_key(
+        cfg.as_ref()
+            .and_then(|c| c.worker_introspect_key.as_deref()),
+    ));
+    run_with_introspector(rx, registry, cfg, kv_index, active_load, introspector).await
 }
 
 /// Internal entry point used by tests so they can supply a custom
@@ -352,13 +353,27 @@ fn reconcile_unresolved_workers(
         // Rebuild a discovery-shaped spec: empty `model_ids` so
         // `register_one` re-resolves them from `/server_info`; current
         // mode + bootstrap_port as the seed (`register_one` re-applies
-        // any `/server_info` override).
+        // any `/server_info` override). `min_priority`, `max_context_tokens`,
+        // backend, tier, and capacity are config-time facts that `/server_info`
+        // never carries, so they MUST be carried over from the live worker.
+        // Dropping min_priority here would
+        // let a priority-gated worker silently start accepting priority-0
+        // traffic; dropping backend would make a vLLM worker retry through
+        // SGLang-only endpoints; dropping tier would break tiered spillover;
+        // dropping capacity would erase heterogeneous routing normalization.
         let spec = WorkerSpec {
             id: id.clone(),
             url: worker.url.clone(),
             mode: worker.mode(),
             model_ids: Vec::new(),
             bootstrap_port: worker.bootstrap_port(),
+            min_priority: worker.min_priority(),
+            max_context_tokens: worker.max_context_tokens(),
+            bearer_token: worker.bearer_token().map(ToOwned::to_owned),
+            backend: worker.backend(),
+            tier: worker.tier(),
+            routes: worker.routes(),
+            prefill_capacity_milli: worker.prefill_capacity_milli(),
         };
         // `debug!` not `info!`: this fires every interval for each
         // still-unresolved worker, so info-level would spam for a worker
@@ -394,38 +409,69 @@ async fn register_one(
     introspector: Arc<WorkerIntrospector>,
 ) {
     let worker_url = spec.url.clone();
-    let info = introspector.fetch(&worker_url).await;
-    if let Some(name) = info.served_model_name {
-        spec.model_ids = vec![ModelId(name)];
-    }
-    // Trust `/server_info` over the discovery backend when the worker
-    // self-disclosed its PD role: the server's own ServerArgs is the
-    // authoritative source for `disaggregation_mode` and
-    // `disaggregation_bootstrap_port`. The backend's mode (from K8s
-    // labels, static-urls seed, etc.) was a best-guess seed; if the
-    // server says it's actually a prefill peer on port 8998, that wins.
-    // `None` here means the worker didn't tell us — keep the backend's
-    // classification (older SGLang without the field, partial response,
-    // unknown mode value, etc.).
-    if let Some(role) = info.disaggregation_role {
-        let (new_mode, new_port) = match role {
-            DisaggregationRole::Plain => (WorkerMode::Plain, None),
-            DisaggregationRole::Prefill { bootstrap_port } => {
-                (WorkerMode::Prefill, Some(bootstrap_port))
+    let backend = spec.backend;
+    let mut sglang_event_config = None;
+    match backend {
+        WorkerBackend::Sglang => {
+            let info = introspector
+                .fetch_with_bearer(&worker_url, spec.bearer_token.as_deref())
+                .await;
+            if let Some(name) = info.served_model_name {
+                let mut model_ids = vec![ModelId(name)];
+                if let Some(public_model_id) = cfg.as_ref().map(|cfg| ModelId(cfg.model.id.clone()))
+                {
+                    if !model_ids.contains(&public_model_id) {
+                        model_ids.push(public_model_id);
+                    }
+                }
+                spec.model_ids = model_ids;
             }
-            DisaggregationRole::Decode => (WorkerMode::Decode, None),
-        };
-        if (new_mode, new_port) != (spec.mode, spec.bootstrap_port) {
-            tracing::info!(
-                worker_url = %worker_url,
-                backend_mode = ?spec.mode,
-                resolved_mode = ?new_mode,
-                backend_bootstrap_port = ?spec.bootstrap_port,
-                resolved_bootstrap_port = ?new_port,
-                "/server_info overrode discovery-backend classification",
-            );
-            spec.mode = new_mode;
-            spec.bootstrap_port = new_port;
+            // Trust `/server_info` over the discovery backend when the worker
+            // self-disclosed its PD role: the server's own ServerArgs is the
+            // authoritative source for `disaggregation_mode` and
+            // `disaggregation_bootstrap_port`. The backend's mode (from K8s
+            // labels, static-urls seed, etc.) was a best-guess seed; if the
+            // server says it's actually a prefill peer on port 8998, that wins.
+            // `None` here means the worker didn't tell us — keep the backend's
+            // classification (older SGLang without the field, partial response,
+            // unknown mode value, etc.).
+            if let Some(role) = info.disaggregation_role {
+                let (new_mode, new_port) = match role {
+                    DisaggregationRole::Plain => (WorkerMode::Plain, None),
+                    DisaggregationRole::Prefill { bootstrap_port } => {
+                        (WorkerMode::Prefill, Some(bootstrap_port))
+                    }
+                    DisaggregationRole::Decode => (WorkerMode::Decode, None),
+                };
+                if (new_mode, new_port) != (spec.mode, spec.bootstrap_port) {
+                    tracing::info!(
+                        worker_url = %worker_url,
+                        backend_mode = ?spec.mode,
+                        resolved_mode = ?new_mode,
+                        backend_bootstrap_port = ?spec.bootstrap_port,
+                        resolved_bootstrap_port = ?new_port,
+                        "/server_info overrode discovery-backend classification",
+                    );
+                    spec.mode = new_mode;
+                    spec.bootstrap_port = new_port;
+                }
+            }
+            sglang_event_config = info.event_config;
+        }
+        WorkerBackend::SglangProxy | WorkerBackend::Vllm => {
+            let info = introspector
+                .fetch_openai_models_with_bearer(&worker_url, spec.bearer_token.as_deref())
+                .await;
+            if !info.model_ids.is_empty() {
+                let mut model_ids: Vec<ModelId> = info.model_ids.into_iter().map(ModelId).collect();
+                if let Some(public_model_id) = cfg.as_ref().map(|cfg| ModelId(cfg.model.id.clone()))
+                {
+                    if !model_ids.contains(&public_model_id) {
+                        model_ids.push(public_model_id);
+                    }
+                }
+                spec.model_ids = model_ids;
+            }
         }
     }
     let cb = cfg.as_ref().and_then(|c| cb_config_for_spec(&spec, c));
@@ -443,10 +489,10 @@ async fn register_one(
         );
         return;
     }
-    if let Some(idx) = kv_index {
+    if let Some(idx) = kv_index.filter(|_| backend.supports_sglang_kv_events()) {
         // Pass the pre-resolved EventConfig so the KvEventIndex does
         // not issue a second `/server_info` round-trip.
-        idx.add_worker(&worker_url, info.event_config).await;
+        idx.add_worker(&worker_url, sglang_event_config).await;
     }
 }
 
@@ -455,7 +501,7 @@ mod tests {
     use super::*;
     use crate::config::{
         ActiveLoadConfig, CircuitBreakerConfig as RawCbConfig, DiscoveryBackend, ModelConfig,
-        PolicyKind, ProxyConfig, ServerConfig, StaticUrlsDiscoveryConfig,
+        PolicyKind, ProxyConfig, ServerConfig, StaticUrlsDiscoveryConfig, TraceConfig,
     };
     use crate::discovery::{WorkerId, WorkerMode};
     use axum::{routing::get, Json, Router};
@@ -466,6 +512,7 @@ mod tests {
 
     fn cfg_with_model_cb(id: &str, threshold: u32, cool_down_secs: u64) -> Config {
         Config {
+            runtime_mode: crate::config::RuntimeMode::Gateway,
             server: ServerConfig {
                 host: "0".into(),
                 port: 0,
@@ -480,13 +527,26 @@ mod tests {
                     cool_down_secs,
                 }),
                 cache_aware: None,
+                tiered_spillover: None,
                 sticky: None,
             },
             discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
                 urls: vec!["http://test:30000".into()],
+                bearer_keys: Vec::new(),
             }),
             proxy: ProxyConfig::default(),
             active_load: ActiveLoadConfig::default(),
+            trace: TraceConfig::default(),
+            priority_override: crate::config::PriorityOverrideConfig::default(),
+            worker_introspect_key: None,
+            load_poll_interval_secs: None,
+            cache_tree_page_size: None,
+            cache_tree_bigram: false,
+            cache_tree_max_nodes: 1_000_000,
+            cache_state_url: None,
+            cache_state_timeout_ms: 20,
+            alias_fallback: None,
+            external_model: None,
         }
     }
 
@@ -499,6 +559,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
         };
         let cb = cb_config_for_spec(&spec, &cfg).expect("model has cb config");
         assert_eq!(cb.threshold.get(), 5);
@@ -513,6 +580,28 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let app = Router::new().route(
             "/server_info",
+            get(move || {
+                let body = body.clone();
+                async move { Json((*body).clone()) }
+            }),
+        );
+        let (tx, rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = rx.await;
+                })
+                .await;
+        });
+        (format!("http://127.0.0.1:{port}"), tx)
+    }
+
+    async fn spawn_fake_openai_models_worker(body: Value) -> (String, oneshot::Sender<()>) {
+        let body = Arc::new(body);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = Router::new().route(
+            "/v1/models",
             get(move || {
                 let body = body.clone();
                 async move { Json((*body).clone()) }
@@ -566,6 +655,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -584,6 +680,240 @@ mod tests {
 
         drop(tx);
         let _ = manager_handle.await;
+    }
+
+    #[tokio::test]
+    async fn manager_registers_config_model_alias_alongside_server_info_name() {
+        let (worker_url, _shutdown) =
+            spawn_fake_server_info_worker(json!({"served_model_name": "internal-model"})).await;
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let (tx, rx) = mpsc::channel::<DiscoveryEvent>(8);
+        let cfg = Arc::new(cfg_with_model_cb("public-model", 3, 30));
+        let manager_handle = tokio::spawn(run_with_introspector(
+            rx,
+            registry.clone(),
+            Some(cfg),
+            None,
+            None,
+            fast_introspector(),
+        ));
+
+        let spec = WorkerSpec {
+            id: WorkerId("w-1".into()),
+            url: worker_url,
+            mode: WorkerMode::Plain,
+            model_ids: Vec::new(),
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
+        };
+        tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
+
+        let registered = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let internal = registry.workers_for(&ModelId("internal-model".into()));
+                let public = registry.workers_for(&ModelId("public-model".into()));
+                if internal.iter().any(|w| w.id == spec.id)
+                    && public.iter().any(|w| w.id == spec.id)
+                {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            registered.is_ok(),
+            "manager did not register worker under both internal and public model ids"
+        );
+
+        drop(tx);
+        let _ = manager_handle.await;
+    }
+
+    #[tokio::test]
+    async fn manager_discovers_vllm_worker_via_openai_models() {
+        let (worker_url, _shutdown) = spawn_fake_openai_models_worker(json!({
+            "object": "list",
+            "data": [{"id": "glm-5.2-fp8-1m-mtp"}]
+        }))
+        .await;
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let (tx, rx) = mpsc::channel::<DiscoveryEvent>(8);
+        let cfg = Arc::new(cfg_with_model_cb("zai-org/GLM-5.2-FP8", 3, 30));
+        let manager_handle = tokio::spawn(run_with_introspector(
+            rx,
+            registry.clone(),
+            Some(cfg),
+            None,
+            None,
+            fast_introspector(),
+        ));
+
+        let spec = WorkerSpec {
+            id: WorkerId("h20-vllm".into()),
+            url: worker_url,
+            mode: WorkerMode::Plain,
+            model_ids: Vec::new(),
+            bootstrap_port: None,
+            min_priority: Some(100),
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: WorkerBackend::Vllm,
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        };
+        tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
+
+        let registered = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let internal = registry.workers_for(&ModelId("glm-5.2-fp8-1m-mtp".into()));
+                let public = registry.workers_for(&ModelId("zai-org/GLM-5.2-FP8".into()));
+                if internal.iter().any(|w| w.id == spec.id)
+                    && public.iter().any(|w| {
+                        w.id == spec.id
+                            && w.backend() == WorkerBackend::Vllm
+                            && w.min_priority() == Some(100)
+                    })
+                {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            registered.is_ok(),
+            "manager did not register vLLM worker under internal and public model ids"
+        );
+
+        drop(tx);
+        let _ = manager_handle.await;
+    }
+
+    #[tokio::test]
+    async fn manager_discovers_sglang_proxy_as_plain_without_kv_events() {
+        let (worker_url, _shutdown) = spawn_fake_openai_models_worker(json!({
+            "object": "list",
+            "data": [{"id": "zai-org/GLM-5.2-FP8"}]
+        }))
+        .await;
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let kv_index = KvEventIndex::new();
+        let (tx, rx) = mpsc::channel::<DiscoveryEvent>(8);
+        let manager_handle = tokio::spawn(run_with_introspector(
+            rx,
+            registry.clone(),
+            None,
+            Some(kv_index.clone()),
+            None,
+            fast_introspector(),
+        ));
+
+        let spec = WorkerSpec {
+            id: WorkerId("mi300x-1p3d".into()),
+            url: worker_url,
+            mode: WorkerMode::Plain,
+            model_ids: Vec::new(),
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: WorkerBackend::SglangProxy,
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        };
+        tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
+
+        let worker = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(worker) = registry.get(&spec.id) {
+                    if !worker.model_ids.is_empty() {
+                        return worker;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("manager did not register SGLang proxy via /v1/models");
+        assert_eq!(worker.mode(), WorkerMode::Plain);
+        assert_eq!(worker.backend(), WorkerBackend::SglangProxy);
+        assert_eq!(
+            kv_index.known_worker_count(),
+            0,
+            "logical SGLang proxy must not attach an inner worker KV stream"
+        );
+
+        drop(tx);
+        let _ = manager_handle.await;
+        kv_index.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn manager_keeps_vllm_worker_out_of_kv_event_index() {
+        let (worker_url, _shutdown) = spawn_fake_openai_models_worker(json!({
+            "data": [{"id": "glm-5.2-fp8-1m-mtp"}]
+        }))
+        .await;
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let kv_index = KvEventIndex::new();
+        let (tx, rx) = mpsc::channel::<DiscoveryEvent>(8);
+        let manager_handle = tokio::spawn(run_with_introspector(
+            rx,
+            registry.clone(),
+            None,
+            Some(kv_index.clone()),
+            None,
+            fast_introspector(),
+        ));
+
+        let spec = WorkerSpec {
+            id: WorkerId("h20-vllm".into()),
+            url: worker_url,
+            mode: WorkerMode::Plain,
+            model_ids: Vec::new(),
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: WorkerBackend::Vllm,
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        };
+        tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
+
+        let registered = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if registry.get(&spec.id).is_some() {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(registered.is_ok(), "manager did not register vLLM worker");
+        assert_eq!(
+            kv_index.known_worker_count(),
+            0,
+            "vLLM worker must not be attached to SGLang KV event index"
+        );
+
+        drop(tx);
+        let _ = manager_handle.await;
+        kv_index.shutdown().await;
     }
 
     /// Worker unreachable (connection refused) => registry still has the
@@ -610,6 +940,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -659,6 +996,13 @@ mod tests {
                 mode: WorkerMode::Plain,
                 model_ids: Vec::new(),
                 bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             };
             tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
             let registered = tokio::time::timeout(Duration::from_secs(2), async {
@@ -680,7 +1024,7 @@ mod tests {
         let _ = manager_handle.await;
     }
 
-    /// End-to-end wiring smoke test: spin up a fake worker, run the
+    /// End-to-end wiring check: spin up a fake worker, run the
     /// manager with a real `KvEventIndex` against that worker URL, and
     /// verify both `Added` and `Removed` propagate through to the
     /// index's internal worker map.
@@ -729,6 +1073,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait until the manager has both registered the worker AND
@@ -830,6 +1181,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
         // Wait for the manager to land the registry write so the
@@ -910,6 +1268,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec.clone())).await.unwrap();
 
@@ -1013,6 +1378,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         };
         tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
 
@@ -1062,13 +1434,111 @@ mod tests {
         let _ = manager_handle.await;
     }
 
-    /// Resurrection safety: a `Removed` that arrives while a reconcile
-    /// re-introspection for the same id is in-flight must NOT resurrect
-    /// the worker. The `Removed` handler awaits the in-flight handle (which
-    /// re-adds the worker), then clears it — so the worker ends up gone and
-    /// stays gone. Guards the per-id ordering contract that `pending`
-    /// enforces for the reconcile path specifically (distinct from the
-    /// Added path's `removed_awaits_in_flight_added`).
+    /// Regression: config-only worker capabilities must survive a failed
+    /// `/server_info` lookup and the later reconcile re-introspection. Dropping
+    /// either field would silently weaken the worker's routing constraints.
+    #[tokio::test]
+    async fn reconcile_preserves_config_capabilities_across_reintrospection() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::time::timeout;
+
+        let ready = Arc::new(AtomicBool::new(false));
+        let (worker_url, _shutdown) =
+            spawn_switchable_server_info_worker(json!({"served_model_name": "m"}), ready.clone())
+                .await;
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let (tx, rx) = mpsc::channel::<DiscoveryEvent>(8);
+        let manager_handle = tokio::spawn(run_with_introspector_and_reconcile(
+            rx,
+            registry.clone(),
+            None,
+            None,
+            None,
+            fast_introspector(),
+            Duration::from_millis(150),
+        ));
+
+        let id = WorkerId("w-gated".into());
+        let model = ModelId("m".into());
+        let spec = WorkerSpec {
+            id: id.clone(),
+            url: worker_url,
+            mode: WorkerMode::Plain,
+            model_ids: Vec::new(),
+            bootstrap_port: None,
+            min_priority: Some(100),
+            max_context_tokens: Some(500_000),
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 500,
+        };
+        tx.send(DiscoveryEvent::Added(spec)).await.unwrap();
+
+        // Wait until the worker is registered (still model-less, /server_info
+        // failing). The gate must already be present at this stage.
+        let stuck = timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(w) = registry.get(&id) {
+                    if w.model_ids.is_empty() {
+                        return w.min_priority();
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert_eq!(
+            stuck.ok().flatten(),
+            Some(100),
+            "gate must be present on initial (pre-resolve) registration",
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().max_context_tokens(),
+            Some(500_000),
+            "context limit must be present on initial registration",
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().prefill_capacity_milli(),
+            500,
+            "prefill capacity must be present on initial registration",
+        );
+
+        // /server_info recovers; reconcile re-introspects and resolves models.
+        ready.store(true, Ordering::SeqCst);
+        let recovered = timeout(Duration::from_secs(3), async {
+            loop {
+                if !registry.workers_for(&model).is_empty() {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(recovered.is_ok(), "reconcile must resolve the model id");
+
+        // The crux: the gate survived the reconcile spec rebuild.
+        assert_eq!(
+            registry.get(&id).unwrap().min_priority(),
+            Some(100),
+            "min_priority must survive reconcile re-introspection, not reset to None",
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().max_context_tokens(),
+            Some(500_000),
+            "max_context_tokens must survive reconcile re-introspection",
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().prefill_capacity_milli(),
+            500,
+            "prefill capacity must survive reconcile re-introspection",
+        );
+
+        drop(tx);
+        let _ = manager_handle.await;
+    }
     #[tokio::test]
     async fn reconcile_does_not_resurrect_worker_removed_mid_reintrospection() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -1138,6 +1608,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
         .await
         .unwrap();
@@ -1265,6 +1742,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
         .await
         .unwrap();
@@ -1336,6 +1820,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: Vec::new(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
         .await
         .unwrap();

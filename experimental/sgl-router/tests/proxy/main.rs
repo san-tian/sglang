@@ -10,13 +10,22 @@
 
 mod common;
 
+mod alias_fallback_probe;
 mod cache_aware_input_ids;
+mod cache_aware_pending_pressure;
 mod chat_routing;
+mod completions_routing;
+mod context_window_routing;
+mod external_model_routing;
 mod failover;
 mod graceful_shutdown;
 mod header_forwarding;
+mod messages_routing;
 mod pd_bootstrap_injection;
 mod pd_pool_isolation;
+mod priority_routing;
+mod reasoning_compat;
+mod responses_routing;
 mod roundrobin_input_ids;
 mod sticky_input_ids;
 mod sticky_routing;

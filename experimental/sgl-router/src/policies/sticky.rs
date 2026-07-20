@@ -237,6 +237,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
     }
 

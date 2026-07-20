@@ -87,6 +87,49 @@ class ResponsesRequestTestCase(unittest.TestCase):
         self.assertEqual(len(request.tools[0].tools), 2)
         self.assertEqual(request.tools[0].tools[0]["name"], "apply_patch")
 
+    def test_reasoning_effort_accepts_openai_values(self):
+        for effort in ("none", "minimal", "low", "medium", "high", "xhigh"):
+            request = ResponsesRequest(
+                model="x",
+                input="hi",
+                reasoning={"effort": effort},
+                store=False,
+            )
+            self.assertEqual(request.reasoning.effort, effort)
+
+    def test_reasoning_effort_none_disables_chat_template_thinking(self):
+        request = ResponsesRequest(
+            model="x",
+            input="hi",
+            reasoning={"effort": "none"},
+            store=False,
+        )
+        self.assertEqual(
+            request.chat_template_kwargs,
+            {"thinking": False, "enable_thinking": False},
+        )
+
+    def test_thinking_disabled_compat_field_disables_chat_template_thinking(self):
+        request = ResponsesRequest(
+            model="x",
+            input="hi",
+            thinking={"type": "disabled"},
+            store=False,
+        )
+        self.assertEqual(
+            request.chat_template_kwargs,
+            {"thinking": False, "enable_thinking": False},
+        )
+
+    def test_enable_thinking_compat_field_flows_to_chat_template_kwargs(self):
+        request = ResponsesRequest(
+            model="x",
+            input="hi",
+            enable_thinking=False,
+            store=False,
+        )
+        self.assertEqual(request.chat_template_kwargs, {"enable_thinking": False})
+
 
 class ResponsesSamplingParamsTestCase(unittest.TestCase):
     def test_processed_stop_and_tool_constraint_propagate(self):
@@ -140,6 +183,54 @@ class ResponsesResponseFromRequestTestCase(unittest.TestCase):
             usage=UsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
         self.assertFalse(response.parallel_tool_calls)
+
+
+class ResponsesToolChoiceTestCase(unittest.TestCase):
+    def test_flat_tool_choice_normalized_to_nested(self):
+        from sglang.srt.entrypoints.openai.protocol import ToolChoice
+
+        # OpenAI Responses API flat form {"type":"function","name":X}
+        request = ResponsesRequest(
+            model="x",
+            input="call get_weather",
+            tool_choice={"type": "function", "name": "get_weather"},
+            tools=[
+                {
+                    "type": "function",
+                    "name": "get_weather",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            store=False,
+        )
+        self.assertIsInstance(request.tool_choice, ToolChoice)
+        self.assertEqual(request.tool_choice.function.name, "get_weather")
+
+    def test_string_tool_choice_unchanged(self):
+        for choice in ("auto", "required", "none"):
+            request = ResponsesRequest(
+                model="x", input="hi", tool_choice=choice, store=False
+            )
+            self.assertEqual(request.tool_choice, choice)
+
+    def test_nested_tool_choice_accepted(self):
+        from sglang.srt.entrypoints.openai.protocol import ToolChoice
+
+        request = ResponsesRequest(
+            model="x",
+            input="hi",
+            tool_choice={"type": "function", "function": {"name": "f"}},
+            tools=[
+                {
+                    "type": "function",
+                    "name": "f",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            store=False,
+        )
+        self.assertIsInstance(request.tool_choice, ToolChoice)
+        self.assertEqual(request.tool_choice.function.name, "f")
 
 
 if __name__ == "__main__":

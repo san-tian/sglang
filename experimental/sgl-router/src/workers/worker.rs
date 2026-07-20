@@ -1,10 +1,78 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::discovery::{ModelId, WorkerId, WorkerMode};
+use crate::discovery::{
+    ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerRoute, WorkerRouteSet, WorkerTier,
+};
 use crate::health::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
-use std::sync::Arc;
+use crate::router_state::RouterStateLoadOverlay;
+use axum::http::{header, HeaderMap, HeaderValue};
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefillPriorityLoad {
+    pub priority: i64,
+    pub total_uncached_tokens: usize,
+    pub ahead_uncached_tokens: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidatePrefillLoad {
+    pub chunked_remaining_uncached_tokens: usize,
+    pub work_bucket_bounds: Vec<usize>,
+    pub priority_scheduling_enabled: bool,
+    pub schedule_low_priority_values_first: bool,
+    pub priorities: Vec<PrefillPriorityLoad>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefillLoadRole {
+    Integrated,
+    Prefill,
+}
+
+impl CandidatePrefillLoad {
+    pub fn work_ahead_tokens(
+        &self,
+        candidate_priority: i64,
+        candidate_uncached_tokens: usize,
+    ) -> Option<usize> {
+        let bucket = self
+            .work_bucket_bounds
+            .iter()
+            .position(|upper| candidate_uncached_tokens <= *upper)?;
+        let candidate_priority = if self.priority_scheduling_enabled {
+            candidate_priority
+        } else {
+            0
+        };
+        let mut ahead = self.chunked_remaining_uncached_tokens;
+        for group in &self.priorities {
+            let better_priority = self.priority_scheduling_enabled
+                && if self.schedule_low_priority_values_first {
+                    group.priority < candidate_priority
+                } else {
+                    group.priority > candidate_priority
+                };
+            if better_priority {
+                ahead = ahead.saturating_add(group.total_uncached_tokens);
+            } else if group.priority == candidate_priority {
+                ahead = ahead.saturating_add(*group.ahead_uncached_tokens.get(bucket)?);
+            }
+        }
+        Some(ahead)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefillLoadSnapshot {
+    pub role: PrefillLoadRole,
+    pub running_requests: usize,
+    pub total_waiting_uncached_tokens: usize,
+    pub candidate: Option<CandidatePrefillLoad>,
+}
 
 /// Parse a host from a worker URL. Matches SMG's `worker_builder.rs`
 /// fallback chain: parse as-is, retry with `http://` prefix if missing,
@@ -55,6 +123,42 @@ impl Drop for LoadGuard {
     }
 }
 
+/// RAII guard for router-local dispatch reservations. Unlike
+/// `active_requests`, this counter is used only to bridge the gap between a
+/// router-side selection decision and the next worker `/get_load` poll. It is
+/// part of `effective_load(use_reported = true)` so bursty requests do not all
+/// route on the same stale remote snapshot.
+#[must_use = "PendingLoadGuard must be held for the request's lifetime; dropping it immediately clears the local reservation"]
+pub struct PendingLoadGuard {
+    counter: Arc<AtomicUsize>,
+    token_counter: Arc<AtomicUsize>,
+    tokens: usize,
+}
+
+impl PendingLoadGuard {
+    pub(crate) fn with_tokens(
+        counter: Arc<AtomicUsize>,
+        token_counter: Arc<AtomicUsize>,
+        tokens: usize,
+    ) -> Self {
+        let tokens = tokens.max(1);
+        counter.fetch_add(1, Ordering::Relaxed);
+        token_counter.fetch_add(tokens, Ordering::Relaxed);
+        Self {
+            counter,
+            token_counter,
+            tokens,
+        }
+    }
+}
+
+impl Drop for PendingLoadGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
+        self.token_counter.fetch_sub(self.tokens, Ordering::Relaxed);
+    }
+}
+
 impl WorkerMode {
     fn as_u8(self) -> u8 {
         match self {
@@ -88,6 +192,16 @@ pub struct Worker {
     pub model_ids: Vec<ModelId>,
     pub breaker: Arc<CircuitBreaker>,
     pub active_requests: Arc<AtomicUsize>,
+    /// Router-local reservations made at worker selection time. This is
+    /// intentionally separate from `active_requests`: reported-load routing
+    /// uses worker-side queue depth as its remote signal, then adds this local
+    /// pending count so concurrent selections inside the poll interval see
+    /// each other immediately.
+    pending_requests: Arc<AtomicUsize>,
+    /// Token-weighted form of `pending_requests`. Route handlers reserve the
+    /// prompt-token count at selection time so a long prefill immediately
+    /// contributes more local TTFT pressure than a short request.
+    pending_tokens: Arc<AtomicUsize>,
     /// Hostname parsed from `url` at construction time and cached.
     /// Used as the `bootstrap_host` field on PD-disagg requests so the
     /// prefill engine can match incoming KV-transfer requests from
@@ -99,6 +213,60 @@ pub struct Worker {
     /// decode and plain). Set via `--disaggregation-bootstrap-port` at
     /// worker startup; carried from `WorkerSpec`.
     bootstrap_port: Option<u16>,
+    /// Minimum request priority this worker accepts (`None` = any). A
+    /// request with effective priority below this value is filtered out
+    /// of the candidate set before policy selection. Carried from
+    /// `WorkerSpec`; see [`crate::discovery::WorkerSpec::min_priority`].
+    min_priority: Option<i64>,
+    /// Maximum total context this worker can safely serve. Requests whose
+    /// prompt plus output budget exceeds this value are removed before
+    /// policy scoring. `None` leaves validation to the engine.
+    max_context_tokens: Option<usize>,
+    /// Serving backend. Determines which worker-control endpoints the
+    /// router may call; e.g. vLLM workers do not expose SGLang `/get_load`
+    /// or KV event metadata.
+    backend: WorkerBackend,
+    /// Operator-defined routing tier used by tier-aware policies.
+    tier: WorkerTier,
+    /// Router-facing API routes this worker is allowed to serve.
+    routes: WorkerRouteSet,
+    /// Relative prefill capacity in milli-units. `1000` is the baseline.
+    prefill_capacity_milli: usize,
+    /// Worker-reported real load (from the background load poller hitting
+    /// the worker's `/get_load`). Decoupled from `active_requests`
+    /// (router-side in-flight count), which is a poor signal for a mixed
+    /// short/long workload. Sentinel values:
+    ///   `REPORTED_LOAD_UNSET` (-1): no real data — poller disabled, or not
+    ///     polled yet → consumers fall back to `active_load()`.
+    ///   `REPORTED_LOAD_FAILED` (-2): the latest `/get_load` or `/health`
+    ///     probe failed → consumers treat this worker as HIGH load and PD
+    ///     admission excludes it.
+    ///   `>= 0`: real load signal (e.g. summed `num_waiting_reqs`).
+    /// `Arc<AtomicI64>` so the poller updates it lock-free without a
+    /// registry write-lock.
+    reported_load: Arc<AtomicI64>,
+    /// Optional token-level prefill snapshot from a successful `/get_load`
+    /// poll. Old workers omit these fields, so absence is a compatibility
+    /// state rather than a probe failure.
+    reported_prefill_load: Arc<RwLock<Option<PrefillLoadSnapshot>>>,
+    /// Optional global pending snapshot from the single-writer router-state
+    /// service. Present only in multi-replica gateway deployments.
+    global_pending: Option<Arc<RouterStateLoadOverlay>>,
+    bearer_token: Option<String>,
+}
+
+/// `reported_load` sentinel: no real data (poller off / not yet polled).
+/// Consumers fall back to the router-side in-flight `active_load()`.
+pub const REPORTED_LOAD_UNSET: i64 = -1;
+/// `reported_load` sentinel: the latest load or health probe failed. Consumers
+/// treat the worker as HIGH load so routing avoids a possibly-dead worker.
+pub const REPORTED_LOAD_FAILED: i64 = -2;
+
+/// Shared interpretation of the load-poller sentinel. Keeping this as a
+/// value-level helper lets metrics use the same atomic snapshot for both the
+/// reported-load and routable gauges.
+pub fn reported_load_allows_routing(reported_load: i64) -> bool {
+    reported_load != REPORTED_LOAD_FAILED
 }
 
 impl Worker {
@@ -124,9 +292,25 @@ impl Worker {
             model_ids: spec.model_ids,
             breaker,
             active_requests: Arc::new(AtomicUsize::new(0)),
+            pending_requests: Arc::new(AtomicUsize::new(0)),
+            pending_tokens: Arc::new(AtomicUsize::new(0)),
             bootstrap_host,
             bootstrap_port: spec.bootstrap_port,
+            min_priority: spec.min_priority,
+            max_context_tokens: spec.max_context_tokens,
+            backend: spec.backend,
+            tier: spec.tier,
+            routes: spec.routes,
+            prefill_capacity_milli: spec.prefill_capacity_milli,
+            reported_load: Arc::new(AtomicI64::new(REPORTED_LOAD_UNSET)),
+            reported_prefill_load: Arc::new(RwLock::new(None)),
+            global_pending: None,
+            bearer_token: spec.bearer_token,
         }
+    }
+
+    pub fn attach_router_state_overlay(&mut self, overlay: Arc<RouterStateLoadOverlay>) {
+        self.global_pending = Some(overlay);
     }
 
     /// Hostname carried on PD-disagg request bodies as `bootstrap_host`.
@@ -137,6 +321,63 @@ impl Worker {
     /// SGLang bootstrap server port. `None` for decode / plain workers.
     pub fn bootstrap_port(&self) -> Option<u16> {
         self.bootstrap_port
+    }
+
+    /// Minimum request priority this worker accepts. `None` means the
+    /// worker accepts any request; `Some(N)` means it is eligible only for
+    /// requests whose effective priority is `>= N`. Consumed by the
+    /// pre-selection eligibility filter (see
+    /// [`crate::policies::registry::filter_eligible`]).
+    pub fn min_priority(&self) -> Option<i64> {
+        self.min_priority
+    }
+
+    pub fn max_context_tokens(&self) -> Option<usize> {
+        self.max_context_tokens
+    }
+
+    pub fn backend(&self) -> WorkerBackend {
+        self.backend
+    }
+
+    pub fn tier(&self) -> WorkerTier {
+        self.tier
+    }
+
+    pub fn supports_route(&self, route: WorkerRoute) -> bool {
+        self.routes.supports(route)
+    }
+
+    pub fn routes(&self) -> WorkerRouteSet {
+        self.routes
+    }
+
+    pub fn prefill_capacity_milli(&self) -> usize {
+        self.prefill_capacity_milli.max(1)
+    }
+
+    /// Optional per-worker bearer token. Shared-key pools leave this unset
+    /// and forward the inbound client Authorization header unchanged.
+    pub fn bearer_token(&self) -> Option<&str> {
+        self.bearer_token.as_deref()
+    }
+
+    /// Headers to use for an upstream request to this worker. For legacy
+    /// per-worker-key pools this clones the inbound header map and replaces
+    /// Authorization with the worker's own key; otherwise it borrows the
+    /// inbound headers unchanged.
+    pub fn headers_for<'a>(
+        &self,
+        headers: &'a HeaderMap,
+    ) -> Result<Cow<'a, HeaderMap>, header::InvalidHeaderValue> {
+        let Some(token) = self.bearer_token() else {
+            return Ok(Cow::Borrowed(headers));
+        };
+        let mut outbound = headers.clone();
+        let mut value = HeaderValue::from_str(&format!("Bearer {token}"))?;
+        value.set_sensitive(true);
+        outbound.insert(header::AUTHORIZATION, value);
+        Ok(Cow::Owned(outbound))
     }
 
     /// Returns the current [`WorkerMode`] of this worker.
@@ -159,10 +400,126 @@ impl Worker {
         self.active_requests.load(Ordering::Relaxed)
     }
 
+    pub fn pending_load(&self) -> usize {
+        self.pending_requests.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_token_load(&self) -> usize {
+        self.pending_tokens.load(Ordering::Relaxed)
+    }
+
+    pub fn global_pending_load(&self) -> usize {
+        self.global_pending
+            .as_ref()
+            .map(|overlay| overlay.pending_requests(&self.url))
+            .unwrap_or(0)
+    }
+
+    pub fn global_pending_token_load(&self) -> usize {
+        self.global_pending
+            .as_ref()
+            .map(|overlay| overlay.pending_tokens(&self.url))
+            .unwrap_or(0)
+    }
+
+    /// Worker-reported real load, or a sentinel (`REPORTED_LOAD_UNSET` /
+    /// `REPORTED_LOAD_FAILED`). Updated by the background load poller.
+    pub fn reported_load(&self) -> i64 {
+        self.reported_load.load(Ordering::Relaxed)
+    }
+
+    /// Set the worker-reported real load (called by the load poller). Pass
+    /// a sentinel (`REPORTED_LOAD_FAILED`) on poll failure.
+    pub fn set_reported_load(&self, v: i64) {
+        self.reported_load.store(v, Ordering::Relaxed);
+    }
+
+    pub fn reported_prefill_load(&self) -> Option<PrefillLoadSnapshot> {
+        self.reported_prefill_load
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn set_reported_prefill_load(&self, snapshot: Option<PrefillLoadSnapshot>) {
+        *self
+            .reported_prefill_load
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
+    }
+
+    /// Whether the latest combined load and health probe permits dispatch.
+    ///
+    /// `REPORTED_LOAD_UNSET` remains eligible so a newly started router can
+    /// serve before its first poll. Only an explicit poll failure removes the
+    /// worker from probe-aware routing and readiness decisions.
+    pub fn introspection_probe_allows_routing(&self) -> bool {
+        reported_load_allows_routing(self.reported_load())
+    }
+
+    /// Effective load for routing decisions, honoring the configured load
+    /// source. When `use_reported` is false (poller disabled), use router-side
+    /// in-flight plus pending reservations. When true: the real reported load if
+    /// available (`>= 0`) plus router-local pending reservations; on poll
+    /// failure (`REPORTED_LOAD_FAILED`) a very
+    /// high value so spill-to-idle never targets a possibly-dead worker;
+    /// before the first successful poll (`REPORTED_LOAD_UNSET`) fall back to
+    /// in-flight plus pending so a just-started router still routes sanely.
+    pub fn effective_load(&self, use_reported: bool) -> usize {
+        let pending = self
+            .pending_load()
+            .saturating_add(self.global_pending_load());
+        if !use_reported {
+            return self.active_load().saturating_add(pending);
+        }
+        match self.reported_load() {
+            REPORTED_LOAD_FAILED => usize::MAX / 2, // treat unreachable as very busy
+            REPORTED_LOAD_UNSET => self.active_load().saturating_add(pending),
+            v if v >= 0 => (v as usize).saturating_add(pending),
+            _ => self.active_load().saturating_add(pending),
+        }
+    }
+
+    /// TTFT-oriented load for routing decisions. This keeps the same remote
+    /// load semantics as `effective_load(use_reported)`, but replaces the
+    /// request-count local pending term with token-weighted pressure units.
+    pub fn effective_ttft_load(&self, use_reported: bool, token_scale: usize) -> usize {
+        let scale = token_scale.max(1);
+        let pending_tokens = self
+            .pending_token_load()
+            .saturating_add(self.global_pending_token_load());
+        let token_units = pending_tokens.saturating_add(scale - 1) / scale;
+        if !use_reported {
+            return self.active_load().saturating_add(token_units);
+        }
+        match self.reported_load() {
+            REPORTED_LOAD_FAILED => usize::MAX / 2,
+            REPORTED_LOAD_UNSET => self.active_load().saturating_add(token_units),
+            v if v >= 0 => (v as usize).saturating_add(token_units),
+            _ => self.active_load().saturating_add(token_units),
+        }
+    }
+
     /// Returns a RAII guard that increments `active_requests` now and
     /// decrements when the guard is dropped.
     pub fn load_guard(&self) -> LoadGuard {
         LoadGuard::new(self.active_requests.clone())
+    }
+
+    /// Returns a RAII guard that increments router-local pending load now and
+    /// decrements when the guard is dropped.
+    pub fn pending_guard(&self) -> PendingLoadGuard {
+        self.pending_guard_with_tokens(1)
+    }
+
+    /// Returns a RAII guard that reserves one local pending request and the
+    /// routed prompt-token count for TTFT-first pressure decisions.
+    pub fn pending_guard_with_tokens(&self, tokens: usize) -> PendingLoadGuard {
+        PendingLoadGuard::with_tokens(
+            self.pending_requests.clone(),
+            self.pending_tokens.clone(),
+            tokens,
+        )
     }
 }
 
@@ -171,8 +528,17 @@ impl std::fmt::Debug for Worker {
         f.debug_struct("Worker")
             .field("id", &self.id)
             .field("url", &self.url)
+            .field("backend", &self.backend)
+            .field("tier", &self.tier)
             .field("mode", &self.mode())
             .field("active_load", &self.active_load())
+            .field("pending_load", &self.pending_load())
+            .field("pending_token_load", &self.pending_token_load())
+            .field("global_pending_load", &self.global_pending_load())
+            .field(
+                "global_pending_token_load",
+                &self.global_pending_token_load(),
+            )
             .finish()
     }
 }
@@ -181,6 +547,9 @@ impl std::fmt::Debug for Worker {
 mod tests {
     use super::*;
     use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
+    use crate::router_state::{
+        RouterStateLoadOverlay, RouterStateSnapshotResponse, RouterStateWorkerLoad,
+    };
 
     #[test]
     fn load_guard_increments_and_decrements() {
@@ -190,6 +559,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.active_load(), 0);
         let g = w.load_guard();
@@ -203,6 +579,133 @@ mod tests {
     }
 
     #[test]
+    fn effective_load_honors_source_and_sentinels() {
+        let w = Worker::new(WorkerSpec {
+            id: WorkerId("w".into()),
+            url: "http://x".into(),
+            mode: WorkerMode::Plain,
+            model_ids: vec![],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        });
+        // Seed router-side in-flight = 2.
+        let _g1 = w.load_guard();
+        let _g2 = w.load_guard();
+        assert_eq!(w.active_load(), 2);
+
+        // Poller disabled: in-flight plus pending, ignoring reported_load.
+        w.set_reported_load(99);
+        assert_eq!(w.effective_load(false), 2);
+
+        // Poller enabled, real value present: use it.
+        w.set_reported_load(7);
+        assert_eq!(w.effective_load(true), 7);
+
+        // Router-local pending reservations bridge the poll interval when
+        // real load is present.
+        let pending = w.pending_guard();
+        assert_eq!(w.pending_load(), 1);
+        assert_eq!(w.effective_load(false), 3);
+        assert_eq!(w.effective_load(true), 8);
+        drop(pending);
+        assert_eq!(w.pending_load(), 0);
+        assert_eq!(w.effective_load(false), 2);
+        assert_eq!(w.effective_load(true), 7);
+
+        // Poller enabled, UNSET sentinel: fall back to in-flight plus pending.
+        w.set_reported_load(REPORTED_LOAD_UNSET);
+        let pending = w.pending_guard();
+        assert_eq!(w.effective_load(true), 3);
+        drop(pending);
+        assert_eq!(w.effective_load(true), 2);
+
+        // Poller enabled, FAILED sentinel: treat as very-high load so
+        // spill-to-idle never targets a possibly-dead worker.
+        w.set_reported_load(REPORTED_LOAD_FAILED);
+        assert_eq!(w.effective_load(true), usize::MAX / 2);
+    }
+
+    #[test]
+    fn effective_ttft_load_uses_token_weighted_pending_pressure() {
+        let w = Worker::new(WorkerSpec {
+            id: WorkerId("w".into()),
+            url: "http://x".into(),
+            mode: WorkerMode::Plain,
+            model_ids: vec![],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        });
+
+        w.set_reported_load(2);
+        let pending = w.pending_guard_with_tokens(130);
+        assert_eq!(w.pending_load(), 1);
+        assert_eq!(w.pending_token_load(), 130);
+        assert_eq!(
+            w.effective_load(true),
+            3,
+            "legacy load still counts one local pending request"
+        );
+        assert_eq!(
+            w.effective_ttft_load(true, 64),
+            5,
+            "TTFT load counts ceil(130 / 64) = 3 local token units plus reported load 2"
+        );
+        drop(pending);
+        assert_eq!(w.pending_load(), 0);
+        assert_eq!(w.pending_token_load(), 0);
+        assert_eq!(w.effective_ttft_load(true, 64), 2);
+    }
+
+    #[test]
+    fn effective_load_includes_router_state_overlay_pending() {
+        let mut w = Worker::new(WorkerSpec {
+            id: WorkerId("w".into()),
+            url: "http://x".into(),
+            mode: WorkerMode::Plain,
+            model_ids: vec![],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
+        });
+        let overlay = RouterStateLoadOverlay::new();
+        overlay.update(RouterStateSnapshotResponse {
+            workers: [(
+                "http://x".to_string(),
+                RouterStateWorkerLoad {
+                    pending_requests: 3,
+                    pending_tokens: 130,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        });
+        w.attach_router_state_overlay(overlay);
+        w.set_reported_load(2);
+
+        assert_eq!(w.global_pending_load(), 3);
+        assert_eq!(w.effective_load(false), 3);
+        assert_eq!(w.effective_load(true), 5);
+        assert_eq!(w.effective_ttft_load(true, 64), 5);
+    }
+
+    #[test]
     fn mode_accessor_round_trips_all_variants() {
         for m in [WorkerMode::Plain, WorkerMode::Prefill, WorkerMode::Decode] {
             let w = Worker::new(WorkerSpec {
@@ -211,6 +714,13 @@ mod tests {
                 mode: m,
                 model_ids: vec![],
                 bootstrap_port: None,
+                min_priority: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: Default::default(),
+                tier: Default::default(),
+                routes: WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
             });
             assert_eq!(w.mode(), m);
         }
@@ -224,6 +734,13 @@ mod tests {
             mode: WorkerMode::Prefill,
             model_ids: vec![],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.mode(), WorkerMode::Prefill);
         w.set_mode(WorkerMode::Decode);
@@ -240,6 +757,13 @@ mod tests {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_port(), Some(8997));
     }
@@ -252,6 +776,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: vec![],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_port(), None);
     }
@@ -264,6 +795,13 @@ mod tests {
             mode: WorkerMode::Prefill,
             model_ids: vec![],
             bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_host(), "10.0.0.1");
     }
@@ -276,6 +814,13 @@ mod tests {
             mode: WorkerMode::Prefill,
             model_ids: vec![],
             bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_host(), "prefill-0.svc.cluster.local");
     }
@@ -292,6 +837,13 @@ mod tests {
             mode: WorkerMode::Prefill,
             model_ids: vec![],
             bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         });
         assert_eq!(w.bootstrap_host(), "localhost");
     }

@@ -104,6 +104,7 @@ from sglang.srt.entrypoints.openai.serving_tokenize import (
 from sglang.srt.entrypoints.openai.serving_transcription import (
     OpenAIServingTranscription,
 )
+from sglang.srt.entrypoints.request_headers import apply_header_overrides
 from sglang.srt.entrypoints.warmup import execute_warmups
 from sglang.srt.environ import envs
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
@@ -269,6 +270,13 @@ async def lifespan(fast_api_app: FastAPI):
         warmup_thread_kwargs = dict(server_args=server_args)
         thread_label = f"MultiTokenizer-{_global_state.tokenizer_manager.worker_id}"
 
+    # Lifespan runs inside the process that actually serves requests. This is
+    # important for multi-tokenizer mode, where uvicorn starts child workers
+    # after the parent has prepared the application.
+    from sglang.srt.utils.log_utils import configure_sls_logging
+
+    configure_sls_logging(service_name="sglang-worker")
+
     # Add prometheus middleware
     if server_args.enable_metrics:
         add_prometheus_middleware(app)
@@ -402,6 +410,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def sls_trace_context_middleware(request: Request, call_next):
+    """Bind inbound trace identifiers to logs produced by this request."""
+    from sglang.srt.utils.log_utils import get_sls_log_filter
+
+    trace_id = request.headers.get("x-trace-id") or f"trace_{uuid.uuid4().hex}"
+    request_id = request.headers.get("x-request-id", "")
+    sls_filter = get_sls_log_filter()
+    context_tokens = sls_filter.set_context(
+        trace_id=trace_id or None,
+        request_id=request_id or None,
+    )
+    try:
+        response = await call_next(request)
+        response.headers["x-trace-id"] = trace_id
+        return response
+    finally:
+        sls_filter.reset_context(context_tokens)
+
+
+if envs.SGLANG_ENABLE_REQUEST_DECOMPRESSION.get():
+    from sglang.srt.entrypoints.http_request_decompression import (
+        RequestDecompressionMiddleware,
+    )
+
+    app.add_middleware(RequestDecompressionMiddleware)
 
 # Include routers
 from sglang.srt.entrypoints.v1_loads import router as v1_loads_router
@@ -731,19 +767,47 @@ async def get_load():
         "Endpoint '/get_load' is deprecated and will be removed in a future version. "
         "Please use '/v1/loads' instead."
     )
-    load_results = await _global_state.tokenizer_manager.get_loads(include=["core"])
+    load_results = await _global_state.tokenizer_manager.get_loads(
+        include=["core", "prefill_queue"]
+    )
     ts = time.perf_counter()
-    return [
-        {
+    load_role = _global_state.tokenizer_manager.server_args.disaggregation_mode
+    results = []
+    for r in load_results:
+        entry = {
             "dp_rank": r.dp_rank,
             "num_reqs": r.num_running_reqs + r.num_waiting_reqs,
+            "num_running_reqs": r.num_running_reqs,
             "num_waiting_reqs": r.num_waiting_reqs,
+            "num_waiting_uncached_tokens": r.num_waiting_uncached_tokens,
+            "load_role": load_role,
             "num_tokens": r.num_total_tokens,
             "num_pending_tokens": r.num_total_tokens - r.num_used_tokens,
             "ts_tic": ts,
         }
-        for r in load_results
-    ]
+        if r.has_prefill_queue:
+            entry["prefill_queue"] = {
+                "detail_complete": r.prefill_queue_detail_complete,
+                "chunked_remaining_uncached_tokens": (
+                    r.prefill_queue_chunked_remaining_uncached_tokens
+                ),
+                "work_bucket_bounds": r.prefill_queue_work_bucket_bounds,
+                "priority_scheduling_enabled": (
+                    r.prefill_queue_priority_scheduling_enabled
+                ),
+                "schedule_low_priority_values_first": (
+                    r.prefill_queue_schedule_low_priority_values_first
+                ),
+                "priority_values": r.prefill_queue_priority_values,
+                "priority_total_uncached_tokens": (
+                    r.prefill_queue_priority_total_uncached_tokens
+                ),
+                "priority_ahead_uncached_tokens": (
+                    r.prefill_queue_priority_ahead_uncached_tokens
+                ),
+            }
+        results.append(entry)
+    return results
 
 
 # example usage:
@@ -781,6 +845,8 @@ if os.environ.get("DUMPER_SERVER_PORT") == "reuse":
 )
 async def generate_request(obj: GenerateReqInput, request: Request):
     """Handle a generate request."""
+    if envs.SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES.get():
+        apply_header_overrides(obj, request.headers)
     if obj.stream:
 
         async def stream_results() -> AsyncIterator[bytes]:

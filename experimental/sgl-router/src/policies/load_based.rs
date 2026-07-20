@@ -7,8 +7,10 @@ use std::sync::Arc;
 
 /// Deterministic load-based policy.
 ///
-/// Chooses the candidate with the lowest current `Worker::active_load`.
-/// Ties follow the candidate slice order, which is registry-dependent.
+/// Chooses the candidate with the lowest worker-reported load plus local
+/// pending reservations. Before the first successful load poll, it falls back
+/// to router-local active load. Ties follow the candidate slice order, which
+/// is registry-dependent.
 #[derive(Debug, Default)]
 pub struct LoadBasedPolicy;
 
@@ -20,7 +22,7 @@ impl LoadBasedPolicy {
     pub fn pick_min_load(workers: &[Arc<Worker>]) -> Option<Arc<Worker>> {
         workers
             .iter()
-            .min_by_key(|w| w.active_load())
+            .min_by_key(|w| w.effective_load(true))
             .map(Arc::clone)
     }
 }
@@ -35,6 +37,7 @@ impl Policy for LoadBasedPolicy {
 mod tests {
     use super::*;
     use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
+    use crate::workers::worker::REPORTED_LOAD_FAILED;
 
     fn worker(id: &str) -> Arc<Worker> {
         Arc::new(Worker::new(WorkerSpec {
@@ -43,6 +46,13 @@ mod tests {
             mode: WorkerMode::Plain,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }))
     }
 
@@ -55,13 +65,59 @@ mod tests {
     }
 
     #[test]
-    fn picks_lowest_active_load() {
+    fn falls_back_to_lowest_active_load_before_first_poll() {
         let policy = LoadBasedPolicy::new();
         let model = ModelId("tiny".into());
         let ctx = SelectionContext::new(&model, None);
         let w0 = worker("w0");
         let w1 = worker("w1");
         let _g0 = w0.load_guard();
+        assert_eq!(
+            policy.select(&[w0, Arc::clone(&w1)], &ctx).unwrap().id,
+            w1.id
+        );
+    }
+
+    #[test]
+    fn picks_lowest_worker_reported_load() {
+        let policy = LoadBasedPolicy::new();
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None);
+        let w0 = worker("w0");
+        let w1 = worker("w1");
+        w0.set_reported_load(1);
+        w1.set_reported_load(0);
+        assert_eq!(
+            policy.select(&[w0, Arc::clone(&w1)], &ctx).unwrap().id,
+            w1.id
+        );
+    }
+
+    #[test]
+    fn pending_reservation_breaks_reported_load_tie() {
+        let policy = LoadBasedPolicy::new();
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None);
+        let w0 = worker("w0");
+        let w1 = worker("w1");
+        w0.set_reported_load(0);
+        w1.set_reported_load(0);
+        let _pending = w0.pending_guard();
+        assert_eq!(
+            policy.select(&[w0, Arc::clone(&w1)], &ctx).unwrap().id,
+            w1.id
+        );
+    }
+
+    #[test]
+    fn avoids_failed_load_probe() {
+        let policy = LoadBasedPolicy::new();
+        let model = ModelId("tiny".into());
+        let ctx = SelectionContext::new(&model, None);
+        let w0 = worker("w0");
+        let w1 = worker("w1");
+        w0.set_reported_load(REPORTED_LOAD_FAILED);
+        w1.set_reported_load(100);
         assert_eq!(
             policy.select(&[w0, Arc::clone(&w1)], &ctx).unwrap().id,
             w1.id

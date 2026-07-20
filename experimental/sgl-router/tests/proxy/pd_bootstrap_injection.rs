@@ -19,6 +19,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sgl_router::config::{
     ActiveLoadConfig, Config, DiscoveryBackend, ModelConfig, ObservabilityConfig, PolicyKind,
@@ -37,6 +38,7 @@ use tower::ServiceExt;
 
 fn config() -> Config {
     Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
         server: ServerConfig {
             host: "0".into(),
             port: 0,
@@ -48,13 +50,26 @@ fn config() -> Config {
             policy: PolicyKind::RoundRobin,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             sticky: None,
         },
         discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
             urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
         }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     }
 }
 
@@ -79,6 +94,22 @@ fn chat_request() -> Request<Body> {
             serde_json::to_vec(&serde_json::json!({
                 "model": "tiny",
                 "messages": [{"role": "user", "content": "hi"}],
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+}
+
+fn streaming_chat_request() -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "model": "tiny",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": true,
             }))
             .unwrap(),
         ))
@@ -142,6 +173,13 @@ async fn pd_mode_chat_injects_bootstrap_fields_into_both_bodies() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -149,11 +187,18 @@ async fn pd_mode_chat_injects_bootstrap_fields_into_both_bodies() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
 
-    let res = app.oneshot(chat_request()).await.unwrap();
+    let res = app.clone().oneshot(chat_request()).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK, "decode side should 200");
 
     let prefill_body = await_captured_body(&prefill, Duration::from_secs(2), "prefill").await;
@@ -186,6 +231,113 @@ async fn pd_mode_chat_injects_bootstrap_fields_into_both_bodies() {
     assert_eq!(bootstrap_port(&dj), Some(8997));
 }
 
+/// A decode can disappear after the most recent load poll but before
+/// dispatch. A TCP connect failure is known to happen before that decode
+/// accepted the request, so the router can safely reselect one alternate
+/// decode while keeping the original prefill request and bootstrap room.
+#[tokio::test]
+async fn pd_mode_reselects_decode_after_connect_failure() {
+    let prefill = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let healthy_decode = crate::common::mock_worker::MockWorker::start(vec![]).await;
+
+    let dead_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dead_url = format!("http://{}", dead_listener.local_addr().unwrap());
+    drop(dead_listener);
+
+    let healthy_addr: std::net::SocketAddr = healthy_decode
+        .url
+        .strip_prefix("http://")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let healthy_url = format!("http://localhost:{}", healthy_addr.port());
+
+    let ctx = build_ctx(vec![
+        WorkerSpec {
+            id: WorkerId("p1".into()),
+            url: prefill.url.clone(),
+            mode: WorkerMode::Prefill,
+            model_ids: vec![ModelId("tiny".into())],
+            bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
+        },
+        WorkerSpec {
+            id: WorkerId("d-dead".into()),
+            url: dead_url,
+            mode: WorkerMode::Decode,
+            model_ids: vec![ModelId("tiny".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
+        },
+        WorkerSpec {
+            id: WorkerId("d-healthy".into()),
+            url: healthy_url.clone(),
+            mode: WorkerMode::Decode,
+            model_ids: vec![ModelId("tiny".into())],
+            bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
+        },
+    ]);
+    let app = build_router(ctx);
+
+    let res = app.clone().oneshot(chat_request()).await.unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "the same request should succeed through the alternate decode",
+    );
+    assert_eq!(
+        res.headers()
+            .get("x-sgl-decode-url")
+            .and_then(|value| value.to_str().ok()),
+        Some(healthy_url.as_str()),
+        "response hint must report the decode that actually served the request",
+    );
+
+    let streaming_res = app.oneshot(streaming_chat_request()).await.unwrap();
+    assert_eq!(streaming_res.status(), StatusCode::OK);
+    assert_eq!(
+        streaming_res
+            .headers()
+            .get("x-sgl-decode-url")
+            .and_then(|value| value.to_str().ok()),
+        Some(healthy_url.as_str()),
+        "streaming response must report the alternate decode",
+    );
+    streaming_res
+        .into_body()
+        .collect()
+        .await
+        .expect("streaming retry response body should complete");
+
+    let prefill_body = await_captured_body(&prefill, Duration::from_secs(2), "prefill").await;
+    let decode_body =
+        await_captured_body(&healthy_decode, Duration::from_secs(2), "healthy decode").await;
+    assert_eq!(
+        bootstrap_room(&parse_body(&prefill_body)),
+        bootstrap_room(&parse_body(&decode_body)),
+        "decode retry must reuse the prefill's bootstrap room",
+    );
+}
+
 /// Plain-mode (non-PD) requests do NOT carry any `bootstrap_*` field.
 /// The injection step is gated on `worker.mode() == Prefill`; plain
 /// workers serve the chat route directly without disagg bootstrapping.
@@ -198,6 +350,13 @@ async fn plain_mode_chat_does_not_inject_bootstrap_fields() {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 
@@ -235,6 +394,13 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: Some(11111),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("pB".into()),
@@ -242,6 +408,13 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: Some(22222),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -249,6 +422,13 @@ async fn pd_mode_bootstrap_port_matches_chosen_prefill_worker() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
@@ -299,6 +479,13 @@ async fn pd_mode_prefill_5xx_does_not_poison_decode_response() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -306,6 +493,13 @@ async fn pd_mode_prefill_5xx_does_not_poison_decode_response() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);

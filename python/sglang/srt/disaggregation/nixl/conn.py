@@ -128,6 +128,40 @@ def _kv_xfer_mem_segments(
     return segments
 
 
+def _align_equal_tp_dst_kv_geometry(
+    peer_name: str,
+    kv_ptrs: list[int],
+    kv_item_lens: list[int],
+    kv_data_lens: list[int],
+    kv_xfer_lens: list[int],
+) -> tuple[list[int], list[int], list[int], list[int]]:
+    """Drop decode-only tail buffers from prefilled KV transfer geometry.
+
+    With EAGLE/MTP, decode can expose a draft KV pool in addition to the target
+    model KV pool. Prefill has no matching source buffer for that tail pool, so
+    the prebuilt NIXL dlist must cover only the shared target KV buffers. Other
+    geometry mismatches stay fatal in _prep_equal_tp_dlist().
+    """
+    if len(kv_ptrs) == len(kv_item_lens) == len(kv_data_lens) and len(kv_ptrs) > len(
+        kv_xfer_lens
+    ):
+        extra = len(kv_ptrs) - len(kv_xfer_lens)
+        logger.info(
+            "NIXL equal-TP destination has %s decode-only tail KV buffer(s) "
+            "for peer %s; excluding them from prefilled KV transfer dlist",
+            extra,
+            peer_name,
+        )
+        keep = len(kv_xfer_lens)
+        return (
+            kv_ptrs[:keep],
+            kv_item_lens[:keep],
+            kv_data_lens[:keep],
+            kv_xfer_lens,
+        )
+    return kv_ptrs, kv_item_lens, kv_data_lens, kv_xfer_lens
+
+
 @dataclasses.dataclass
 class _KVXferPreparedSegment:
     start: int
@@ -941,15 +975,27 @@ class NixlKVManager(CommonKVManager):
             dst_kv_data_lens = [
                 item_len * dst_num_slots for item_len in dst_kv_item_lens
             ]
-            self._init_equal_tp_prep_handle(
+            (
+                dst_kv_ptrs,
+                dst_kv_item_lens,
+                dst_kv_data_lens,
+                dst_kv_xfer_lens,
+            ) = _align_equal_tp_dst_kv_geometry(
                 peer_info.agent_name,
                 peer_info.dst_kv_ptrs,
+                dst_kv_item_lens,
+                dst_kv_data_lens,
+                self.kv_args.kv_item_lens,
+            )
+            self._init_equal_tp_prep_handle(
+                peer_info.agent_name,
+                dst_kv_ptrs,
                 peer_info.gpu_id,
                 num_slots=peer_info.dst_num_slots,
                 mem_kind=dst_mem_kind,
                 kv_item_lens=dst_kv_item_lens,
                 kv_data_lens=dst_kv_data_lens,
-                kv_xfer_lens=self.kv_args.kv_item_lens,
+                kv_xfer_lens=dst_kv_xfer_lens,
             )
         else:
             dst_mem_kind = _homogeneous_kv_mem_kind(
@@ -2494,7 +2540,6 @@ class NixlKVReceiver(CommonKVReceiver):
             logger.debug(
                 f"Fetched bootstrap info: {bootstrap_info} for engine rank: {self.kv_mgr.kv_args.engine_rank}"
             )
-            sock, lock = self._connect_to_bootstrap_server(bootstrap_info)
             is_dummy = bootstrap_info["is_dummy"]
             logger.debug(
                 f"Sending to prefill server with bootstrap room {self.bootstrap_room} {is_dummy=}"
@@ -2506,21 +2551,22 @@ class NixlKVReceiver(CommonKVReceiver):
                 if not is_dummy and state_indices is not None
                 else b""
             )
-            with lock:
-                sock.send_multipart(
-                    [
-                        GUARD,
-                        str(self.bootstrap_room).encode("ascii"),
-                        self.kv_mgr.local_ip.encode("ascii"),
-                        str(self.kv_mgr.rank_port).encode("ascii"),
-                        self.kv_mgr.agent.name.encode("ascii"),
-                        kv_indices.tobytes() if not is_dummy else b"",
-                        str(aux_index).encode("ascii"),
-                        str(self.required_dst_info_num).encode("ascii"),
-                        packed_state_indices,
-                        str(decode_prefix_len or 0).encode("ascii"),
-                    ]
-                )
+            if not self._send_request_multipart_to_bootstrap(
+                bootstrap_info,
+                [
+                    GUARD,
+                    str(self.bootstrap_room).encode("ascii"),
+                    self.kv_mgr.local_ip.encode("ascii"),
+                    str(self.kv_mgr.rank_port).encode("ascii"),
+                    self.kv_mgr.agent.name.encode("ascii"),
+                    kv_indices.tobytes() if not is_dummy else b"",
+                    str(aux_index).encode("ascii"),
+                    str(self.required_dst_info_num).encode("ascii"),
+                    packed_state_indices,
+                    str(decode_prefix_len or 0).encode("ascii"),
+                ],
+            ):
+                return
 
         # Mark that we expect state data if state_indices was provided.
         # Match the prefill-side truthy check: an empty list means the
@@ -2558,7 +2604,6 @@ class NixlKVReceiver(CommonKVReceiver):
 
     def _register_kv_args(self):
         for bootstrap_info in self.bootstrap_infos:
-            sock, lock = self._connect_to_bootstrap_server(bootstrap_info)
             packed_kv_data_ptrs = b"".join(
                 struct.pack("Q", ptr) for ptr in self.kv_mgr.kv_args.kv_data_ptrs
             )
@@ -2598,31 +2643,32 @@ class NixlKVReceiver(CommonKVReceiver):
                 // self.kv_mgr.kv_args.kv_item_lens[0]
             )
 
-            with lock:
-                sock.send_multipart(
-                    [
-                        GUARD,
-                        "None".encode("ascii"),
-                        self.kv_mgr.local_ip.encode("ascii"),
-                        str(self.kv_mgr.rank_port).encode("ascii"),
-                        self.kv_mgr.agent.name.encode("ascii"),
-                        self.kv_mgr.agent.get_agent_metadata(),
-                        packed_kv_data_ptrs,
-                        packed_aux_data_ptrs,
-                        packed_state_data_ptrs,
-                        str(self.kv_mgr.kv_args.gpu_id).encode("ascii"),
-                        str(self.kv_mgr.attn_tp_size).encode("ascii"),
-                        str(self.kv_mgr.kv_args.engine_rank).encode("ascii"),
-                        str(self.kv_mgr.kv_args.kv_item_lens[0]).encode("ascii"),
-                        packed_state_item_lens,
-                        packed_state_dim_per_tensor,
-                        packed_staging_base_ptr,
-                        staging_total_size_str,
-                        str(dst_num_slots).encode("ascii"),
-                        packed_kv_data_mem_kinds,
-                        packed_kv_item_lens,
-                    ]
-                )
+            if not self._send_request_multipart_to_bootstrap(
+                bootstrap_info,
+                [
+                    GUARD,
+                    "None".encode("ascii"),
+                    self.kv_mgr.local_ip.encode("ascii"),
+                    str(self.kv_mgr.rank_port).encode("ascii"),
+                    self.kv_mgr.agent.name.encode("ascii"),
+                    self.kv_mgr.agent.get_agent_metadata(),
+                    packed_kv_data_ptrs,
+                    packed_aux_data_ptrs,
+                    packed_state_data_ptrs,
+                    str(self.kv_mgr.kv_args.gpu_id).encode("ascii"),
+                    str(self.kv_mgr.attn_tp_size).encode("ascii"),
+                    str(self.kv_mgr.kv_args.engine_rank).encode("ascii"),
+                    str(self.kv_mgr.kv_args.kv_item_lens[0]).encode("ascii"),
+                    packed_state_item_lens,
+                    packed_state_dim_per_tensor,
+                    packed_staging_base_ptr,
+                    staging_total_size_str,
+                    str(dst_num_slots).encode("ascii"),
+                    packed_kv_data_mem_kinds,
+                    packed_kv_item_lens,
+                ],
+            ):
+                return
 
     def failure_exception(self):
         with self.kv_mgr.failure_lock:

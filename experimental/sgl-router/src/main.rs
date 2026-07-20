@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use sgl_router::config::{Cli, LogFormat};
+use sgl_router::config::{Cli, LogFormat, RuntimeMode};
+use sgl_router::observability::sls_log_layer::{SlsLayerConfig, SlsLogLayer, SlsWorkerGuard};
+use sgl_router::server::entry_auth::GatewayKeyring;
+use sgl_router::server::metrics::MetricsRegistry;
+use std::collections::{BTreeSet, HashMap};
+use std::ffi::OsString;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal::unix::{signal, Signal, SignalKind};
+use tokio_util::sync::CancellationToken;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Install the global tracing subscriber.
 ///
@@ -53,13 +61,42 @@ fn init_tracing(default_level: &str, format: LogFormat) -> Result<()> {
 /// The bootstrap subscriber respects `RUST_LOG` so an operator can
 /// debug startup with `RUST_LOG=debug` even when configuration resolution
 /// fails.
-fn install_bootstrap_subscriber() {
+fn install_bootstrap_subscriber(metrics: Arc<MetricsRegistry>) -> Option<SlsWorkerGuard> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
+    let (sls_layer, sls_guard) = match SlsLayerConfig::from_env("sglang-router") {
+        Ok(Some(config)) => match SlsLogLayer::new(config, metrics) {
+            Ok((layer, guard)) => (Some(layer), Some(guard)),
+            Err(error) => {
+                eprintln!("[sls-log-layer] initialization failed; using stdout only: {error}");
+                (None, None)
+            }
+        },
+        Ok(None) => (None, None),
+        Err(error) => {
+            eprintln!("[sls-log-layer] invalid configuration; using stdout only: {error}");
+            (None, None)
+        }
+    };
+    let sls_enabled = sls_guard.is_some();
+    let install_result = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_target(true))
+        .with(sls_layer)
         .try_init();
+    if let Err(error) = install_result {
+        eprintln!("tracing subscriber already installed; continuing: {error}");
+        return None;
+    }
+    if sls_enabled {
+        tracing::info!(
+            batch_size = 200,
+            queue_capacity = 10_000,
+            flush_interval_ms = 1_000,
+            "SLS direct-push logging enabled"
+        );
+    }
+    sls_guard
 }
 
 /// Install SIGTERM and SIGINT handlers up front so a failure here surfaces
@@ -72,16 +109,361 @@ fn install_signal_handlers() -> Result<(Signal, Signal)> {
     Ok((sigterm, sigint))
 }
 
+fn build_worker_metadata_client(worker_introspect_key: Option<&str>) -> reqwest::Client {
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2));
+    if let Some(token) = worker_introspect_key {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .expect("worker introspect key must be a valid HTTP header value");
+        value.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+        builder = builder.default_headers(headers);
+    }
+    builder.build().expect("default http client builds")
+}
+
+fn kv_event_endpoint_overrides_from_env(
+) -> Result<HashMap<String, sgl_router::policies::kv_events::KvEventEndpointOverride>> {
+    match std::env::var("KV_EVENT_ENDPOINT_OVERRIDES") {
+        Ok(raw) if !raw.trim().is_empty() => {
+            sgl_router::policies::kv_events::parse_endpoint_overrides(&raw)
+                .context("parse KV_EVENT_ENDPOINT_OVERRIDES")
+        }
+        _ => Ok(HashMap::new()),
+    }
+}
+
+fn env_to_cli_args() -> Vec<OsString> {
+    let mut args = vec![std::env::args_os()
+        .next()
+        .unwrap_or_else(|| OsString::from("sgl-router"))];
+    push_env_arg_or_default(&mut args, "HOST", "--host", "0.0.0.0");
+    push_env_arg_or_fallback_default(&mut args, "PORT", "ROUTER_PORT", "--port", "8080");
+    push_env_arg(&mut args, "ROUTER_MODE", "--mode");
+    push_env_arg(&mut args, "MODEL_ID", "--model-id");
+    push_env_arg(&mut args, "POLICY", "--policy");
+    push_env_arg(&mut args, "REQUEST_TIMEOUT_SECS", "--request-timeout-secs");
+    push_env_arg(
+        &mut args,
+        "STALE_REQUEST_TIMEOUT_SECS",
+        "--stale-request-timeout-secs",
+    );
+    push_env_arg(
+        &mut args,
+        "WORKER_INTROSPECT_KEY",
+        "--worker-introspect-key",
+    );
+    push_env_arg(
+        &mut args,
+        "WORKER_BEARER_KEY",
+        "--default-worker-bearer-key",
+    );
+    push_env_arg(
+        &mut args,
+        "LOAD_POLL_INTERVAL_SECS",
+        "--load-poll-interval-secs",
+    );
+    push_env_arg(
+        &mut args,
+        "WORKER_PROBE_TIMEOUT_SECS",
+        "--worker-probe-timeout-secs",
+    );
+    push_env_arg(&mut args, "CACHE_TREE_SOURCE", "--cache-tree-source");
+    push_env_arg(&mut args, "CACHE_TREE_PAGE_SIZE", "--cache-tree-page-size");
+    push_env_flag(&mut args, "CACHE_TREE_BIGRAM", "--cache-tree-bigram");
+    push_env_arg(&mut args, "CACHE_TREE_MAX_NODES", "--cache-tree-max-nodes");
+    push_env_arg(&mut args, "HIT_LOAD_ABS", "--hit-load-abs-threshold");
+    push_env_arg(&mut args, "HIT_LOAD_REL", "--hit-load-rel-threshold");
+    push_env_arg(&mut args, "CACHE_STATE_URL", "--cache-state-url");
+    push_env_arg(
+        &mut args,
+        "CACHE_STATE_TIMEOUT_MS",
+        "--cache-state-timeout-ms",
+    );
+    push_env_arg(&mut args, "TTFT_TOKEN_SCALE", "--ttft-token-scale");
+    push_env_arg(
+        &mut args,
+        "TTFT_CACHE_SCORE_MARGIN",
+        "--ttft-cache-score-margin",
+    );
+    push_env_arg(&mut args, "TTFT_SCORE_MODE", "--ttft-score-mode");
+    push_env_flag(&mut args, "TTFT_FIRST_ROUTING", "--ttft-first-routing");
+    push_env_flag(
+        &mut args,
+        "TTFT_IDLE_FIRST_ROUTING",
+        "--ttft-idle-first-routing",
+    );
+    push_env_arg(
+        &mut args,
+        "FORCE_REQUEST_PRIORITY",
+        "--force-request-priority",
+    );
+    push_env_arg(
+        &mut args,
+        "TRUSTED_PRIORITY_HEADER",
+        "--trusted-priority-header",
+    );
+    push_env_arg(
+        &mut args,
+        "TRUSTED_PRIORITY_SECRET_HEADER",
+        "--trusted-priority-secret-header",
+    );
+    push_env_arg(
+        &mut args,
+        "TRUSTED_PRIORITY_SECRET",
+        "--trusted-priority-secret",
+    );
+    push_env_arg(&mut args, "TIER_PRIMARY", "--tier-primary");
+    push_env_arg(&mut args, "TIER_SPILLOVER", "--tier-spillover");
+    push_env_arg(
+        &mut args,
+        "TIER_PRIMARY_PRESSURE_THRESHOLD",
+        "--tier-primary-pressure-threshold",
+    );
+    push_env_arg(
+        &mut args,
+        "TIER_PRESSURE_TOKEN_SCALE",
+        "--tier-pressure-token-scale",
+    );
+    push_worker_urls_env(&mut args);
+    push_split_env_arg(&mut args, "WORKER_BEARER_KEYS", "--worker-bearer-keys");
+    push_env_arg(&mut args, "EXTERNAL_MODEL_ID", "--external-model-id");
+    push_env_arg(&mut args, "EXTERNAL_MODEL_URL", "--external-model-url");
+    push_env_arg(
+        &mut args,
+        "EXTERNAL_MODEL_BEARER_TOKEN",
+        "--external-model-bearer-token",
+    );
+    args
+}
+
+fn push_env_arg(args: &mut Vec<OsString>, env_name: &str, flag: &str) {
+    if let Some(value) = non_empty_env(env_name) {
+        args.push(OsString::from(flag));
+        args.push(OsString::from(value));
+    }
+}
+
+fn push_env_arg_or_default(args: &mut Vec<OsString>, env_name: &str, flag: &str, default: &str) {
+    args.push(OsString::from(flag));
+    args.push(OsString::from(
+        non_empty_env(env_name).unwrap_or_else(|| default.to_string()),
+    ));
+}
+
+fn push_env_arg_or_fallback_default(
+    args: &mut Vec<OsString>,
+    env_name: &str,
+    fallback_env_name: &str,
+    flag: &str,
+    default: &str,
+) {
+    args.push(OsString::from(flag));
+    args.push(OsString::from(select_env_value(
+        non_empty_env(env_name),
+        non_empty_env(fallback_env_name),
+        default,
+    )));
+}
+
+fn select_env_value(primary: Option<String>, fallback: Option<String>, default: &str) -> String {
+    primary.or(fallback).unwrap_or_else(|| default.to_string())
+}
+
+fn push_env_flag(args: &mut Vec<OsString>, env_name: &str, flag: &str) {
+    if non_empty_env(env_name).is_some_and(|value| is_truthy(&value)) {
+        args.push(OsString::from(flag));
+    }
+}
+
+fn push_worker_urls_env(args: &mut Vec<OsString>) {
+    push_split_env_arg(args, "WORKER_URLS", "--worker-urls");
+}
+
+fn push_split_env_arg(args: &mut Vec<OsString>, env_name: &str, flag: &str) {
+    let Some(value) = non_empty_env(env_name) else {
+        return;
+    };
+    push_split_arg(args, flag, &value);
+}
+
+fn push_split_arg(args: &mut Vec<OsString>, flag: &str, value: &str) {
+    args.push(OsString::from(flag));
+    args.extend(value.split_whitespace().map(OsString::from));
+}
+
+async fn push_worker_registry_env(
+    args: &mut Vec<OsString>,
+) -> Result<Option<sgl_router::discovery::app_config_runtime::RuntimeLeaseDiscoveryConfig>> {
+    let runtime_key = non_empty_env("WORKER_RUNTIME_APP_CONFIG_KEY");
+    if non_empty_env("WORKER_URLS").is_some() {
+        if runtime_key.is_some() {
+            anyhow::bail!(
+                "WORKER_RUNTIME_APP_CONFIG_KEY requires the named worker registry; WORKER_URLS cannot preserve worker names"
+            );
+        }
+        return Ok(None);
+    }
+    let source = worker_registry_source_from_env()?;
+    if !source.is_configured() {
+        if runtime_key.is_some() {
+            anyhow::bail!(
+                "WORKER_RUNTIME_APP_CONFIG_KEY requires an App Configuration worker registry source"
+            );
+        }
+        return Ok(None);
+    }
+    let Some(pool) = non_empty_env("WORKER_REGISTRY_POOL") else {
+        anyhow::bail!(
+            "WORKER_REGISTRY_POOL is required when a worker registry source is configured"
+        );
+    };
+    let raw_json = source.load().await?;
+    let registry = sgl_router::app_config_registry::parse_registry(&raw_json)?;
+    let default_suffix = non_empty_env("WORKER_REGISTRY_URL_SUFFIX");
+    let named_worker_urls = sgl_router::app_config_registry::named_worker_urls_for_pool(
+        &registry,
+        &pool,
+        default_suffix.as_deref(),
+    )?;
+    tracing::info!(
+        pool = %pool,
+        worker_count = named_worker_urls.len(),
+        "loaded worker URLs from worker registry"
+    );
+    args.push(OsString::from("--worker-urls"));
+    args.extend(
+        named_worker_urls
+            .iter()
+            .map(|worker| OsString::from(&worker.url)),
+    );
+
+    let Some(runtime_key) = runtime_key else {
+        return Ok(None);
+    };
+    use sgl_router::discovery::app_config_runtime::{
+        RuntimeLeaseDiscoveryConfig, DEFAULT_POLL_INTERVAL_SECS, WORKER_RUNTIME_APP_CONFIG_KEY,
+        WORKER_RUNTIME_APP_CONFIG_LABEL,
+    };
+    if runtime_key != WORKER_RUNTIME_APP_CONFIG_KEY {
+        anyhow::bail!("WORKER_RUNTIME_APP_CONFIG_KEY does not match the v1 runtime contract");
+    }
+    let runtime_label = non_empty_env("WORKER_RUNTIME_APP_CONFIG_LABEL")
+        .unwrap_or_else(|| WORKER_RUNTIME_APP_CONFIG_LABEL.to_string());
+    if runtime_label != WORKER_RUNTIME_APP_CONFIG_LABEL {
+        anyhow::bail!("WORKER_RUNTIME_APP_CONFIG_LABEL does not match the v1 runtime contract");
+    }
+    let base_app_config = source
+        .app_config
+        .as_ref()
+        .context("worker runtime polling requires the base registry to use App Configuration")?;
+    let poll_interval_secs =
+        env_u64("WORKER_RUNTIME_POLL_INTERVAL_SECS")?.unwrap_or(DEFAULT_POLL_INTERVAL_SECS);
+    if poll_interval_secs == 0 {
+        anyhow::bail!("WORKER_RUNTIME_POLL_INTERVAL_SECS must be greater than zero");
+    }
+    let timeout_secs =
+        env_u64("WORKER_RUNTIME_APP_CONFIG_TIMEOUT_SECS")?.unwrap_or(base_app_config.timeout_secs);
+    if timeout_secs == 0 {
+        anyhow::bail!("WORKER_RUNTIME_APP_CONFIG_TIMEOUT_SECS must be greater than zero");
+    }
+    Ok(Some(RuntimeLeaseDiscoveryConfig {
+        source: sgl_router::app_config_registry::AppConfigSource {
+            endpoint: base_app_config.endpoint.clone(),
+            key: runtime_key,
+            label: Some(runtime_label),
+            managed_identity_client_id: base_app_config.managed_identity_client_id.clone(),
+            timeout_secs,
+        },
+        pool,
+        base_workers: named_worker_urls,
+        known_workers: registry.workers.keys().cloned().collect::<BTreeSet<_>>(),
+        known_pools: registry.pools.keys().cloned().collect::<BTreeSet<_>>(),
+        poll_interval_secs,
+    }))
+}
+
+fn worker_registry_source_from_env() -> Result<sgl_router::app_config_registry::RegistrySource> {
+    let endpoint = non_empty_env("WORKER_REGISTRY_APP_CONFIG_ENDPOINT")
+        .or_else(|| non_empty_env("APP_CONFIG_ENDPOINT"));
+    let key =
+        non_empty_env("WORKER_REGISTRY_APP_CONFIG_KEY").or_else(|| non_empty_env("APP_CONFIG_KEY"));
+    let app_config = match (endpoint, key) {
+        (Some(endpoint), Some(key)) => Some(sgl_router::app_config_registry::AppConfigSource {
+            endpoint,
+            key,
+            label: non_empty_env("WORKER_REGISTRY_APP_CONFIG_LABEL")
+                .or_else(|| non_empty_env("APP_CONFIG_LABEL")),
+            managed_identity_client_id: non_empty_env(
+                "WORKER_REGISTRY_APP_CONFIG_MANAGED_IDENTITY_CLIENT_ID",
+            )
+            .or_else(|| non_empty_env("AZURE_CLIENT_ID")),
+            timeout_secs: env_u64("WORKER_REGISTRY_APP_CONFIG_TIMEOUT_SECS")?.unwrap_or(5),
+        }),
+        (None, None) => None,
+        _ => anyhow::bail!(
+            "WORKER_REGISTRY_APP_CONFIG_ENDPOINT and WORKER_REGISTRY_APP_CONFIG_KEY must be set together"
+        ),
+    };
+    Ok(sgl_router::app_config_registry::RegistrySource {
+        inline_json: non_empty_env("WORKER_REGISTRY_JSON"),
+        file: non_empty_env("WORKER_REGISTRY_FILE"),
+        app_config,
+    })
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+struct StartupConfig {
+    cli: Cli,
+    runtime_lease: Option<sgl_router::discovery::app_config_runtime::RuntimeLeaseDiscoveryConfig>,
+}
+
+async fn cli_from_args_or_env() -> Result<StartupConfig> {
+    if std::env::args_os().len() > 1 {
+        if non_empty_env("WORKER_RUNTIME_APP_CONFIG_KEY").is_some() {
+            anyhow::bail!(
+                "WORKER_RUNTIME_APP_CONFIG_KEY is supported only by worker-registry environment startup"
+            );
+        }
+        Ok(StartupConfig {
+            cli: Cli::parse(),
+            runtime_lease: None,
+        })
+    } else {
+        let mut args = env_to_cli_args();
+        let runtime_lease = push_worker_registry_env(&mut args).await?;
+        Ok(StartupConfig {
+            cli: Cli::parse_from(args),
+            runtime_lease,
+        })
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
     // Bootstrap subscriber so a config-resolution error has structured
     // output. The configured-format subscriber installs after this and
     // becomes a no-op via try_init's idempotency.
-    install_bootstrap_subscriber();
-    let cfg = cli
+    let metrics = MetricsRegistry::new();
+    let _sls_guard = install_bootstrap_subscriber(Arc::clone(&metrics));
+    let startup = cli_from_args_or_env().await?;
+    let cfg = startup
+        .cli
         .into_config()
         .context("resolve configuration from CLI flags")?;
+    let runtime_lease = startup.runtime_lease;
 
     init_tracing(&cfg.observability.log_level, cfg.observability.log_format)?;
 
@@ -92,25 +474,164 @@ async fn main() -> Result<()> {
         cfg.server.port
     );
 
+    if runtime_lease.is_some() && cfg.runtime_mode != RuntimeMode::Gateway {
+        anyhow::bail!("worker runtime lease discovery is only valid in gateway mode");
+    }
+    match cfg.runtime_mode {
+        RuntimeMode::CacheState => return run_cache_state(cfg).await,
+        RuntimeMode::RouterState => return run_router_state(cfg).await,
+        RuntimeMode::Gateway | RuntimeMode::PdProxy => {}
+    }
+
+    // Entry auth is fail-closed before any discovery/background tasks start.
+    // A full gateway uses its policy/key inventories; an internal PD proxy
+    // accepts exactly one upstream credential and preserves request priority.
+    let gateway_keyring = Arc::new(match cfg.runtime_mode {
+        RuntimeMode::Gateway => {
+            GatewayKeyring::from_env().context("load gateway entry authentication keyring")?
+        }
+        RuntimeMode::PdProxy => {
+            GatewayKeyring::from_pd_proxy_env().context("load pd_proxy entry authentication key")?
+        }
+        RuntimeMode::CacheState | RuntimeMode::RouterState => unreachable!("handled above"),
+    });
+    tracing::info!(
+        runtime_mode = ?cfg.runtime_mode,
+        configured_keys = gateway_keyring.configured_key_count(),
+        enabled_keys = gateway_keyring.enabled_key_count(),
+        disabled_keys = gateway_keyring.disabled_key_count(),
+        "gateway entry API-key authentication enabled"
+    );
+
     let tokenizers = Arc::new(
         sgl_router::tokenizer::TokenizerRegistry::load_from_config(&cfg)
             .context("load tokenizers")?,
     );
 
     let registry = Arc::new(sgl_router::workers::WorkerRegistry::default());
+    let router_state_url = std::env::var("ROUTER_STATE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let router_state_redis_url = std::env::var("ROUTER_STATE_REDIS_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let router_state_timeout_ms = env_u64("ROUTER_STATE_TIMEOUT_MS")?.unwrap_or(20).max(1);
+    let router_state_snapshot_interval_ms = env_u64("ROUTER_STATE_SNAPSHOT_INTERVAL_MS")?
+        .unwrap_or(200)
+        .max(1);
+    if router_state_url.is_some() && router_state_redis_url.is_some() {
+        anyhow::bail!("ROUTER_STATE_URL and ROUTER_STATE_REDIS_URL are mutually exclusive");
+    }
+    let (router_state_client, router_state_overlay, router_state_poller_handle) =
+        if let Some(redis_url) = router_state_redis_url {
+            let key_prefix = std::env::var("ROUTER_STATE_REDIS_KEY_PREFIX")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "sgl-router:router-state".to_string());
+            let client: Arc<dyn sgl_router::router_state::RouterStateClient> = Arc::new(
+                sgl_router::router_state::RedisRouterStateClient::new(
+                    &redis_url,
+                    &key_prefix,
+                    std::time::Duration::from_millis(router_state_timeout_ms),
+                )
+                .context("build Redis router-state client")?,
+            );
+            let overlay = sgl_router::router_state::RouterStateLoadOverlay::new();
+            registry.attach_router_state_overlay(Arc::clone(&overlay));
+            let handle = sgl_router::router_state::spawn_router_state_snapshot_poller(
+                Arc::clone(&client),
+                Arc::clone(&overlay),
+                std::time::Duration::from_millis(router_state_snapshot_interval_ms),
+            );
+            tracing::info!(
+                redis_url_configured = true,
+                key_prefix = %key_prefix,
+                timeout_ms = router_state_timeout_ms,
+                snapshot_interval_ms = router_state_snapshot_interval_ms,
+                "Redis router-state active-load overlay enabled"
+            );
+            (Some(client), Some(overlay), Some(handle))
+        } else if let Some(url) = router_state_url {
+            let client: Arc<dyn sgl_router::router_state::RouterStateClient> =
+                Arc::new(sgl_router::router_state::RemoteRouterStateClient::new(
+                    url.clone(),
+                    std::time::Duration::from_millis(router_state_timeout_ms),
+                ));
+            let overlay = sgl_router::router_state::RouterStateLoadOverlay::new();
+            registry.attach_router_state_overlay(Arc::clone(&overlay));
+            let handle = sgl_router::router_state::spawn_router_state_snapshot_poller(
+                Arc::clone(&client),
+                Arc::clone(&overlay),
+                std::time::Duration::from_millis(router_state_snapshot_interval_ms),
+            );
+            tracing::info!(
+                router_state_url = %url,
+                timeout_ms = router_state_timeout_ms,
+                snapshot_interval_ms = router_state_snapshot_interval_ms,
+                "router-state active-load overlay enabled"
+            );
+            (Some(client), Some(overlay), Some(handle))
+        } else {
+            (None, None, None)
+        };
 
     // Build the KV-event index up front so the cache-aware-zmq policy can
-    // share its `HashTree` handle + `BlockSizeOracle`. When no model uses
-    // `cache_aware_zmq`, the index is still constructed (cheap) but no
-    // subscribers are ever added.
+    // share its `HashTree` handle + `BlockSizeOracle`. Only ZMQ-backed
+    // cache-aware routing attaches subscribers to worker KV event ports.
     let block_size_oracle = sgl_router::policies::kv_events::BlockSizeOracle::new();
-    let kv_index = sgl_router::policies::kv_events::KvEventIndex::new_with_http_and_oracle(
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
-            .build()
-            .expect("default http client builds"),
-        Arc::clone(&block_size_oracle),
+    let cache_tree_source = cfg.model.cache_aware.as_ref().map(|c| c.tree_source);
+
+    // Route-history tree mode: the router feeds the prefix tree from its own
+    // routing decisions instead of subscribing to worker ZMQ KV-events. In
+    // that mode there is no worker introspection to seed the block-size
+    // oracle, so seed it from --cache-tree-page-size / --cache-tree-bigram,
+    // and we deliberately DON'T attach ZMQ subscribers (no worker ZMQ port
+    // needed — works over NAT/Vast public mappings).
+    let route_history = matches!(
+        cache_tree_source,
+        Some(sgl_router::config::CacheTreeSource::RouteHistory)
     );
+    let uses_zmq_cache_events = matches!(
+        cache_tree_source,
+        Some(sgl_router::config::CacheTreeSource::Zmq)
+    );
+    if route_history {
+        if let Some(ps) = cfg.cache_tree_page_size {
+            match block_size_oracle.try_set(ps) {
+                Ok(v) => tracing::info!(
+                    page_size = v,
+                    bigram = cfg.cache_tree_bigram,
+                    "route-history tree: seeded block-size oracle"
+                ),
+                Err(e) => {
+                    tracing::error!(error = ?e, "route-history tree: failed to seed block size")
+                }
+            }
+            block_size_oracle.set_bigram(cfg.cache_tree_bigram);
+        } else {
+            tracing::error!("route-history tree-source but --cache-tree-page-size unset; cache routing will fall back to min-load");
+        }
+    }
+
+    // The KV-event discovery client hits each worker's key-protected
+    // `/server_info` (same endpoint as worker introspection), so it must
+    // carry the pool's shared worker key as a default Authorization header
+    // when one is configured — otherwise discovery gets 401, no ZMQ
+    // subscriber is attached, and cache_aware_zmq degrades to min-load.
+    let kv_discovery_client = build_worker_metadata_client(cfg.worker_introspect_key.as_deref());
+    let endpoint_overrides = kv_event_endpoint_overrides_from_env()?;
+    if !endpoint_overrides.is_empty() {
+        tracing::info!(
+            count = endpoint_overrides.len(),
+            "kv-events: endpoint overrides configured"
+        );
+    }
+    let kv_index =
+        sgl_router::policies::kv_events::KvEventIndex::new_with_http_oracle_and_endpoint_overrides(
+            kv_discovery_client,
+            Arc::clone(&block_size_oracle),
+            endpoint_overrides,
+        );
     let policies = Arc::new(
         sgl_router::policies::factory::build_registry(
             &cfg,
@@ -142,12 +663,71 @@ async fn main() -> Result<()> {
     let janitor_handle =
         sgl_router::policies::active_load::spawn_janitor(Arc::clone(&active_load), sweep_interval);
 
+    // Route-history tree eviction: the tree is fed by routing decisions and
+    // has no worker-driven BlockRemoved events to bound it, so periodically
+    // LRU-evict down to --cache-tree-max-nodes. (zmq mode evicts via worker
+    // events + its own cap, so this task is route-history-only.)
+    let tree_evict_handle = if route_history {
+        let tree = kv_index.tree();
+        let max_nodes = cfg.cache_tree_max_nodes;
+        tracing::info!(
+            max_nodes,
+            "route-history tree: spawning LRU eviction sweeper"
+        );
+        Some(sgl_router::policies::active_load::spawn_sweeper(
+            move || tree.evict_lru(max_nodes),
+            std::time::Duration::from_secs(10),
+            "route-history-tree",
+        ))
+    } else {
+        None
+    };
+
+    // Optional background introspection poller: read each worker's /get_load
+    // for real queue depth and pair it with /health for routing admission.
+    // Reuses the worker introspect key for auth. None => not spawned.
+    let load_poller_handle = cfg.load_poll_interval_secs.map(|secs| {
+        tracing::info!(
+            interval_secs = secs,
+            probe_timeout_secs = cfg.proxy.worker_probe_timeout_secs,
+            "spawning worker load poller (/get_load + /health)"
+        );
+        sgl_router::policies::load_poller::spawn_load_poller(
+            Arc::clone(&registry),
+            std::time::Duration::from_secs(secs),
+            std::time::Duration::from_secs(cfg.proxy.worker_probe_timeout_secs),
+            cfg.worker_introspect_key.clone(),
+        )
+    });
+
     // Spawn discovery + manager tasks.
-    let (event_rx, discovery_handle) = sgl_router::discovery::spawn_discovery(&cfg)
-        .await
-        .context("spawn discovery")?;
+    let (event_rx, discovery_handle) = if let Some(runtime_lease) = runtime_lease {
+        let bearer_keys = match &cfg.discovery {
+            sgl_router::config::DiscoveryBackend::StaticUrls(static_cfg) => {
+                static_cfg.bearer_keys.clone()
+            }
+            sgl_router::config::DiscoveryBackend::K8s(_) => anyhow::bail!(
+                "worker runtime lease discovery requires static base registry discovery"
+            ),
+        };
+        sgl_router::discovery::spawn_runtime_lease_discovery(runtime_lease, bearer_keys)
+            .await
+            .context("spawn worker runtime lease discovery")?
+    } else {
+        sgl_router::discovery::spawn_discovery(&cfg)
+            .await
+            .context("spawn discovery")?
+    };
+    // Only ZMQ cache-aware mode attaches the KV-event index to the manager.
+    // Route-history feeds the tree from routing decisions, and non-cache
+    // policies such as tiered_spillover should not introspect /server_info or
+    // subscribe to worker KV event ports.
     let kv_index_opt: Option<Arc<sgl_router::policies::kv_events::KvEventIndex>> =
-        Some(Arc::clone(&kv_index));
+        if uses_zmq_cache_events {
+            Some(Arc::clone(&kv_index))
+        } else {
+            None
+        };
     let manager_handle = tokio::spawn(sgl_router::workers::manager::run_with_config(
         event_rx,
         registry.clone(),
@@ -164,18 +744,22 @@ async fn main() -> Result<()> {
     );
 
     let ctx = Arc::new(
-        sgl_router::server::app_context::AppContext::with_active_load(
+        sgl_router::server::app_context::AppContext::with_active_load_router_state_and_metrics(
             cfg.clone(),
             tokenizers,
             proxy,
             registry,
             policies,
             active_load,
+            router_state_client,
+            router_state_overlay,
+            metrics,
         ),
     );
     ctx.mark_ready();
 
-    let app = sgl_router::server::app::build_router(ctx.clone());
+    let app =
+        sgl_router::server::app::build_router_with_gateway_keyring(ctx.clone(), gateway_keyring);
 
     let bind = format!("{}:{}", cfg.server.host, cfg.server.port);
     let listener = tokio::net::TcpListener::bind(&bind)
@@ -195,7 +779,378 @@ async fn main() -> Result<()> {
     discovery_handle.abort();
     manager_handle.abort();
     janitor_handle.shutdown().await;
+    if let Some(h) = tree_evict_handle {
+        h.shutdown().await;
+    }
+    if let Some(h) = load_poller_handle {
+        h.shutdown().await;
+    }
+    if let Some(h) = router_state_poller_handle {
+        h.shutdown().await;
+    }
     server_result
+}
+
+async fn run_router_state(cfg: sgl_router::config::Config) -> Result<()> {
+    let service = Arc::new(sgl_router::router_state::RouterStateService::new());
+    let router_state_api_token = std::env::var("ROUTER_STATE_API_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty());
+    if router_state_api_token.is_some() {
+        tracing::info!("router-state HTTP API bearer token auth enabled");
+    }
+    let app = service.router_with_api_token(router_state_api_token);
+    let bind = format!("{}:{}", cfg.server.host, cfg.server.port);
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .with_context(|| format!("bind {bind}"))?;
+    tracing::info!("router-state service listening on {bind}");
+    let (sigterm, sigint) = install_signal_handlers()?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(sigterm, sigint))
+        .await
+        .context("axum serve router-state")
+}
+
+async fn run_cache_state(cfg: sgl_router::config::Config) -> Result<()> {
+    let block_size_oracle = sgl_router::policies::kv_events::BlockSizeOracle::new();
+    let endpoint_overrides = kv_event_endpoint_overrides_from_env()?;
+    if !endpoint_overrides.is_empty() {
+        tracing::info!(
+            count = endpoint_overrides.len(),
+            "cache-state kv-events: endpoint overrides configured"
+        );
+    }
+    let kv_index =
+        sgl_router::policies::kv_events::KvEventIndex::new_with_http_oracle_and_endpoint_overrides(
+            build_worker_metadata_client(cfg.worker_introspect_key.as_deref()),
+            Arc::clone(&block_size_oracle),
+            endpoint_overrides,
+        );
+    let reconciliation_config = sgl_router::cache_state::CacheStateReconciliationConfig::from_env()
+        .map_err(anyhow::Error::msg)?;
+    tracing::info!(
+        enabled = reconciliation_config.enabled,
+        max_worker_ranks = reconciliation_config.max_worker_ranks,
+        max_snapshot_entries = reconciliation_config.max_snapshot_entries,
+        max_in_progress_snapshot_entries = reconciliation_config.max_in_progress_snapshot_entries,
+        max_snapshot_chunks = reconciliation_config.max_snapshot_chunks,
+        "cache-state reconciliation configuration loaded"
+    );
+    let service = Arc::new(
+        sgl_router::cache_state::CacheStateService::new_with_reconciliation(
+            kv_index.tree(),
+            reconciliation_config,
+        ),
+    );
+    let cache_state_api_token = std::env::var("CACHE_STATE_API_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty());
+    if cache_state_api_token.is_some() {
+        tracing::info!("cache-state HTTP API bearer token auth enabled");
+    }
+    let stream_consumer_handle = spawn_cache_state_stream_consumer_if_configured(
+        Arc::clone(&service),
+        std::env::var("CACHE_STATE_EVENT_STREAM_PATH")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from),
+        env_u64("CACHE_STATE_EVENT_STREAM_RETENTION_SECS")?,
+        env_u64("CACHE_STATE_EVENT_STREAM_MAX_BYTES")?,
+        env_u64("CACHE_STATE_EVENT_STREAM_POLL_MS")?.unwrap_or(1000),
+    )?;
+    let kafka_consumer_handle =
+        spawn_cache_state_kafka_consumer_if_configured(Arc::clone(&service))?;
+    let app = service.router_with_api_token(cache_state_api_token);
+    let bind = format!("{}:{}", cfg.server.host, cfg.server.port);
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .with_context(|| format!("bind {bind}"))?;
+    let discovery_configured = match &cfg.discovery {
+        sgl_router::config::DiscoveryBackend::StaticUrls(s) => !s.urls.is_empty(),
+        sgl_router::config::DiscoveryBackend::K8s(_) => true,
+    };
+    let cache_state_manager = if discovery_configured {
+        let registry = Arc::new(sgl_router::workers::WorkerRegistry::default());
+        let (event_rx, discovery_handle) = sgl_router::discovery::spawn_discovery(&cfg)
+            .await
+            .context("spawn cache-state discovery")?;
+        let manager_handle = tokio::spawn(sgl_router::workers::manager::run_with_config(
+            event_rx,
+            registry,
+            Some(Arc::new(cfg.clone())),
+            Some(Arc::clone(&kv_index)),
+            None,
+        ));
+        tracing::info!("cache-state service subscribed to worker KV events");
+        Some((discovery_handle, manager_handle))
+    } else {
+        tracing::info!("cache-state service starting with empty tree and HTTP insert API only");
+        None
+    };
+    tracing::info!("cache-state service listening on {bind}");
+    let (sigterm, sigint) = install_signal_handlers()?;
+    let server_result = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(sigterm, sigint))
+        .await
+        .context("axum serve cache-state");
+    if let Some((discovery_handle, manager_handle)) = cache_state_manager {
+        discovery_handle.abort();
+        manager_handle.abort();
+    }
+    if let Some(handle) = stream_consumer_handle {
+        handle.shutdown().await;
+    }
+    if let Some(handle) = kafka_consumer_handle {
+        handle.shutdown().await;
+    }
+    server_result
+}
+
+struct StreamConsumerHandle {
+    cancel: CancellationToken,
+    join: tokio::task::JoinHandle<()>,
+}
+
+impl StreamConsumerHandle {
+    async fn shutdown(self) {
+        self.cancel.cancel();
+        let _ = self.join.await;
+    }
+}
+
+fn spawn_cache_state_stream_consumer_if_configured(
+    service: Arc<sgl_router::cache_state::CacheStateService>,
+    path: Option<PathBuf>,
+    retention_secs: Option<u64>,
+    max_bytes: Option<u64>,
+    poll_ms: u64,
+) -> Result<Option<StreamConsumerHandle>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let stream = sgl_router::cache_event_stream::LocalKvEventStream::new(
+        sgl_router::cache_event_stream::LocalKvEventStreamConfig {
+            path: path.clone(),
+            retention_secs,
+            max_bytes,
+        },
+    );
+    let cancel = CancellationToken::new();
+    let task_cancel = cancel.clone();
+    let join = tokio::spawn(async move {
+        let mut last_applied_key: Option<String> = None;
+        let poll = std::time::Duration::from_millis(poll_ms.max(100));
+        tracing::info!(
+            path = %path.display(),
+            poll_ms,
+            retention_secs,
+            max_bytes,
+            "cache-state event-stream consumer starting"
+        );
+        loop {
+            if task_cancel.is_cancelled() {
+                break;
+            }
+            match stream.read_all() {
+                Ok(records) => {
+                    let start = last_applied_key
+                        .as_ref()
+                        .and_then(|key| {
+                            records
+                                .iter()
+                                .rposition(|record| record.dedupe_key() == *key)
+                                .map(|idx| idx + 1)
+                        })
+                        .unwrap_or(0);
+                    if start < records.len() {
+                        let to_apply = &records[start..];
+                        match service.apply_stream_records(to_apply) {
+                            Ok(resp) => {
+                                last_applied_key =
+                                    to_apply.last().map(|record| record.dedupe_key());
+                                tracing::debug!(
+                                    records = to_apply.len(),
+                                    applied_events = resp.applied_events,
+                                    "applied cache-state event-stream records"
+                                );
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    error = ?err,
+                                    records = to_apply.len(),
+                                    "failed to apply cache-state event-stream records"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to read cache-state event stream");
+                }
+            }
+            tokio::select! {
+                _ = task_cancel.cancelled() => break,
+                _ = tokio::time::sleep(poll) => {}
+            }
+        }
+        tracing::info!("cache-state event-stream consumer stopped");
+    });
+    Ok(Some(StreamConsumerHandle { cancel, join }))
+}
+
+fn spawn_cache_state_kafka_consumer_if_configured(
+    service: Arc<sgl_router::cache_state::CacheStateService>,
+) -> Result<Option<StreamConsumerHandle>> {
+    let Some(config) =
+        sgl_router::cache_event_stream::KafkaKvEventStreamConfig::consumer_from_env("CACHE_STATE")?
+    else {
+        return Ok(None);
+    };
+    let auto_commit_interval_ms = config.auto_commit_interval_ms;
+    let consumer = Arc::new(sgl_router::cache_event_stream::KafkaKvEventConsumer::new(
+        config,
+    )?);
+    let topic = consumer.topic().to_string();
+    let max_attempts = env_u64("CACHE_STATE_KAFKA_APPLY_MAX_ATTEMPTS")?
+        .unwrap_or(3)
+        .max(1);
+    let retry_backoff = std::time::Duration::from_millis(
+        env_u64("CACHE_STATE_KAFKA_APPLY_RETRY_BACKOFF_MS")?.unwrap_or(250),
+    );
+    let slow_record_threshold = std::time::Duration::from_millis(
+        env_u64("CACHE_STATE_KAFKA_SLOW_RECORD_MS")?
+            .unwrap_or(1000)
+            .max(1),
+    );
+    let cancel = CancellationToken::new();
+    let task_cancel = cancel.clone();
+    let join = tokio::spawn(async move {
+        tracing::info!(
+            topic = %topic,
+            auto_commit_interval_ms,
+            "cache-state Kafka event-stream consumer starting"
+        );
+        loop {
+            tokio::select! {
+                _ = task_cancel.cancelled() => break,
+                recv = consumer.recv() => {
+                    match recv {
+                        Ok(pending) => {
+                            let pending = Arc::new(pending);
+                            let worker_url = pending.record.worker_url.clone();
+                            let dp_rank = pending.record.dp_rank;
+                            let seq = pending.record.seq;
+                            let partition = pending.partition;
+                            let offset = pending.offset;
+                            let mut completed = false;
+                            for attempt in 1..=max_attempts {
+                                let pending_for_attempt = Arc::clone(&pending);
+                                let service_for_apply = Arc::clone(&service);
+                                let consumer_for_checkpoint = Arc::clone(&consumer);
+                                let started_at = std::time::Instant::now();
+                                let result = sgl_router::cache_event_stream::apply_then_checkpoint_blocking(
+                                    pending_for_attempt,
+                                    move |record| {
+                                        service_for_apply
+                                            .apply_stream_record(record)
+                                            .map_err(|err| anyhow!("cache-state apply failed: {err:?}"))
+                                    },
+                                    move |pending| consumer_for_checkpoint.checkpoint(pending),
+                                )
+                                .await;
+                                let elapsed = started_at.elapsed();
+                                let success = result.is_ok();
+                                let record_kind = result
+                                    .as_ref()
+                                    .map(|outcome| outcome.record_kind)
+                                    .unwrap_or("unknown");
+                                service.record_stream_apply_checkpoint(elapsed, success);
+                                if elapsed >= slow_record_threshold {
+                                    tracing::warn!(
+                                        worker_url = %worker_url,
+                                        dp_rank,
+                                        seq,
+                                        partition,
+                                        offset,
+                                        attempt,
+                                        record_kind,
+                                        outcome = if success { "success" } else { "failure" },
+                                        elapsed_ms = elapsed.as_millis() as u64,
+                                        "slow cache-state Kafka apply-and-checkpoint operation"
+                                    );
+                                }
+                                match result {
+                                    Ok(resp) => {
+                                        tracing::debug!(
+                                            worker_url = %worker_url,
+                                            dp_rank,
+                                            seq,
+                                            partition,
+                                            offset,
+                                            record_kind = resp.record_kind,
+                                            applied_events = resp.response.applied_events,
+                                            attempt,
+                                            elapsed_ms = elapsed.as_millis() as u64,
+                                            "applied and checkpointed cache-state Kafka event-stream record"
+                                        );
+                                        completed = true;
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            worker_url = %worker_url,
+                                            dp_rank,
+                                            seq,
+                                            partition,
+                                            offset,
+                                            attempt,
+                                            max_attempts,
+                                            elapsed_ms = elapsed.as_millis() as u64,
+                                            error = %err,
+                                            "failed to apply or checkpoint cache-state Kafka event-stream record"
+                                        );
+                                        if attempt < max_attempts {
+                                            tokio::time::sleep(retry_backoff).await;
+                                        }
+                                    }
+                                }
+                            }
+                            if !completed {
+                                tracing::error!(
+                                    worker_url = %worker_url,
+                                    dp_rank,
+                                    seq,
+                                    partition,
+                                    offset,
+                                    "stopping Kafka consumer with record offset not checkpointed after bounded retries"
+                                );
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                "failed to receive cache-state Kafka event-stream record"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                    }
+                }
+            }
+        }
+        tracing::info!("cache-state Kafka event-stream consumer stopped");
+    });
+    Ok(Some(StreamConsumerHandle { cancel, join }))
+}
+
+fn env_u64(name: &str) -> Result<Option<u64>> {
+    let Some(raw) = std::env::var(name).ok().filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    raw.parse::<u64>()
+        .with_context(|| format!("parse {name}={raw:?} as u64"))
+        .map(Some)
 }
 
 async fn shutdown_signal(mut sigterm: Signal, mut sigint: Signal) {
@@ -228,5 +1183,123 @@ mod tests {
         // Doesn't matter whether we win or lose the race against another
         // subscriber install — the function must return Ok either way.
         assert!(init_tracing("info", LogFormat::Json).is_ok());
+    }
+
+    #[test]
+    fn env_value_prefers_primary_over_legacy_fallback() {
+        assert_eq!(
+            select_env_value(Some("8082".into()), Some("8081".into()), "8080"),
+            "8082"
+        );
+    }
+
+    #[test]
+    fn env_value_uses_legacy_fallback_before_default() {
+        assert_eq!(select_env_value(None, Some("8081".into()), "8080"), "8081");
+        assert_eq!(select_env_value(None, None, "8080"), "8080");
+    }
+
+    #[test]
+    fn split_arg_adds_one_flag_and_all_entries() {
+        let mut args = vec![OsString::from("sgl-router")];
+
+        push_split_arg(
+            &mut args,
+            "--worker-bearer-keys",
+            "http://worker-a:30000=token-a http://worker-b:30000=token-b",
+        );
+
+        let args = args
+            .into_iter()
+            .map(|arg| arg.into_string().expect("test args are utf-8"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "sgl-router",
+                "--worker-bearer-keys",
+                "http://worker-a:30000=token-a",
+                "http://worker-b:30000=token-b",
+            ]
+        );
+    }
+
+    #[test]
+    fn env_adapter_preserves_internal_low_legacy_env_contract() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let envs = [
+            ("WORKER_URLS", "http://worker-a:30000 http://worker-b:30000"),
+            ("ROUTER_MODE", "pd_proxy"),
+            (
+                "WORKER_BEARER_KEYS",
+                "http://worker-a:30000=token-a http://worker-b:30000=token-b",
+            ),
+            ("WORKER_BEARER_KEY", "default-worker-token"),
+            ("FORCE_REQUEST_PRIORITY", "0"),
+            ("TIER_PRIMARY", "bulk"),
+            ("TIER_SPILLOVER", "shared"),
+            ("TIER_PRIMARY_PRESSURE_THRESHOLD", "3"),
+            ("TIER_PRESSURE_TOKEN_SCALE", "4096"),
+            ("WORKER_PROBE_TIMEOUT_SECS", "5"),
+            ("TRUSTED_PRIORITY_HEADER", "x-llm-priority"),
+            ("TRUSTED_PRIORITY_SECRET_HEADER", "x-llm-priority-secret"),
+            ("TRUSTED_PRIORITY_SECRET", "secret"),
+        ];
+        for (name, _) in envs {
+            std::env::remove_var(name);
+        }
+        for (name, value) in envs {
+            std::env::set_var(name, value);
+        }
+
+        let args = env_to_cli_args()
+            .into_iter()
+            .map(|arg| arg.into_string().expect("test args are utf-8"))
+            .collect::<Vec<_>>();
+
+        for (name, _) in envs {
+            std::env::remove_var(name);
+        }
+
+        for flag in [
+            "--worker-urls",
+            "--mode",
+            "--worker-bearer-keys",
+            "--default-worker-bearer-key",
+            "--force-request-priority",
+            "--tier-primary",
+            "--tier-spillover",
+            "--tier-primary-pressure-threshold",
+            "--tier-pressure-token-scale",
+            "--worker-probe-timeout-secs",
+            "--trusted-priority-header",
+            "--trusted-priority-secret-header",
+            "--trusted-priority-secret",
+        ] {
+            assert!(
+                args.contains(&flag.to_string()),
+                "{flag} missing from {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn env_adapter_passes_ttft_score_mode() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("TTFT_SCORE_MODE");
+        std::env::set_var("TTFT_SCORE_MODE", "prefill-work-normalized");
+
+        let args = env_to_cli_args()
+            .into_iter()
+            .map(|arg| arg.into_string().expect("test args are utf-8"))
+            .collect::<Vec<_>>();
+
+        std::env::remove_var("TTFT_SCORE_MODE");
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--ttft-score-mode", "prefill-work-normalized"]));
     }
 }

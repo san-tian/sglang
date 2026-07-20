@@ -13,7 +13,7 @@
 //!   (existing code path; pinned here so a future PD wiring change
 //!   doesn't silently swap codes).
 //! * A PD-disagg model with both pools healthy → request flows to the
-//!   prefill worker (smoke; the decode worker MUST NOT be selected for
+//!   prefill worker (sanity check; the decode worker MUST NOT be selected for
 //!   the chat route).
 
 use axum::body::Body;
@@ -36,6 +36,7 @@ use tower::ServiceExt;
 
 fn config() -> Config {
     Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
         server: ServerConfig {
             host: "0".into(),
             port: 0,
@@ -47,13 +48,26 @@ fn config() -> Config {
             policy: PolicyKind::RoundRobin,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             sticky: None,
         },
         discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
             urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
         }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     }
 }
 
@@ -96,6 +110,13 @@ async fn pd_mode_decode_only_returns_no_prefill_workers_available() {
         mode: WorkerMode::Decode,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 
@@ -149,6 +170,13 @@ async fn pd_mode_chat_dispatch_fans_to_both_prefill_and_decode() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: Some(8997),
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -156,6 +184,13 @@ async fn pd_mode_chat_dispatch_fans_to_both_prefill_and_decode() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
@@ -234,6 +269,13 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("p2".into()),
@@ -241,6 +283,13 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -248,6 +297,13 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d2".into()),
@@ -255,6 +311,13 @@ async fn pd_mode_chat_dispatch_sets_decode_affinity_header() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
@@ -305,6 +368,13 @@ async fn plain_mode_chat_dispatch_omits_decode_affinity_header() {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 
@@ -331,6 +401,13 @@ async fn pd_mode_prefill_only_returns_no_decode_workers_available() {
         mode: WorkerMode::Prefill,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 
@@ -359,6 +436,13 @@ async fn pd_mode_chat_response_carries_decode_affinity_header() {
             mode: WorkerMode::Prefill,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d1".into()),
@@ -366,6 +450,13 @@ async fn pd_mode_chat_response_carries_decode_affinity_header() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
         WorkerSpec {
             id: WorkerId("d2".into()),
@@ -373,6 +464,13 @@ async fn pd_mode_chat_response_carries_decode_affinity_header() {
             mode: WorkerMode::Decode,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         },
     ]);
     let app = build_router(ctx);
@@ -411,6 +509,13 @@ async fn plain_mode_chat_response_omits_decode_affinity_header() {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     }]);
     let app = build_router(ctx);
 

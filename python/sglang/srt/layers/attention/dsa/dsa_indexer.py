@@ -23,6 +23,7 @@ from sglang.srt.layers.attention.dsa.utils import (
 from sglang.srt.layers.dp_attention import attn_tp_all_gather_into_tensor
 from sglang.srt.layers.layernorm import LayerNorm
 from sglang.srt.layers.quantization.fp8_kernel import fp8_dtype, is_fp8_fnuz
+from sglang.srt.layers.rotary_embedding.utils import canonicalize_rope_positions
 from sglang.srt.layers.utils import MultiPlatformOp
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
     eager_on_graph,
@@ -92,6 +93,9 @@ from sglang.srt.layers.linear import ReplicatedLinear
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.rotary_embedding import get_rope_wrapper
 from sglang.srt.layers.utils.cp_utils import cp_all_gather_rerange_output
+from sglang.srt.mem_cache.cp_layersplit_pool import (
+    cp_layersplit_broadcast_prefix_if_needed,
+)
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_executor.forward_context import (
     get_attn_backend,
@@ -562,7 +566,9 @@ class Indexer(MultiPlatformOp):
                 key, [self.rope_head_dim, self.head_dim - self.rope_head_dim], dim=-1
             )
 
-        q_rope, k_rope = self.rotary_emb(positions, q_rope, k_rope)
+        q_rope, k_rope = self.rotary_emb(
+            canonicalize_rope_positions(positions), q_rope, k_rope
+        )
 
         self._update_rope_guarded(query[..., : self.rope_head_dim], q_rope)
         self._update_rope_guarded(key[..., : self.rope_head_dim], k_rope)
@@ -621,7 +627,9 @@ class Indexer(MultiPlatformOp):
             key, [self.rope_head_dim, self.head_dim - self.rope_head_dim], dim=-1
         )
 
-        _, k_rope = self.rotary_emb(positions, k_rope, k_rope)
+        _, k_rope = self.rotary_emb(
+            canonicalize_rope_positions(positions), k_rope, k_rope
+        )
         self._update_rope_guarded(key[..., : self.rope_head_dim], k_rope)
         key = rotate_activation(key)
 
@@ -739,6 +747,13 @@ class Indexer(MultiPlatformOp):
 
         current_stream.wait_stream(self.alt_stream)
         self.alt_stream.wait_stream(current_stream)
+        q_fp8, weights = fused_q_indexer_rope_first_quant(
+            q.contiguous(),
+            weights_raw,
+            q_scale_gate,
+            self._indexer_cos_sin_cache,
+            positions,
+        )
         with torch.cuda.stream(self.alt_stream):
             self._fused_k_prepare_and_store(
                 key,
@@ -748,14 +763,6 @@ class Indexer(MultiPlatformOp):
                 act_quant,
                 out_cache_loc=out_cache_loc,
             )
-
-        q_fp8, weights = fused_q_indexer_rope_first_quant(
-            q.contiguous(),
-            weights_raw,
-            q_scale_gate,
-            self._indexer_cos_sin_cache,
-            positions,
-        )
 
         current_stream.wait_stream(self.alt_stream)
         return q_fp8, weights
@@ -1830,13 +1837,14 @@ class Indexer(MultiPlatformOp):
             else:
                 weights = self._get_logits_head_gate(x_for_gate, q_scale)
 
+        cp_layersplit_broadcast_prefix_if_needed(layer_id, forward_batch, "indexer")
+
         if _is_cuda or _is_hip:
             # In piecewise/breakable CUDA graph, any access to seq_lens_cpu
             # creates a Dynamo shape guard. These graph modes never have empty
             # batches.
             if not in_piecewise_or_breakable_cuda_graph:
-                assert forward_batch.seq_lens_cpu is not None
-                if len(forward_batch.seq_lens_cpu) == 0:
+                if forward_batch.seq_lens.numel() == 0:
                     # this seems b/c max-pad, no worries?
                     # if x.shape[0] != 0:
                     #     print(

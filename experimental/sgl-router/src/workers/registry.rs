@@ -3,6 +3,7 @@
 
 use crate::discovery::{ModelId, WorkerId, WorkerMode, WorkerSpec};
 use crate::health::circuit_breaker::CircuitBreakerConfig;
+use crate::router_state::RouterStateLoadOverlay;
 use crate::workers::worker::Worker;
 use dashmap::DashMap;
 use std::collections::HashSet;
@@ -47,6 +48,7 @@ pub struct WorkerRegistry {
     /// `remove` take this lock so contention is bounded by registry
     /// mutation rate (worker-discovery events), not request rate.
     write: Mutex<()>,
+    router_state_overlay: Mutex<Option<Arc<RouterStateLoadOverlay>>>,
 }
 
 impl WorkerRegistry {
@@ -121,7 +123,11 @@ impl WorkerRegistry {
                 }
             }
         }
-        let w = Arc::new(Worker::with_cb_config(spec, cb));
+        let mut worker = Worker::with_cb_config(spec, cb);
+        if let Some(overlay) = self.router_state_overlay.lock().unwrap().clone() {
+            worker.attach_router_state_overlay(overlay);
+        }
+        let w = Arc::new(worker);
         let id = w.id.clone();
         self.remove_locked(&id);
         for m in &w.model_ids {
@@ -178,6 +184,16 @@ impl WorkerRegistry {
             .collect()
     }
 
+    /// Workers admitted by the circuit breaker and the latest combined load
+    /// and health probe. An unset probe remains routable during startup; an
+    /// explicit probe failure does not.
+    pub fn routable_workers_for(&self, model: &ModelId) -> Vec<Arc<Worker>> {
+        self.healthy_workers_for(model)
+            .into_iter()
+            .filter(|worker| worker.introspection_probe_allows_routing())
+            .collect()
+    }
+
     pub fn workers_for_mode(&self, model: &ModelId, mode: WorkerMode) -> Vec<Arc<Worker>> {
         self.workers_for(model)
             .into_iter()
@@ -211,6 +227,10 @@ impl WorkerRegistry {
     pub fn all(&self) -> Vec<Arc<Worker>> {
         self.by_id.iter().map(|e| Arc::clone(e.value())).collect()
     }
+
+    pub fn attach_router_state_overlay(&self, overlay: Arc<RouterStateLoadOverlay>) {
+        *self.router_state_overlay.lock().unwrap() = Some(overlay);
+    }
 }
 
 /// `true` when the two modes can't coexist for the same model — i.e.
@@ -243,6 +263,13 @@ mod tests {
             mode,
             model_ids: models.iter().map(|m| ModelId((*m).into())).collect(),
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: crate::discovery::WorkerRouteSet::all(),
+            prefill_capacity_milli: 1000,
         }
     }
 

@@ -18,10 +18,33 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 
-#[tokio::test]
-async fn forwards_whitelisted_headers_strips_others() {
-    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+fn build_test_app(cfg: Config, worker_url: String, bearer_token: Option<String>) -> axum::Router {
+    let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
+    let registry = Arc::new(WorkerRegistry::default());
+    let _ = registry.add(WorkerSpec {
+        id: WorkerId("w1".into()),
+        url: worker_url,
+        mode: WorkerMode::Plain,
+        model_ids: vec![ModelId("tiny".into())],
+        bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
+    });
+    let policies = Arc::new(build_policy_registry(&cfg).unwrap());
+    let proxy = Arc::new(Proxy::new(Duration::from_secs(5)).unwrap());
+    build_router(Arc::new(AppContext::new(
+        cfg, tokenizers, proxy, registry, policies,
+    )))
+}
+
+fn base_config() -> Config {
     let cfg = Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
         server: ServerConfig {
             host: "0".into(),
             port: 0,
@@ -33,28 +56,34 @@ async fn forwards_whitelisted_headers_strips_others() {
             policy: PolicyKind::RoundRobin,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             sticky: None,
         },
         discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
             urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
         }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     };
-    let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
-    let registry = Arc::new(WorkerRegistry::default());
-    let _ = registry.add(WorkerSpec {
-        id: WorkerId("w1".into()),
-        url: worker.url.clone(),
-        mode: WorkerMode::Plain,
-        model_ids: vec![ModelId("tiny".into())],
-        bootstrap_port: None,
-    });
-    let policies = Arc::new(build_policy_registry(&cfg).unwrap());
-    let proxy = Arc::new(Proxy::new(Duration::from_secs(5)).unwrap());
-    let app = build_router(Arc::new(AppContext::new(
-        cfg, tokenizers, proxy, registry, policies,
-    )));
+    cfg
+}
+
+#[tokio::test]
+async fn forwards_whitelisted_headers_strips_others() {
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let app = build_test_app(base_config(), worker.url.clone(), None);
 
     let body = serde_json::to_vec(&serde_json::json!({
         "model":"tiny","messages":[{"role":"user","content":"hi"}]
@@ -70,6 +99,7 @@ async fn forwards_whitelisted_headers_strips_others() {
         .header("content-type", "application/json")
         .header("authorization", "Bearer test")
         .header("x-request-id", "abc-123")
+        .header("x-trace-id", "trace-abc")
         .header("x-sgl-route-key", "k1")
         .header("cookie", "should-not-forward=true")
         .header("host", "example.com")
@@ -77,7 +107,14 @@ async fn forwards_whitelisted_headers_strips_others() {
         .header("transfer-encoding", "chunked")
         .body(Body::from(body))
         .unwrap();
-    app.oneshot(req).await.unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        res.headers()
+            .get("x-trace-id")
+            .and_then(|v| v.to_str().ok()),
+        Some("trace-abc"),
+        "router must echo the request trace id on the response",
+    );
 
     let seen = worker.captured.lock().unwrap();
     // Whitelisted headers are forwarded with their inbound VALUES intact —
@@ -92,6 +129,11 @@ async fn forwards_whitelisted_headers_strips_others() {
         seen.headers.get("x-request-id").map(String::as_str),
         Some("abc-123"),
         "x-request-id must be forwarded with its inbound value verbatim",
+    );
+    assert_eq!(
+        seen.headers.get("x-trace-id").map(String::as_str),
+        Some("trace-abc"),
+        "x-trace-id must be forwarded with its inbound value verbatim",
     );
     assert_eq!(
         seen.headers.get("x-sgl-route-key").map(String::as_str),
@@ -120,5 +162,36 @@ async fn forwards_whitelisted_headers_strips_others() {
         captured_host,
         Some(&"example.com".to_string()),
         "router must not forward the inbound Host header to upstream"
+    );
+}
+
+#[tokio::test]
+async fn worker_bearer_token_overrides_inbound_authorization() {
+    let worker = crate::common::mock_worker::MockWorker::start(vec![]).await;
+    let app = build_test_app(
+        base_config(),
+        worker.url.clone(),
+        Some("worker-secret".into()),
+    );
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model":"tiny","messages":[{"role":"user","content":"hi"}]
+    }))
+    .unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer client-key")
+        .body(Body::from(body))
+        .unwrap();
+    app.oneshot(req).await.unwrap();
+
+    let seen = worker.captured.lock().unwrap();
+    assert_eq!(
+        seen.headers.get("authorization").map(String::as_str),
+        Some("Bearer worker-secret"),
+        "worker-local bearer token must override inbound client Authorization",
     );
 }

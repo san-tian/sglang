@@ -8,11 +8,16 @@
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod app_config_registry;
+pub mod cache_event_stream;
+pub mod cache_state;
 pub mod config;
 pub mod discovery;
 pub mod health;
+pub mod observability;
 pub mod policies;
 pub mod proxy;
+pub mod router_state;
 pub mod server;
 pub mod tokenizer;
 pub mod workers;

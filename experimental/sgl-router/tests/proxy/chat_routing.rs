@@ -25,6 +25,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn config_for(_worker_url: &str) -> Config {
     Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
         server: ServerConfig {
             host: "0".into(),
             port: 0,
@@ -36,13 +37,26 @@ fn config_for(_worker_url: &str) -> Config {
             policy: PolicyKind::RoundRobin,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             sticky: None,
         },
         discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
             urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
         }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     }
 }
 
@@ -56,6 +70,13 @@ fn build_ctx_with_worker(url: &str) -> Arc<AppContext> {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     // Per-request worker URLs flow from the registry through
@@ -777,6 +798,13 @@ async fn unknown_model_with_no_policy_returns_404_model_not_found() {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("ghost-7b".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let proxy = Arc::new(Proxy::new(TEST_TIMEOUT).unwrap());
@@ -945,6 +973,7 @@ async fn forward_streaming_to_records_failure_on_mid_stream_drop() {
             body,
             None,
             None,
+            None,
         )
         .await;
 
@@ -1107,6 +1136,13 @@ async fn streaming_load_guard_persists_for_body_lifetime() {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
@@ -1241,6 +1277,13 @@ async fn streaming_active_load_persists_for_body_lifetime() {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
@@ -1378,6 +1421,13 @@ async fn janitor_expiry_returns_504_stale_request_expired() {
         mode: WorkerMode::Plain,
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
+        min_priority: None,
+        max_context_tokens: None,
+        bearer_token: None,
+        backend: Default::default(),
+        tier: Default::default(),
+        routes: Default::default(),
+        prefill_capacity_milli: 1000,
     });
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());

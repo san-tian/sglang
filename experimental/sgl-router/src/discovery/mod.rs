@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The SGLang Authors
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod app_config_runtime;
 pub mod k8s;
 pub mod static_urls;
 pub mod types;
@@ -29,5 +30,17 @@ pub async fn spawn_discovery(
         DiscoveryBackend::StaticUrls(s) => static_urls::spawn(s.clone(), tx).await?,
         DiscoveryBackend::K8s(k) => k8s::spawn(k.clone(), tx).await?,
     };
+    Ok((rx, handle))
+}
+
+/// Spawn the App Configuration runtime-lease overlay over a named static
+/// base registry. Kept separate from [`Config`] because the base registry is
+/// resolved by the binary's environment bootstrap before CLI construction.
+pub async fn spawn_runtime_lease_discovery(
+    cfg: app_config_runtime::RuntimeLeaseDiscoveryConfig,
+    bearer_keys: Vec<crate::config::WorkerBearerKeyConfig>,
+) -> Result<(mpsc::Receiver<DiscoveryEvent>, tokio::task::JoinHandle<()>)> {
+    let (tx, rx) = mpsc::channel(DISCOVERY_CHANNEL_CAP);
+    let handle = app_config_runtime::spawn(cfg, bearer_keys, tx).await?;
     Ok((rx, handle))
 }

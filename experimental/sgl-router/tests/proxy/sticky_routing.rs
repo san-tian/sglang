@@ -33,6 +33,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// out so the background sweeper never fires mid-test.
 fn build_sticky_ctx(header_name: &str, worker_urls: &[String]) -> Arc<AppContext> {
     let cfg = Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
         server: ServerConfig {
             host: "0".into(),
             port: 0,
@@ -44,6 +45,7 @@ fn build_sticky_ctx(header_name: &str, worker_urls: &[String]) -> Arc<AppContext
             policy: PolicyKind::Sticky,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             sticky: Some(StickyConfig {
                 header_name: header_name.to_string(),
                 fallback_policy: PolicyKind::RoundRobin,
@@ -53,9 +55,21 @@ fn build_sticky_ctx(header_name: &str, worker_urls: &[String]) -> Arc<AppContext
         },
         discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
             urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
         }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     };
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
     let registry = Arc::new(WorkerRegistry::default());
@@ -66,6 +80,13 @@ fn build_sticky_ctx(header_name: &str, worker_urls: &[String]) -> Arc<AppContext
             mode: WorkerMode::Plain,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         });
     }
     let policies = Arc::new(build_policy_registry(&cfg).unwrap());
@@ -293,6 +314,13 @@ async fn adding_a_worker_does_not_redistribute_existing_key() {
             mode: WorkerMode::Plain,
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         })
         .unwrap();
     // Guard the premise: w2 really is an eligible candidate now, so the

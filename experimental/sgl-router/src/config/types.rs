@@ -1,10 +1,13 @@
 use std::num::NonZeroU32;
 
+use crate::discovery::WorkerTier;
+
 /// In-memory router configuration, built from CLI flags by
 /// [`crate::config::cli::Cli::into_config`] and validated by
 /// [`Config::validate`]. The router serves exactly one model.
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub runtime_mode: RuntimeMode,
     pub server: ServerConfig,
     pub observability: ObservabilityConfig,
     pub model: ModelConfig,
@@ -16,6 +19,102 @@ pub struct Config {
     pub discovery: DiscoveryBackend,
     pub proxy: ProxyConfig,
     pub active_load: ActiveLoadConfig,
+    pub trace: TraceConfig,
+    pub priority_override: PriorityOverrideConfig,
+    /// Optional bearer token the router presents on its OWN requests to
+    /// each worker's `/server_info` (introspection + cache_aware_zmq
+    /// KV-event publisher discovery). `None` => unauthenticated
+    /// introspection (workers with no SGLang `--api-key`). Set it when
+    /// workers are key-protected so `/server_info` returns 200 instead of
+    /// 401 (a 401 silently disables cache-aware routing for that worker).
+    /// Not used for `/v1/*` proxying — that forwards the inbound client's
+    /// `Authorization` verbatim.
+    pub worker_introspect_key: Option<String>,
+    /// When `Some(secs)`, spawn the background load poller at this interval
+    /// (`/get_load` → real `num_waiting_reqs`). `None` => poller disabled,
+    /// `cache_aware_zmq` uses the router-side in-flight count. Set this and
+    /// `into_config` flips `CacheAwareConfig::use_reported_load` on.
+    pub load_poll_interval_secs: Option<u64>,
+    /// Route-history prefix-tree params (only meaningful when
+    /// `model.cache_aware.tree_source == RouteHistory`). `page_size` seeds the
+    /// block-size oracle at startup (no worker introspection in that mode);
+    /// `bigram` mirrors EAGLE/NEXTN hashing; `max_nodes` bounds the tree via
+    /// periodic LRU eviction. In `zmq` mode these are unused.
+    pub cache_tree_page_size: Option<u32>,
+    pub cache_tree_bigram: bool,
+    pub cache_tree_max_nodes: usize,
+    /// Optional remote distributed cache-state service URL(s) used by
+    /// cache-aware routing. Multiple URLs are allowed for fixed A/B
+    /// cache-state instances. When unset, the router uses its in-process
+    /// HashTree exactly as before.
+    pub cache_state_url: Option<String>,
+    pub cache_state_timeout_ms: u64,
+    pub alias_fallback: Option<AliasFallbackConfig>,
+    /// Optional model routed directly to a fixed external OpenAI-compatible
+    /// upstream. The upstream credential is injected at the gateway and
+    /// always replaces the client credential before proxying.
+    pub external_model: Option<ExternalModelConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum RuntimeMode {
+    #[default]
+    #[value(name = "gateway")]
+    Gateway,
+    /// Internal stateless proxy for a single prefill/decode worker group.
+    /// It exposes only the Chat generation route and preserves the priority
+    /// already assigned by the upstream gateway.
+    #[value(name = "pd_proxy")]
+    PdProxy,
+    #[value(name = "cache_state")]
+    CacheState,
+    #[value(name = "router_state")]
+    RouterState,
+}
+
+#[derive(Debug, Clone)]
+pub struct AliasFallbackConfig {
+    pub alias_model_id: String,
+    pub primary_model_id: String,
+    pub fallback_model_id: String,
+    pub fallback_base_url: String,
+    pub fallback_bearer_token: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct ExternalModelConfig {
+    pub model_id: String,
+    pub base_url: String,
+    pub bearer_token: String,
+}
+
+impl std::fmt::Debug for ExternalModelConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalModelConfig")
+            .field("model_id", &self.model_id)
+            .field("base_url", &self.base_url)
+            .field("bearer_token", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod external_model_tests {
+    use super::ExternalModelConfig;
+
+    #[test]
+    fn debug_redacts_external_bearer_token() {
+        let cfg = ExternalModelConfig {
+            model_id: "macaron-a2ui-tall".into(),
+            base_url: "https://provider.example".into(),
+            bearer_token: "provider-secret-must-not-leak".into(),
+        };
+
+        let rendered = format!("{cfg:?}");
+        assert!(rendered.contains("macaron-a2ui-tall"));
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("provider-secret-must-not-leak"));
+    }
 }
 
 /// Outbound proxy tuning. Default mirrors SGLang's typical prefill /
@@ -27,16 +126,30 @@ pub struct ProxyConfig {
     /// return headers + body. Default 300 s. The circuit breaker
     /// records a failure when this fires.
     pub request_timeout_secs: u64,
+    /// Maximum time to wait for each worker `/get_load` or `/health`
+    /// introspection probe. Default 3 s so a slow worker is excluded quickly;
+    /// deployments with higher cross-region latency can raise it explicitly.
+    pub worker_probe_timeout_secs: u64,
+    /// Router-side admission control for external traffic. Disabled by
+    /// default; production/internal routers opt out simply by not configuring
+    /// it.
+    pub external_queue_admission: ExternalQueueAdmissionConfig,
 }
 
 pub fn default_proxy_request_timeout_secs() -> u64 {
     300
 }
 
+pub fn default_worker_probe_timeout_secs() -> u64 {
+    3
+}
+
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             request_timeout_secs: default_proxy_request_timeout_secs(),
+            worker_probe_timeout_secs: default_worker_probe_timeout_secs(),
+            external_queue_admission: ExternalQueueAdmissionConfig::default(),
         }
     }
 }
@@ -51,6 +164,43 @@ pub struct ActiveLoadConfig {
     /// janitor fires its `cancel_token` and the chat handler returns
     /// 504 `stale_request_expired`. Default 600 s.
     pub stale_request_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExternalQueueAdmissionConfig {
+    pub enabled: bool,
+    /// Reject when every eligible worker's effective queue pressure is greater
+    /// than this threshold. Equal-to-threshold is still admitted.
+    pub queue_threshold: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceConfig {
+    pub sink_url: Option<String>,
+    pub capture_bodies: bool,
+    pub body_max_bytes: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PriorityOverrideConfig {
+    pub force_request_priority: Option<i64>,
+    pub trusted_priority_header: Option<String>,
+    pub trusted_priority_secret_header: Option<String>,
+    pub trusted_priority_secret: Option<String>,
+}
+
+pub fn default_trace_body_max_bytes() -> usize {
+    64 * 1024
+}
+
+impl Default for TraceConfig {
+    fn default() -> Self {
+        Self {
+            sink_url: None,
+            capture_bodies: false,
+            body_max_bytes: default_trace_body_max_bytes(),
+        }
+    }
 }
 
 pub fn default_stale_request_timeout_secs() -> u64 {
@@ -70,7 +220,8 @@ impl Default for ActiveLoadConfig {
 /// policy factory.
 ///
 /// Accepted on the CLI (`--policy`) as `round_robin` / `random` /
-/// `power_of_two` / `load_based` / `cache_aware_zmq` / `sticky`.
+/// `power_of_two` / `load_based` / `cache_aware_zmq` / `sticky` /
+/// `tiered_spillover` / `cache_aware_spillover`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum PolicyKind {
     #[default]
@@ -95,6 +246,15 @@ pub enum PolicyKind {
     /// `ModelConfig::sticky`.
     #[value(name = "sticky")]
     Sticky,
+    /// Prefer one operator-defined worker tier and spill to a second tier only
+    /// when the primary tier is above a configured TTFT pressure threshold.
+    #[value(name = "tiered_spillover")]
+    TieredSpillover,
+    /// Run cache-aware TTFT-first routing inside the primary tier, but fall
+    /// back to a spillover tier once the primary tier violates the configured
+    /// pressure guard.
+    #[value(name = "cache_aware_spillover")]
+    CacheAwareSpillover,
 }
 
 #[derive(Debug, Clone)]
@@ -150,11 +310,88 @@ pub struct ModelConfig {
     /// `policy = "cache_aware_zmq"`. `None` falls back to defaults at
     /// policy construction time.
     pub cache_aware: Option<CacheAwareConfig>,
+    /// Tuning for the tiered-spillover policy. `Some` exactly when
+    /// `policy = "tiered_spillover"`.
+    pub tiered_spillover: Option<TieredSpilloverConfig>,
     /// Tuning for the sticky-session policy. `Some` exactly when
     /// `policy = "sticky"` (built by [`crate::config::cli::Cli::into_config`]).
     /// The chat handler reads `sticky.header_name` to populate
     /// [`crate::policies::SelectionContext::routing_key`].
     pub sticky: Option<StickyConfig>,
+}
+
+/// Per-model tiered-spillover tuning. `tiered_spillover` uses the tier
+/// pressure directly; `cache_aware_spillover` uses it as the guard around
+/// cache-aware selection inside the primary tier.
+#[derive(Debug, Clone, Copy)]
+pub struct TieredSpilloverConfig {
+    /// Preferred worker tier, e.g. H20/vLLM bulk capacity.
+    pub primary_tier: WorkerTier,
+    /// Borrowed worker tier, e.g. B200 production workers protected by
+    /// engine-side priority scheduling.
+    pub spillover_tier: WorkerTier,
+    /// Spill to `spillover_tier` only when the least-pressured primary worker
+    /// is above this TTFT pressure threshold.
+    pub primary_pressure_threshold: usize,
+    /// Whether to include worker-reported `/get_load` queue depth for SGLang
+    /// workers. vLLM workers are never polled and use local pending pressure.
+    pub use_reported_load: bool,
+    /// Prompt-token units that count as one local TTFT pressure unit.
+    pub pressure_token_scale: usize,
+}
+
+pub fn default_tier_primary() -> WorkerTier {
+    WorkerTier::Bulk
+}
+pub fn default_tier_spillover() -> WorkerTier {
+    WorkerTier::Shared
+}
+pub fn default_tier_primary_pressure_threshold() -> usize {
+    0
+}
+pub fn default_tier_pressure_token_scale() -> usize {
+    64
+}
+
+impl Default for TieredSpilloverConfig {
+    fn default() -> Self {
+        Self {
+            primary_tier: default_tier_primary(),
+            spillover_tier: default_tier_spillover(),
+            primary_pressure_threshold: default_tier_primary_pressure_threshold(),
+            use_reported_load: false,
+            pressure_token_scale: default_tier_pressure_token_scale(),
+        }
+    }
+}
+
+/// Source of the prefix HashTree's data for `cache_aware_zmq`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum CacheTreeSource {
+    /// Subscribe to each worker's ZMQ KV-event publisher (precise,
+    /// eviction-aware; requires worker ZMQ port reachable from the router).
+    #[default]
+    #[value(name = "zmq")]
+    Zmq,
+    /// Feed the tree from the router's own routing decisions (approximate,
+    /// no worker ZMQ port needed). Block size from `--cache-tree-page-size`.
+    #[value(name = "route_history")]
+    RouteHistory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum TtftScoreMode {
+    #[default]
+    #[value(name = "additive")]
+    Additive,
+    #[value(name = "prefill-work-only")]
+    PrefillWorkOnly,
+    #[value(name = "prefill-work-normalized")]
+    PrefillWorkNormalized,
+    #[value(name = "lmetric")]
+    Lmetric,
+    #[value(name = "lmetric-candidate-aware")]
+    LmetricCandidateAware,
 }
 
 /// Per-model cache-aware-ZMQ tuning.
@@ -174,6 +411,59 @@ pub struct CacheAwareConfig {
     /// that the absolute check is gated on. Default 1.1 — 10 % relative
     /// difference triggers re-balancing.
     pub balance_rel_threshold: f32,
+    /// Cache-hit load guard (absolute). After a cache hit selects the
+    /// lowest-load worker *within the matched set*, divert to the globally
+    /// least-loaded worker when the hit worker is backed up by more than
+    /// this many load units AND the relative guard also fires. TTFT-first mode
+    /// uses token-weighted `effective_ttft_load`; cache-first mode uses
+    /// request-count `effective_load`.
+    /// Default 0. Only armed when `hit_load_rel_threshold` is finite.
+    pub hit_load_abs_threshold: usize,
+    /// Cache-hit load guard (relative). The hit worker must also exceed
+    /// `min_load * hit_load_rel_threshold` to be diverted. Default
+    /// `f32::INFINITY` = guard OFF (behaviour identical to plain
+    /// cache-aware). A finite value arms the guard; must be `>= 1.0`.
+    pub hit_load_rel_threshold: f32,
+    /// When true, load comparisons (min-load pick, imbalance fast-path, and
+    /// the cache-first/TTFT-first hit-load guards) use each worker's REAL load
+    /// reported by the background load poller (`Worker::reported_load`, e.g. summed
+    /// `num_waiting_reqs` from `/get_load`) instead of the router-side
+    /// in-flight counter. Set by `into_config` iff `--load-poll-interval-secs`
+    /// is configured. Default false (use in-flight, original behaviour).
+    pub use_reported_load: bool,
+    /// Where the prefix HashTree gets its data.
+    ///   `Zmq` (default): subscribe to each worker's ZMQ KV-event publisher
+    ///     — precise (real eviction-aware) but needs the worker ZMQ port
+    ///     reachable from the router.
+    ///   `RouteHistory`: the router feeds the tree from its OWN routing
+    ///     decisions (insert each request's block hashes into the chosen
+    ///     worker's subtree, LRU-evict to bound memory). Approximate but
+    ///     needs NO worker ZMQ port — works over NAT/Vast public mappings.
+    ///     The block size comes from `--cache-tree-page-size` (the oracle is
+    ///     seeded at startup) instead of worker introspection.
+    pub tree_source: CacheTreeSource,
+    /// Opt-in TTFT-first routing mode. When false, cache-aware selection keeps
+    /// its existing cache-first semantics. When true, selection scores workers
+    /// by predicted first-token pressure and uses cache affinity only inside
+    /// the configured score band.
+    pub ttft_first_routing: bool,
+    /// First-token score formula. Additive preserves the existing behavior;
+    /// Prefill-work-only and LMetric modes require token-level worker load
+    /// snapshots.
+    pub ttft_score_mode: TtftScoreMode,
+    /// In TTFT-first mode, rank by first-token pressure before cache scoring.
+    /// Cache overlap then breaks ties only among the least-pressured workers.
+    /// This trades cache affinity for faster exploration of healthy idle
+    /// workers.
+    pub ttft_idle_first_routing: bool,
+    /// Number of locally reserved prompt tokens that count as one TTFT
+    /// pressure unit. The default matches the common SGLang page size so
+    /// token-weighted pending load is comparable with uncached block count.
+    pub ttft_token_scale: usize,
+    /// Additive score band in TTFT-first mode. Cache affinity may pick a
+    /// worker whose predicted score is at most this many units above the best
+    /// score; `0` means cache only wins when it is part of the best score.
+    pub ttft_cache_score_margin: usize,
 }
 
 impl Default for CacheAwareConfig {
@@ -182,6 +472,15 @@ impl Default for CacheAwareConfig {
             cache_threshold: default_cache_threshold(),
             balance_abs_threshold: default_balance_abs(),
             balance_rel_threshold: default_balance_rel(),
+            hit_load_abs_threshold: default_hit_load_abs(),
+            hit_load_rel_threshold: default_hit_load_rel(),
+            use_reported_load: false,
+            tree_source: CacheTreeSource::Zmq,
+            ttft_first_routing: false,
+            ttft_score_mode: TtftScoreMode::Additive,
+            ttft_idle_first_routing: false,
+            ttft_token_scale: default_ttft_token_scale(),
+            ttft_cache_score_margin: default_ttft_cache_score_margin(),
         }
     }
 }
@@ -194,6 +493,18 @@ fn default_balance_abs() -> usize {
 }
 fn default_balance_rel() -> f32 {
     1.1
+}
+fn default_hit_load_abs() -> usize {
+    0
+}
+fn default_hit_load_rel() -> f32 {
+    f32::INFINITY
+}
+fn default_ttft_token_scale() -> usize {
+    64
+}
+fn default_ttft_cache_score_margin() -> usize {
+    0
 }
 
 /// Default routing-key header for the sticky policy. The `x-sgl-` prefix
@@ -272,6 +583,17 @@ pub enum DiscoveryBackend {
 #[derive(Debug, Clone)]
 pub struct StaticUrlsDiscoveryConfig {
     pub urls: Vec<String>,
+    /// Optional worker URL -> bearer-token mapping. Keys are normalized in
+    /// config validation/discovery after stripping the optional worker-entry
+    /// suffixes and trailing slash. Tokens are never included in the worker
+    /// URL string itself so logs and metrics do not expose credentials.
+    pub bearer_keys: Vec<WorkerBearerKeyConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerBearerKeyConfig {
+    pub worker_url: String,
+    pub bearer_token: String,
 }
 
 /// Configuration for the Kubernetes `EndpointSlice` discovery backend.

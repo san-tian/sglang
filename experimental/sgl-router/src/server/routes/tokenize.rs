@@ -109,6 +109,7 @@ mod tests {
 
     fn ctx_with_tiny() -> Arc<AppContext> {
         let cfg = crate::config::Config {
+            runtime_mode: crate::config::RuntimeMode::Gateway,
             server: crate::config::ServerConfig {
                 host: "x".into(),
                 port: 0,
@@ -120,15 +121,28 @@ mod tests {
                 policy: PolicyKind::RoundRobin,
                 circuit_breaker: None,
                 cache_aware: None,
+                tiered_spillover: None,
                 sticky: None,
             },
             discovery: crate::config::DiscoveryBackend::StaticUrls(
                 crate::config::StaticUrlsDiscoveryConfig {
                     urls: vec!["http://placeholder:0".into()],
+                    bearer_keys: Vec::new(),
                 },
             ),
             proxy: crate::config::ProxyConfig::default(),
             active_load: crate::config::ActiveLoadConfig::default(),
+            trace: crate::config::TraceConfig::default(),
+            priority_override: crate::config::PriorityOverrideConfig::default(),
+            worker_introspect_key: None,
+            load_poll_interval_secs: None,
+            cache_tree_page_size: None,
+            cache_tree_bigram: false,
+            cache_tree_max_nodes: 1_000_000,
+            cache_state_url: None,
+            cache_state_timeout_ms: 20,
+            alias_fallback: None,
+            external_model: None,
         };
         let registry = crate::tokenizer::TokenizerRegistry::load_from_config(&cfg).unwrap();
         let proxy = Arc::new(

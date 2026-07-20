@@ -15,9 +15,52 @@ impl Config {
         if self.model.id.is_empty() {
             return Err(anyhow!("model id must be non-empty"));
         }
+        if let Some(external) = &self.external_model {
+            if external.model_id.trim().is_empty() {
+                return Err(anyhow!("external model id must be non-empty"));
+            }
+            if external.model_id == self.model.id {
+                return Err(anyhow!(
+                    "external model id must differ from the local model id"
+                ));
+            }
+            if external.bearer_token.trim().is_empty() {
+                return Err(anyhow!("external model bearer token must be non-empty"));
+            }
+            if !external
+                .bearer_token
+                .bytes()
+                .all(|byte| matches!(byte, 0x21..=0x7e))
+            {
+                return Err(anyhow!(
+                    "external model bearer token must contain only visible ASCII without whitespace"
+                ));
+            }
+            axum::http::HeaderValue::from_str(&format!("Bearer {}", external.bearer_token))
+                .map_err(|_| {
+                    anyhow!("external model bearer token is not a valid HTTP header value")
+                })?;
+            let parsed = url::Url::parse(&external.base_url)
+                .map_err(|e| anyhow!("external model URL is invalid: {e}"))?;
+            if !matches!(parsed.scheme(), "http" | "https") {
+                return Err(anyhow!(
+                    "external model URL has unsupported scheme {:?}; only http and https are supported",
+                    parsed.scheme()
+                ));
+            }
+            if parsed.host_str().is_none() {
+                return Err(anyhow!("external model URL must include a host"));
+            }
+        }
         match &self.discovery {
             DiscoveryBackend::StaticUrls(s) => {
                 if s.urls.is_empty() {
+                    if matches!(
+                        self.runtime_mode,
+                        RuntimeMode::CacheState | RuntimeMode::RouterState
+                    ) {
+                        return Ok(());
+                    }
                     return Err(anyhow!(
                         "discovery.static_urls.urls must be a non-empty list"
                     ));
@@ -37,7 +80,20 @@ impl Config {
                             "discovery.static_urls.urls contains an empty or whitespace-only entry"
                         ));
                     }
-                    let parsed = url::Url::parse(trimmed).map_err(|e| {
+                    // Strip static worker capability suffixes BEFORE
+                    // URL-parsing: the suffixes are not part of the URL,
+                    // and leaving it on would make `url::Url` misparse
+                    // `host:port@min_priority=N` as userinfo (hiding a bad
+                    // base URL) and would let `http://x` and
+                    // `http://x@min_priority=100` dedupe as distinct. This
+                    // also surfaces a malformed suffix (`@min_priority=abc`)
+                    // at validate time, matching the discovery task's own
+                    // parse. Same parser → single source of truth.
+                    let (base, _capabilities) =
+                        crate::discovery::static_urls::parse_worker_entry(trimmed).map_err(
+                            |e| anyhow!("discovery.static_urls.urls entry {raw:?} is invalid: {e}"),
+                        )?;
+                    let parsed = url::Url::parse(&base).map_err(|e| {
                         anyhow!("discovery.static_urls.urls entry {raw:?} is not a valid URL: {e}")
                     })?;
                     match parsed.scheme() {
@@ -52,6 +108,35 @@ impl Config {
                     if !seen.insert(normalized.clone()) {
                         return Err(anyhow!(
                             "discovery.static_urls.urls contains duplicate entry {raw:?} (normalized: {normalized:?})"
+                        ));
+                    }
+                }
+                let mut seen_bearer = std::collections::HashSet::new();
+                for entry in &s.bearer_keys {
+                    if entry.bearer_token.trim().is_empty() {
+                        return Err(anyhow!(
+                            "discovery.static_urls.bearer_keys contains an empty bearer token for {:?}",
+                            entry.worker_url
+                        ));
+                    }
+                    let normalized = crate::discovery::static_urls::normalize_worker_url(
+                        entry.worker_url.trim(),
+                    )
+                    .map_err(|e| {
+                        anyhow!(
+                            "discovery.static_urls.bearer_keys entry {:?} is invalid: {e}",
+                            entry.worker_url
+                        )
+                    })?;
+                    if !seen_bearer.insert(normalized.clone()) {
+                        return Err(anyhow!(
+                            "discovery.static_urls.bearer_keys contains duplicate entry for normalized worker URL {normalized:?}"
+                        ));
+                    }
+                    if !seen.contains(&normalized) {
+                        return Err(anyhow!(
+                            "discovery.static_urls.bearer_keys entry {:?} does not match any --worker-urls entry (normalized: {normalized:?})",
+                            entry.worker_url
                         ));
                     }
                 }
@@ -76,6 +161,7 @@ mod tests {
     /// the `cli` module tests; the k8s selector grammar in `types`.
     fn cfg(model_id: &str, urls: &[&str]) -> Config {
         Config {
+            runtime_mode: RuntimeMode::Gateway,
             server: ServerConfig {
                 host: "127.0.0.1".into(),
                 port: 30000,
@@ -87,19 +173,71 @@ mod tests {
                 policy: PolicyKind::RoundRobin,
                 circuit_breaker: None,
                 cache_aware: None,
+                tiered_spillover: None,
                 sticky: None,
             },
             discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
                 urls: urls.iter().map(|s| s.to_string()).collect(),
+                bearer_keys: Vec::new(),
             }),
             proxy: ProxyConfig::default(),
             active_load: ActiveLoadConfig::default(),
+            trace: TraceConfig::default(),
+            priority_override: PriorityOverrideConfig::default(),
+            worker_introspect_key: None,
+            load_poll_interval_secs: None,
+            cache_tree_page_size: None,
+            cache_tree_bigram: false,
+            cache_tree_max_nodes: 1_000_000,
+            cache_state_url: None,
+            cache_state_timeout_ms: 20,
+            alias_fallback: None,
+            external_model: None,
         }
     }
 
     #[test]
     fn accepts_minimal_static_config() {
         cfg("qwen3", &["http://10.0.0.1:30000"]).validate().unwrap();
+    }
+
+    #[test]
+    fn validates_external_model_contract() {
+        let mut cfg = cfg("qwen3", &["http://10.0.0.1:30000"]);
+        cfg.external_model = Some(ExternalModelConfig {
+            model_id: "macaron-a2ui-tall".into(),
+            base_url: "http://provider.example:16596".into(),
+            bearer_token: "provider-secret".into(),
+        });
+        cfg.validate().unwrap();
+
+        cfg.external_model.as_mut().unwrap().model_id = cfg.model.id.clone();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("must differ"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_external_model_with_unsafe_url_or_invalid_token() {
+        let mut cfg = cfg("qwen3", &["http://10.0.0.1:30000"]);
+        cfg.external_model = Some(ExternalModelConfig {
+            model_id: "macaron-a2ui-tall".into(),
+            base_url: "file:///tmp/provider.sock".into(),
+            bearer_token: "provider-secret".into(),
+        });
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("unsupported scheme"), "got: {err}");
+
+        let external = cfg.external_model.as_mut().unwrap();
+        external.base_url = "https://provider.example".into();
+        external.bearer_token = "  ".into();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("must be non-empty"), "got: {err}");
+
+        for token in ["provider secret", "provider\nsecret", "provider\tsecret"] {
+            cfg.external_model.as_mut().unwrap().bearer_token = token.into();
+            let err = cfg.validate().unwrap_err().to_string();
+            assert!(err.contains("visible ASCII"), "token={token:?}, got: {err}");
+        }
     }
 
     #[test]
@@ -115,6 +253,20 @@ mod tests {
     fn rejects_empty_static_urls_list() {
         let err = cfg("qwen3", &[]).validate().unwrap_err().to_string();
         assert!(err.contains("non-empty"), "got: {err}");
+    }
+
+    #[test]
+    fn accepts_empty_static_urls_for_cache_state_mode() {
+        let mut cfg = cfg("qwen3", &[]);
+        cfg.runtime_mode = RuntimeMode::CacheState;
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn accepts_empty_static_urls_for_router_state_mode() {
+        let mut cfg = cfg("qwen3", &[]);
+        cfg.runtime_mode = RuntimeMode::RouterState;
+        cfg.validate().unwrap();
     }
 
     #[test]
@@ -151,5 +303,66 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("unsupported scheme"), "got: {err}");
+    }
+
+    #[test]
+    fn accepts_static_url_with_min_priority_suffix() {
+        // The `@min_priority=N` capability suffix is stripped before URL
+        // validation; a well-formed base URL + integer suffix is valid.
+        cfg("qwen3", &["http://rtx-01:30000@min_priority=100"])
+            .validate()
+            .expect("valid base URL + integer min_priority suffix should pass");
+    }
+
+    #[test]
+    fn accepts_static_url_with_max_context_tokens_suffix() {
+        cfg("qwen3", &["http://amd-01:30000@max_context_tokens=500000"])
+            .validate()
+            .expect("valid base URL + positive max_context_tokens should pass");
+    }
+
+    #[test]
+    fn rejects_static_url_malformed_min_priority_suffix() {
+        // A non-integer suffix is a config typo that must fail at startup,
+        // not silently drop the gate. Surfaced via the shared parser.
+        let err = cfg("qwen3", &["http://rtx-01:30000@min_priority=abc"])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("min_priority") || err.contains("invalid"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_static_url_bad_base_hidden_by_suffix() {
+        // Regression: `http://host:notaport@min_priority=100`. With the
+        // suffix attached, `url::Url` would misparse it as userinfo
+        // (`host:notaport`) + host (`min_priority=100`) and PASS. Stripping
+        // the suffix first exposes the real base `http://host:notaport`,
+        // whose non-numeric port `url::Url` correctly rejects.
+        let err = cfg("qwen3", &["http://host:notaport@min_priority=100"])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not a valid URL"), "got: {err}");
+    }
+
+    #[test]
+    fn dedupes_static_url_base_across_min_priority_suffix() {
+        // `http://x:30000` and `http://x:30000@min_priority=100` resolve to
+        // the same base worker URL — registering both would point two
+        // registry entries at one SGLang. Dedup must catch it after the
+        // suffix is stripped (it would NOT if validation ran on the raw
+        // suffixed string).
+        let err = cfg(
+            "qwen3",
+            &["http://x:30000", "http://x:30000@min_priority=100"],
+        )
+        .validate()
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("duplicate"), "got: {err}");
     }
 }

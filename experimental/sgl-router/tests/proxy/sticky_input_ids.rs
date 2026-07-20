@@ -45,6 +45,7 @@ const HEADER: &str = "x-sgl-routing-key";
 
 fn config() -> Config {
     Config {
+        runtime_mode: sgl_router::config::RuntimeMode::Gateway,
         server: ServerConfig {
             host: "0".into(),
             port: 0,
@@ -56,6 +57,7 @@ fn config() -> Config {
             policy: PolicyKind::Sticky,
             circuit_breaker: None,
             cache_aware: None,
+            tiered_spillover: None,
             // Push eviction far out so the background sweeper never fires
             // mid-test; round-robin fallback for the initial pin of a key.
             sticky: Some(StickyConfig {
@@ -67,9 +69,21 @@ fn config() -> Config {
         },
         discovery: DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
             urls: vec!["http://placeholder:0".into()],
+            bearer_keys: Vec::new(),
         }),
         proxy: ProxyConfig::default(),
         active_load: ActiveLoadConfig::default(),
+        trace: sgl_router::config::TraceConfig::default(),
+        priority_override: sgl_router::config::PriorityOverrideConfig::default(),
+        worker_introspect_key: None,
+        load_poll_interval_secs: None,
+        cache_tree_page_size: None,
+        cache_tree_bigram: false,
+        cache_tree_max_nodes: 1_000_000,
+        cache_state_url: None,
+        cache_state_timeout_ms: 20,
+        alias_fallback: None,
+        external_model: None,
     }
 }
 
@@ -92,6 +106,13 @@ fn build_ctx(worker_urls: &[String]) -> Arc<AppContext> {
             mode: WorkerMode::Plain,
             model_ids: vec![ModelId(MODEL.into())],
             bootstrap_port: None,
+            min_priority: None,
+            max_context_tokens: None,
+            bearer_token: None,
+            backend: Default::default(),
+            tier: Default::default(),
+            routes: Default::default(),
+            prefill_capacity_milli: 1000,
         });
     }
     // Sticky needs no cache-aware deps, so the defaults registry is fine — the

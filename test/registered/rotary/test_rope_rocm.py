@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from sglang.srt.layers.rotary_embedding import RotaryEmbedding
+from sglang.srt.layers.rotary_embedding.utils import canonicalize_rope_positions
 from sglang.srt.utils import get_bool_env_var, is_hip
 from sglang.test.ci.ci_register import register_amd_ci
 from sglang.test.test_utils import CustomTestCase
@@ -117,6 +118,46 @@ class TestRotaryEmbeddingAITer(CustomTestCase):
         for case in _CASES:
             with self.subTest(case=case):
                 self._run_case_aiter(*case)
+
+    def test_strided_positions_are_canonicalized(self) -> None:
+        from aiter.rotary_embedding import RotaryEmbedding as AiterRotaryEmbedding
+
+        head_size = rotary_dim = 64
+        for num_tokens in (32, 1):
+            with self.subTest(num_tokens=num_tokens):
+                positions = torch.arange(num_tokens * 2, device="cuda")[::2]
+                self.assertEqual(positions.stride(), (2,))
+                positions = canonicalize_rope_positions(positions)
+                self.assertEqual(positions.stride(), (1,))
+
+                rope_ref = AiterRotaryEmbedding(
+                    head_size, rotary_dim, 4096, 10000, True, torch.bfloat16
+                ).to("cuda")
+                rope_hip = AiterRotaryEmbedding(
+                    head_size, rotary_dim, 4096, 10000, True, torch.bfloat16
+                ).to("cuda")
+                query = torch.randn(
+                    num_tokens,
+                    head_size,
+                    dtype=torch.bfloat16,
+                    device="cuda",
+                )
+                key = torch.randn(
+                    num_tokens,
+                    head_size,
+                    dtype=torch.bfloat16,
+                    device="cuda",
+                )
+
+                q_ref, k_ref = rope_ref.forward_native(
+                    positions, query.clone(), key.clone()
+                )
+                q_hip, k_hip = rope_hip.forward_hip(
+                    positions, query.clone(), key.clone()
+                )
+
+                torch.testing.assert_close(q_ref, q_hip, atol=2e-2, rtol=2e-2)
+                torch.testing.assert_close(k_ref, k_hip, atol=2e-2, rtol=2e-2)
 
 
 if __name__ == "__main__":

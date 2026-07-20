@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 import os
 import random
+import time
 from collections import Counter, defaultdict
 from contextlib import contextmanager
 from enum import Enum, auto
@@ -51,6 +52,9 @@ from sglang.srt.mem_cache.base_prefix_cache import (
     InsertParams,
     MatchPrefixParams,
     zero_match_result,
+)
+from sglang.srt.mem_cache.multi_ended_allocator import (
+    UnifiedMambaTokenToKVPoolAllocator,
 )
 from sglang.srt.mem_cache.radix_cache import RadixCache, RadixKey, TreeNode
 from sglang.srt.server_args import ServerArgs, get_global_server_args
@@ -147,6 +151,34 @@ class CacheAgnosticPolicy(Enum):
     LOF = "lof"  # longest output first
     RANDOM = "random"
     ROUTING_KEY = "routing-key"  # prioritize by routing key frequency in running batch
+    PREFILL_LENGTH_AWARE = "prefill-length-aware"
+
+
+PREFILL_WORK_BUCKET_BOUNDS = (
+    256,
+    1024,
+    4096,
+    16384,
+    65536,
+    262144,
+    1048576,
+    1 << 60,
+)
+PREFILL_QUEUE_PRIORITY_GROUP_LIMIT = 32
+
+
+def prefill_length_aware_request_state(
+    req: Req,
+    now: float,
+    aging_rate: float,
+    max_wait_seconds: float,
+) -> tuple[int, float, bool]:
+    """Return uncached tokens, aged work, and overdue status for one request."""
+    uncached_tokens = max(0, req.seqlen - req.num_matched_prefix_tokens)
+    entry_time = req.time_stats.wait_queue_entry_time
+    wait_seconds = max(0.0, now - entry_time) if entry_time > 0 else 0.0
+    effective_work = max(0.0, uncached_tokens - aging_rate * wait_seconds)
+    return uncached_tokens, effective_work, wait_seconds >= max_wait_seconds
 
 
 class SchedulePolicy:
@@ -159,6 +191,8 @@ class SchedulePolicy:
         enable_hierarchical_cache: bool,
         enable_priority_scheduling: bool,
         schedule_low_priority_values_first: bool,
+        prefill_length_aware_aging_rate: float = 256.0,
+        prefill_length_aware_max_wait_seconds: float = 30.0,
     ):
         self.policy = self._validate_and_adjust_policy(policy, tree_cache)
         self.tree_cache = tree_cache
@@ -166,6 +200,10 @@ class SchedulePolicy:
         self.enable_priority_scheduling = enable_priority_scheduling
         self.schedule_low_priority_values_first = schedule_low_priority_values_first
         self.priority_sign = 1 if schedule_low_priority_values_first else -1
+        self.prefill_length_aware_aging_rate = prefill_length_aware_aging_rate
+        self.prefill_length_aware_max_wait_seconds = (
+            prefill_length_aware_max_wait_seconds
+        )
 
         # It is used to find the matching prefix for in-batch prefix caching.
         self.waiting_queue_radix_tree = RadixCache.create_simulated()
@@ -177,8 +215,8 @@ class SchedulePolicy:
 
         # Populate req.num_matched_prefix_tokens at schedule time. Cache-aware policies
         # set it in _compute_prefix_matches; do the same full match for
-        # cache-agnostic policies when the radix supports it, so the load
-        # snapshot has it. Skip on decode (never prefills).
+        # cache-agnostic policies when the radix supports it, so load snapshots and
+        # the opt-in length-aware policy both use current uncached work.
         if (
             not isinstance(policy, CacheAwarePolicy)
             and self.tree_cache.supports_fast_match_prefix()
@@ -220,6 +258,8 @@ class SchedulePolicy:
             elif policy == CacheAgnosticPolicy.ROUTING_KEY:
                 if running_batch is not None:
                     SchedulePolicy._sort_by_routing_key(waiting_queue, running_batch)
+            elif policy == CacheAgnosticPolicy.PREFILL_LENGTH_AWARE:
+                self._sort_by_prefill_length_aware(waiting_queue)
             else:
                 raise ValueError(f"Unknown CacheAgnostic Policy: {policy=}")
 
@@ -366,6 +406,28 @@ class SchedulePolicy:
             )
         )
 
+    def _sort_by_prefill_length_aware(self, waiting_queue: List[Req]) -> None:
+        now = time.perf_counter()
+
+        def sort_key(req: Req):
+            _, effective_work, overdue = prefill_length_aware_request_state(
+                req,
+                now,
+                self.prefill_length_aware_aging_rate,
+                self.prefill_length_aware_max_wait_seconds,
+            )
+            priority = (
+                (req.priority if req.priority is not None else 0) * self.priority_sign
+                if self.enable_priority_scheduling
+                else 0
+            )
+            entry_time = req.time_stats.wait_queue_entry_time
+            if overdue:
+                return (priority, 0, entry_time, 0.0)
+            return (priority, 1, effective_work, entry_time)
+
+        waiting_queue.sort(key=sort_key)
+
     @staticmethod
     def _sort_by_routing_key(
         waiting_queue: List[Req], running_batch: ScheduleBatch
@@ -495,6 +557,34 @@ class PrefillAdder:
 
         self.rem_swa_token_offset = 0
 
+        # Unified-pool joint budget: a new mamba state consumes shared-gap bytes
+        # that `rem_total_tokens` (full KV) otherwise counts as free, so reserve
+        # the gap per new mamba slot or admission over-commits. Gate on the
+        # ALLOCATOR being the unified Mamba composite, NOT on `is_hybrid_ssm_cache`
+        # (False for `ChunkCache`, which would skip the reservation on the
+        # chunk-cache path): the gap coupling is a property of the byte buffer.
+        self._mamba_slot_cost = 0
+        if isinstance(
+            self.token_to_kv_pool_allocator, UnifiedMambaTokenToKVPoolAllocator
+        ):
+            self._mamba_slot_cost = (
+                self.token_to_kv_pool_allocator.mamba_slot_full_token_cost()
+            )
+
+        # `mamba_gap_reserve` is charged to `rem_total_tokens`, which INCLUDES
+        # `full_evictable_size()` — but `alloc_req_slots` can only recover
+        # MAMBA-recoverable bytes for a mamba slot (shared gap + peer holes +
+        # mamba-evictable radix), NOT full-evictable. Gate new mamba slots on
+        # that mamba-recoverable budget separately or an over-admit hits the
+        # fail-loud `RuntimeError`. `None` outside the unified Mamba pool.
+        self.rem_mamba_slots = None
+        if self._mamba_slot_cost:
+            self.rem_mamba_slots = (
+                self.token_to_kv_pool_allocator.mamba_allocator.schedulable_available_size()
+            )
+            if self.is_hybrid_ssm_cache:
+                self.rem_mamba_slots += self.tree_cache.mamba_evictable_size()
+
         self.priority_scheduling_preemption_threshold = (
             priority_scheduling_preemption_threshold
         )
@@ -602,6 +692,21 @@ class PrefillAdder:
             budget += self.ceil_paged_tokens(swa_host_hit_length)
         return budget
 
+    def _mamba_gap_budget_for_req(self, req: Req) -> int:
+        """Shared-gap reservation (full-token-equivalents) for a request's new
+        mamba state. Charged only on the SHARED Mamba pool (`_mamba_slot_cost > 0`)
+        and only when the req has no state yet (`mamba_pool_idx is None`, mirroring
+        `HybridReqToTokenPool.alloc`); 0 keeps baseline / SWA / non-Mamba unchanged.
+
+        Conservative by design (`_mamba_slot_cost` rounds UP). Does NOT reserve
+        radix COW headroom or locked-but-evictable bytes — that residual is
+        backstopped by the fail-loud RuntimeError in `alloc_req_slots`. FIXME: if
+        over-admission crashes under pressure, make this more conservative (e.g.
+        multiply by `MAMBA_STATE_PER_REQ_PREFIX_CACHE`)."""
+        if self._mamba_slot_cost and req.mamba_pool_idx is None:
+            return self._mamba_slot_cost
+        return 0
+
     def ceil_paged_tokens(self, tokens: int) -> int:
         return -(-tokens // self.page_size) * self.page_size
 
@@ -609,6 +714,10 @@ class PrefillAdder:
         no_token = self.rem_total_tokens <= 0 or self.cur_rem_tokens <= 0
         if not no_token and self.is_hybrid_swa:
             no_token = self.rem_swa_tokens <= 0
+        # Gate new mamba slots separately: rem_total_tokens' full_evictable can't
+        # cover a mamba slot, which needs mamba-recoverable bytes (see __init__).
+        if not no_token and self.rem_mamba_slots is not None:
+            no_token = self.rem_mamba_slots <= 0
         if no_token:
             return AddReqResult.NO_TOKEN
 
@@ -630,14 +739,27 @@ class PrefillAdder:
         extend_input_len: int,
         max_new_tokens: int,
         retracted_stain: bool,
+        mamba_gap_reserve: int = 0,
     ):
         # TODO(lsyin): check this workaround logic, which only ensures the prefill will not out of memory, and may be too conservative
         extend_input_len = self.ceil_paged_tokens(extend_input_len)
 
         # alloc_extend reserves an extra page_size per request to make sure the budget doesn't over-commit
         page_overhead = self.page_size
-        self.rem_total_token_offset += extend_input_len + max_new_tokens + page_overhead
-        self.cur_rem_token_offset += extend_input_len + page_overhead
+        # `mamba_gap_reserve` (shared Mamba pool only; 0 otherwise) charges the new
+        # mamba state's shared-gap cost to BOTH full budgets: the slot is allocated
+        # immediately (counts against `cur_rem`) and held for the request lifetime
+        # (counts against `rem_total`). See `_mamba_gap_budget_for_req`.
+        self.rem_total_token_offset += (
+            extend_input_len + max_new_tokens + page_overhead + mamba_gap_reserve
+        )
+        self.cur_rem_token_offset += (
+            extend_input_len + page_overhead + mamba_gap_reserve
+        )
+        # The new mamba slot also consumes one mamba-recoverable slot (gated
+        # separately so full_evictable can't cover it — see __init__).
+        if mamba_gap_reserve and self.rem_mamba_slots is not None:
+            self.rem_mamba_slots -= 1
         self.rem_input_tokens -= extend_input_len
 
         if self.is_hybrid_swa:
@@ -681,7 +803,13 @@ class PrefillAdder:
 
         self.can_run_list.append(req)
 
-        self._update_prefill_budget(prefix_len, trunc_len, 0, req.retracted_stain)
+        self._update_prefill_budget(
+            prefix_len,
+            trunc_len,
+            0,
+            req.retracted_stain,
+            mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
+        )
 
     def _req_inc_lock_ref(self, req: Req):
         result = self.tree_cache.inc_lock_ref(req.last_node)
@@ -711,7 +839,11 @@ class PrefillAdder:
             else 0
         )
         self._update_prefill_budget(
-            0, req.extend_range.length, max_new_tokens, req.retracted_stain
+            0,
+            req.extend_range.length,
+            max_new_tokens,
+            req.retracted_stain,
+            mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
         )
 
         # Return based on remaining token availability
@@ -755,6 +887,7 @@ class PrefillAdder:
                 else 0
             ),
             req.retracted_stain,
+            mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
         )
 
         # Return if chunked prefill not finished
@@ -782,6 +915,9 @@ class PrefillAdder:
             req.prefix_indices
         )
         paged_input = self.ceil_paged_tokens(cand_extend_input_len)
+        # Shared Mamba pool: fold the new mamba state's shared-gap cost into the
+        # budget gate so admission can't over-commit (0 for baseline / non-Mamba).
+        paged_input += self._mamba_gap_budget_for_req(req)
         if paged_input > min(self.cur_rem_tokens, self.rem_total_tokens):
             return AddReqResult.NO_TOKEN
         if self.is_hybrid_swa:
@@ -863,6 +999,7 @@ class PrefillAdder:
                 req.extend_range.length,
                 min(req.sampling_params.max_new_tokens, CLIP_MAX_NEW_TOKENS),
                 req.retracted_stain,
+                mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
             )
         else:
             if self.rem_chunk_tokens <= 0:
@@ -877,7 +1014,13 @@ class PrefillAdder:
             )
             self.can_run_list.append(req)
             self.new_chunked_req = req
-            self._update_prefill_budget(0, trunc_len, 0, req.retracted_stain)
+            self._update_prefill_budget(
+                0,
+                trunc_len,
+                0,
+                req.retracted_stain,
+                mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
+            )
 
         return self.budget_state()
 
@@ -906,11 +1049,9 @@ class PrefillAdder:
         if req.sampling_params.ignore_eos and getattr(self.tree_cache, "disable", True):
             return self.add_one_req_ignore_eos(req)
 
-        # Reserve page_size for page-alignment overhead. The paged allocator
-        # may consume up to one extra page per request (see alloc_extend), and
-        # _update_prefill_budget already accounts for this in the deduction.
-        # Without this, admission is more optimistic than the actual budget
-        # deduction, allowing over-admission when the pool is nearly full.
+        # Reserve page_size for page-alignment overhead: the paged allocator may
+        # consume one extra page per request (see alloc_extend), which
+        # _update_prefill_budget also deducts.
         max_new = min(
             max(req.sampling_params.max_new_tokens - len(req.output_ids), 0),
             CLIP_MAX_NEW_TOKENS,
@@ -919,6 +1060,9 @@ class PrefillAdder:
             req.prefix_indices
         )
         total_tokens = cand_extend_input_len + max_new + self.page_size
+        # Shared Mamba pool: fold the new mamba state's shared-gap cost into
+        # `total_tokens` so both `rem_total_tokens` gates reflect the joint budget.
+        total_tokens += self._mamba_gap_budget_for_req(req)
 
         # adjusting the input_tokens based on host_hit_length and page_size
         real_input_tokens = cand_extend_input_len - req.host_hit_length
@@ -1009,6 +1153,7 @@ class PrefillAdder:
                         CLIP_MAX_NEW_TOKENS,
                     ),
                     req.retracted_stain,
+                    mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
                 )
             else:
                 # Make sure at least one page is available
@@ -1045,7 +1190,11 @@ class PrefillAdder:
 
                 self._req_inc_lock_ref(req)
                 self._update_prefill_budget(
-                    prefix_len, trunc_len, 0, req.retracted_stain
+                    prefix_len,
+                    trunc_len,
+                    0,
+                    req.retracted_stain,
+                    mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
                 )
 
         return self.budget_state()

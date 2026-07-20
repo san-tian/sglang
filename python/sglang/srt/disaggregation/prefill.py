@@ -61,6 +61,7 @@ from sglang.srt.mem_cache.common import (
     maybe_cache_unfinished_req,
     release_kv_cache,
 )
+from sglang.srt.mem_cache.cp_layersplit_pool import unwrap_cp_layersplit_kv_pool
 from sglang.srt.mem_cache.deepseek_v4_memory_pool import DeepSeekV4TokenToKVPool
 from sglang.srt.observability.req_time_stats import set_schedule_time_batch
 from sglang.srt.utils.nvtx_utils import scheduler_nvtx_method
@@ -154,11 +155,12 @@ class PrefillBootstrapQueue:
         kv_args.engine_rank = self.tp_rank
         kv_args.pp_rank = self.pp_rank
         kv_args.system_dp_rank = self.scheduler.ps.dp_rank
-        kv_args.prefill_start_layer = self.token_to_kv_pool.start_layer
-        kv_args.prefill_end_layer = getattr(self.token_to_kv_pool, "end_layer", None)
+        token_to_kv_pool = unwrap_cp_layersplit_kv_pool(self.token_to_kv_pool)
+        kv_args.prefill_start_layer = token_to_kv_pool.start_layer
+        kv_args.prefill_end_layer = getattr(token_to_kv_pool, "end_layer", None)
         kv_args.mla_compression_ratios = None
         kv_data_ptrs, kv_data_lens, kv_item_lens = (
-            self.token_to_kv_pool.get_contiguous_buf_infos()
+            token_to_kv_pool.get_contiguous_buf_infos()
         )
 
         if self.draft_token_to_kv_pool is not None:
@@ -758,43 +760,32 @@ class SchedulerDisaggregationPrefillMixin:
                     undone_reqs.append(req)
                     continue
 
+            if req.pending_bootstrap:
+                # Parked: prefill finished before bootstrap completed.
+                if self.handle_pending_bootstrap(req, poll, defer_release=True):
+                    self.send_kv_chunk(req, last_chunk=True)
+                    undone_reqs.append(req)
+                elif poll != KVPoll.Failed:
+                    undone_reqs.append(req)
+                continue
+
             if poll in [KVPoll.WaitingForInput, KVPoll.Transferring]:
+                # todo: set Transferring correctly in backend
                 undone_reqs.append(req)
             elif poll == KVPoll.Success:  # transfer done
                 release_kv_cache(req, self.tree_cache)  # unlock the tree
                 req.finished_reason = FINISH_LENGTH(length=0)
                 # FIXME: clean up req's data in transfer engine
-                if hasattr(req.disagg_kv_sender, "clear"):
-                    req.disagg_kv_sender.clear()
+                req.disagg_kv_sender.clear()
                 done_reqs.append(req)
                 req.time_stats.set_prefill_kv_transfer_finish_time()
             elif poll == KVPoll.Failed:
-                error_message = f"Prefill transfer failed for request rank={self.ps.tp_rank} {req.rid=} {req.bootstrap_room=}"
-                is_propagated = False
-                try:
-                    req.disagg_kv_sender.failure_exception()
-                except Exception as e:
-                    error_message += f" with exception {e}"
-                    is_propagated = getattr(e, "is_from_another_rank", False)
-                # Mute error message for propagated exceptions to avoid duplicate logging
-                if is_propagated:
-                    logger.debug(error_message)
-                else:
-                    logger.warning(error_message)
-                req.time_stats.trace_ctx.abort(abort_info={"reason": error_message})
-                release_kv_cache(req, self.tree_cache)  # unlock the tree
-                prepare_abort(
-                    req, error_message, status_code=HTTPStatus.INTERNAL_SERVER_ERROR
-                )
+                self.handle_inflight_transfer_failure(req)
                 done_reqs.append(req)
-                if self.metrics_reporter.enable_metrics:
-                    self.metrics_collector.increment_transfer_failed_reqs()
             else:
-                logger.warning_once(
-                    f"Unexpected polling state {poll} for rid {req.rid} in inflight queue; "
-                    f"treating as undone",
+                raise RuntimeError(
+                    f"Unexpected poll state {poll} for req {req.rid} in inflight queue"
                 )
-                undone_reqs.append(req)
 
         for req in done_reqs:
             req.time_stats.set_completion_time()
@@ -833,6 +824,32 @@ class SchedulerDisaggregationPrefillMixin:
         self.disagg_prefill_inflight_queue = undone_reqs
 
         return done_reqs
+
+    def handle_inflight_transfer_failure(
+        self: Scheduler, req: Req
+    ) -> Optional[Exception]:
+        """Conclude an inflight request whose KV transfer failed."""
+        error_message = (
+            f"Prefill transfer failed for request rank={self.ps.tp_rank} "
+            f"{req.rid=} {req.bootstrap_room=}"
+        )
+        exc: Optional[Exception] = None
+        try:
+            req.disagg_kv_sender.failure_exception()
+        except Exception as e:
+            exc = e
+            error_message += f" with exception {e}"
+        # Mute error message for propagated exceptions to avoid duplicate logging
+        if getattr(exc, "is_from_another_rank", False):
+            logger.debug(error_message)
+        else:
+            logger.warning(error_message)
+        req.time_stats.trace_ctx.abort(abort_info={"reason": error_message})
+        release_kv_cache(req, self.tree_cache)  # unlock the tree
+        prepare_abort(req, error_message, status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+        if self.metrics_reporter.enable_metrics:
+            self.metrics_collector.increment_transfer_failed_reqs()
+        return exc
 
     def get_transferred_rids(self: Scheduler) -> List[str]:
         """

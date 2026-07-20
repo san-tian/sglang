@@ -7,6 +7,7 @@
 import concurrent.futures
 import contextlib
 import logging
+import os
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type
 
 import torch
@@ -279,8 +280,17 @@ def should_async_load(weight: torch.Tensor) -> bool:
 
     For host (CPU) tensors, using a threadpool can overlap H2D copies
     and improve throughput. For device tensors, threading often adds overhead
-    (e.g., GIL contention) without benefit, so we do it synchronously.
+    (e.g., GIL contention) without benefit, so we do it synchronously. Set
+    ``SGLANG_DISABLE_ASYNC_WEIGHT_LOAD=1`` to force synchronous loading when a
+    platform-specific loader stalls in the asynchronous path.
     """
+    if os.getenv("SGLANG_DISABLE_ASYNC_WEIGHT_LOAD", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return False
     device = getattr(weight, "device", None)
     if device is None:
         return False

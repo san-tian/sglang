@@ -11,10 +11,14 @@ use std::num::NonZeroU32;
 
 use crate::config::{
     default_cb_cool_down, default_proxy_request_timeout_secs, default_stale_request_timeout_secs,
-    resolve_mode, ActiveLoadConfig, CacheAwareConfig, CircuitBreakerConfig, Config,
-    DiscoveryBackend, K8sDiscoveryConfig, LogFormat, ModelConfig, ObservabilityConfig, PolicyKind,
-    ProxyConfig, ServerConfig, StaticUrlsDiscoveryConfig, StickyConfig,
+    default_trace_body_max_bytes, default_worker_probe_timeout_secs, resolve_mode,
+    ActiveLoadConfig, AliasFallbackConfig, CacheAwareConfig, CacheTreeSource, CircuitBreakerConfig,
+    Config, DiscoveryBackend, ExternalModelConfig, ExternalQueueAdmissionConfig,
+    K8sDiscoveryConfig, LogFormat, ModelConfig, ObservabilityConfig, PolicyKind,
+    PriorityOverrideConfig, ProxyConfig, RuntimeMode, ServerConfig, StaticUrlsDiscoveryConfig,
+    StickyConfig, TieredSpilloverConfig, TraceConfig, TtftScoreMode, WorkerBearerKeyConfig,
 };
+use crate::discovery::WorkerTier;
 
 /// `sgl-router` — slim KV-aware OpenAI-compatible router for SGLang workers.
 ///
@@ -28,6 +32,14 @@ use crate::config::{
     about = "Slim KV-aware OpenAI-compatible router for SGLang workers"
 )]
 pub struct Cli {
+    /// Runtime mode. `gateway` is the normal OpenAI-compatible router.
+    /// `pd_proxy` is a Chat-only internal proxy for one prefill/decode group.
+    /// `cache_state` runs only the distributed cache-state HTTP API for
+    /// internal gateway queries. `router_state` runs only the distributed
+    /// active-load API. Cache/router-state modes do not require discovery.
+    #[arg(long, value_enum, default_value = "gateway")]
+    pub mode: RuntimeMode,
+
     // ---- server ----
     /// Address to bind the HTTP server to.
     #[arg(long, default_value = "127.0.0.1")]
@@ -59,7 +71,7 @@ pub struct Cli {
     #[arg(long)]
     pub cb_cool_down_secs: Option<u64>,
 
-    // ---- cache-aware-zmq tuning (only used by that policy) ----
+    // ---- cache-aware tuning (cache_aware_zmq / cache_aware_spillover) ----
     /// Min `matched_blocks / total_blocks` for a cache match to win.
     #[arg(long)]
     pub cache_threshold: Option<f32>,
@@ -69,6 +81,74 @@ pub struct Cli {
     /// Multiplicative load spread gating the absolute balance check.
     #[arg(long)]
     pub balance_rel_threshold: Option<f32>,
+    /// Cache-hit load guard (absolute): after a cache hit, divert to the
+    /// globally least-loaded worker when the hit worker leads it by more
+    /// than this many load units (AND the relative guard fires). TTFT-first
+    /// routing uses token-weighted first-token pressure units.
+    #[arg(long)]
+    pub hit_load_abs_threshold: Option<usize>,
+    /// Cache-hit load guard (relative): the hit worker must also exceed
+    /// `min_load * this` to be diverted. Omit (or set infinity) to keep the
+    /// guard OFF. Must be `>= 1.0` when set.
+    #[arg(long)]
+    pub hit_load_rel_threshold: Option<f32>,
+    /// Where the prefix tree gets its data: `zmq` (default; subscribe to
+    /// worker ZMQ KV-events, precise but needs the worker ZMQ port reachable)
+    /// or `route_history` (router feeds the tree from its own routing
+    /// decisions — approximate, but needs NO worker ZMQ port; works over
+    /// NAT/Vast public mappings). Only meaningful with cache-aware policies.
+    #[arg(long, value_enum)]
+    pub cache_tree_source: Option<CacheTreeSource>,
+    /// Block (page) size for route-history prefix hashing. REQUIRED when
+    /// `--cache-tree-source route_history` (no worker introspection seeds it
+    /// in that mode). MUST equal the workers' `--page-size` or the router's
+    /// block hashes never match. Ignored in `zmq` mode (the worker reports
+    /// it via `/server_info`).
+    #[arg(long)]
+    pub cache_tree_page_size: Option<u32>,
+    /// Whether workers use EAGLE-family speculative decoding (bigram block
+    /// hashing). Set in `route_history` mode to mirror the worker's hashing
+    /// (NEXTN/EAGLE => the router must hash over token bigrams). Defaults to
+    /// false. Ignored in `zmq` mode (reported via `/server_info`).
+    #[arg(long)]
+    pub cache_tree_bigram: bool,
+    /// Max prefix-tree node count before LRU eviction kicks in (route-history
+    /// mode only — zmq mode is eviction-driven by the worker). Bounds router
+    /// memory. Default 1_000_000 nodes.
+    #[arg(long)]
+    pub cache_tree_max_nodes: Option<usize>,
+    /// Enable TTFT-first cache-aware routing. Selection ranks workers by
+    /// predicted first-token pressure and uses prefix cache only inside the
+    /// configured score band. Only meaningful with cache-aware policies.
+    #[arg(long)]
+    pub ttft_first_routing: bool,
+    /// TTFT score formula. `additive` preserves the existing behavior;
+    /// token-work modes require TTFT-first routing and worker load polling.
+    #[arg(long, value_enum)]
+    pub ttft_score_mode: Option<TtftScoreMode>,
+    /// In TTFT-first mode, choose from the least-pressured workers first and
+    /// use cache overlap only as a tie-breaker inside that idle set.
+    #[arg(long)]
+    pub ttft_idle_first_routing: bool,
+    /// Prompt-token count that maps to one local TTFT pressure unit for
+    /// token-weighted pending reservations. Must be greater than zero.
+    #[arg(long)]
+    pub ttft_token_scale: Option<usize>,
+    /// Additive score band where cache affinity may win in TTFT-first mode.
+    /// `0` means cache can win only among workers tied for best predicted
+    /// first-token pressure.
+    #[arg(long)]
+    pub ttft_cache_score_margin: Option<usize>,
+    /// Optional base URL(s) of the distributed cache-state service. When set,
+    /// cache-aware routing queries `<url>/v1/cache_state/match_prefix` for
+    /// prefix matches. Multiple URLs may be separated by comma or whitespace;
+    /// queries fail over across them and route-history feed broadcasts to all.
+    /// Query failures degrade to cache misses.
+    #[arg(long)]
+    pub cache_state_url: Option<String>,
+    /// Timeout for remote cache-state prefix-match queries in milliseconds.
+    #[arg(long, default_value_t = 20)]
+    pub cache_state_timeout_ms: u64,
 
     // ---- sticky-session policy (only used by `--policy sticky`) ----
     /// Request header carrying the routing key for sticky-session routing.
@@ -90,11 +170,55 @@ pub struct Cli {
     #[arg(long)]
     pub sticky_eviction_interval_secs: Option<u64>,
 
+    // ---- tiered-spillover policy (only used by `--policy tiered_spillover`) ----
+    /// Preferred worker tier for `tiered_spillover`.
+    #[arg(long, value_enum)]
+    pub tier_primary: Option<WorkerTier>,
+    /// Borrowed worker tier for `tiered_spillover`.
+    #[arg(long, value_enum)]
+    pub tier_spillover: Option<WorkerTier>,
+    /// Spill from primary tier to spillover tier only when the best primary
+    /// worker's TTFT pressure is greater than this threshold. Defaults to 0.
+    #[arg(long)]
+    pub tier_primary_pressure_threshold: Option<usize>,
+    /// Prompt-token count that maps to one local TTFT pressure unit for
+    /// tiered-spillover. Must be greater than zero.
+    #[arg(long)]
+    pub tier_pressure_token_scale: Option<usize>,
+
     // ---- discovery: static ----
     /// Static worker URLs (space-separated or repeated). Mutually
     /// exclusive with `--service-discovery`.
+    ///
+    /// Each entry may carry optional capability suffixes. The
+    /// minimum-priority suffix `@min_priority=N`, e.g.
+    /// `http://rtx-01:30000@min_priority=100`. A worker tagged this way is
+    /// eligible only for requests whose body `priority` is `>= N`; lower
+    /// (or absent, treated as `0`) priority requests never route to it.
+    /// Use this to keep heterogeneous/low-context workers (e.g. RTX-6000)
+    /// serving only short high-priority production traffic.
+    /// `@max_context_tokens=N` declares the worker's safe prompt-plus-output
+    /// context ceiling; requests that cannot be proven to fit are excluded
+    /// from that worker before policy scoring. Suffixes may be combined. A
+    /// malformed suffix fails startup. Omit a capability when it does not
+    /// apply to that worker.
     #[arg(long, num_args = 1..)]
     pub worker_urls: Vec<String>,
+
+    /// Optional per-worker bearer-token mapping for static discovery.
+    /// Format: `<worker-url>=<token>`, e.g.
+    /// `http://10.0.0.2:30000=sk-worker-02`. Explicit mappings take precedence
+    /// over `--default-worker-bearer-key`. Router-owned `/server_info` and
+    /// proxied `/v1/*` requests use the selected worker token; entry client
+    /// credentials are never forwarded to workers.
+    #[arg(long, num_args = 1..)]
+    pub worker_bearer_keys: Vec<String>,
+
+    /// Default bearer token for static workers that have no explicit
+    /// `--worker-bearer-keys` mapping. The `WORKER_BEARER_KEY` environment
+    /// variable is the production secret-injection path.
+    #[arg(long, env = "WORKER_BEARER_KEY")]
+    pub default_worker_bearer_key: Option<String>,
 
     // ---- discovery: kubernetes ----
     /// Enable Kubernetes EndpointSlice discovery.
@@ -116,14 +240,125 @@ pub struct Cli {
     #[arg(long, num_args = 1..)]
     pub decode_selector: Vec<String>,
 
+    // ---- worker introspection auth ----
+    /// Bearer token presented on the router's OWN requests to each
+    /// worker's `/server_info` (worker introspection + cache_aware_zmq
+    /// KV-event publisher discovery). Required when the workers run with
+    /// SGLang `--api-key` and expose `/server_info` behind that key (which
+    /// is the only thing protecting a worker on a bare public IP).
+    ///
+    /// This is distinct from gateway-entry client auth and from
+    /// `--default-worker-bearer-key`. Introspection happens at startup before
+    /// any client request exists, so it needs its own credential. When omitted,
+    /// introspection is unauthenticated (correct for workers with no
+    /// `--api-key`); against a key-protected worker the unauthenticated
+    /// `/server_info` returns 401, KV-event discovery is skipped, and
+    /// `cache_aware_zmq` silently degrades to min-load.
+    #[arg(long)]
+    pub worker_introspect_key: Option<String>,
+
     // ---- proxy / active-load ----
     /// Per-request upstream timeout in seconds.
     #[arg(long, default_value_t = default_proxy_request_timeout_secs())]
     pub request_timeout_secs: u64,
+    /// Per-request timeout for worker `/get_load` and `/health` probes.
+    #[arg(long, default_value_t = default_worker_probe_timeout_secs())]
+    pub worker_probe_timeout_secs: u64,
     /// Max lifetime of an in-flight request entry before the janitor
     /// reaps it (returns 504 `stale_request_expired`).
     #[arg(long, default_value_t = default_stale_request_timeout_secs())]
     pub stale_request_timeout_secs: u64,
+
+    // ---- external queue admission (optional) ----
+    /// Enable router-side fail-fast admission control for external traffic.
+    /// When enabled, a request is rejected before policy selection if every
+    /// healthy priority-eligible worker is above
+    /// `--external-queue-admission-threshold`.
+    #[arg(
+        long,
+        env = "EXTERNAL_QUEUE_ADMISSION_ENABLED",
+        default_value_t = false
+    )]
+    pub external_queue_admission_enabled: bool,
+    /// Effective queue threshold used by external queue admission control.
+    /// The router rejects only when every eligible worker's effective load is
+    /// greater than this value; equal is admitted.
+    #[arg(long, env = "EXTERNAL_QUEUE_ADMISSION_THRESHOLD")]
+    pub external_queue_admission_threshold: Option<usize>,
+
+    // ---- request trace sink (optional) ----
+    /// Optional HTTP endpoint that receives best-effort JSON trace events.
+    /// When unset, router request tracing is disabled.
+    #[arg(long, env = "TRACE_SINK_URL")]
+    pub trace_sink_url: Option<String>,
+    /// Include bounded request/response body snippets in trace events.
+    /// Requires --trace-sink-url. Defaults to metadata-only tracing.
+    #[arg(long, env = "TRACE_CAPTURE_BODIES", default_value_t = false)]
+    pub trace_capture_bodies: bool,
+    /// Maximum body bytes captured per request/response trace field.
+    #[arg(long, env = "TRACE_BODY_MAX_BYTES", default_value_t = default_trace_body_max_bytes())]
+    pub trace_body_max_bytes: usize,
+
+    // ---- request priority override (optional) ----
+    /// Force every proxied JSON request body to this priority unless a
+    /// trusted priority override header is present.
+    #[arg(long)]
+    pub force_request_priority: Option<i64>,
+    /// Header carrying a trusted per-request priority value. It is honored
+    /// only when --trusted-priority-secret-header carries the matching secret.
+    #[arg(long)]
+    pub trusted_priority_header: Option<String>,
+    /// Header carrying the shared secret that authorizes
+    /// --trusted-priority-header.
+    #[arg(long)]
+    pub trusted_priority_secret_header: Option<String>,
+    /// Shared secret required before --trusted-priority-header is honored.
+    #[arg(long)]
+    pub trusted_priority_secret: Option<String>,
+
+    // ---- real-load polling (cache_aware_zmq load source) ----
+    /// Interval (seconds) at which a background task polls each worker's
+    /// `/get_load` for its REAL queue depth (summed `num_waiting_reqs`),
+    /// stored on the worker and used by `cache_aware_zmq` for min-load /
+    /// imbalance / hit-load-guard decisions INSTEAD OF the router-side
+    /// in-flight counter. The in-flight counter treats a 200k-token request
+    /// and a 2k request identically; real queue depth does not. Omitted =>
+    /// poller disabled, decisions fall back to in-flight count (original
+    /// behaviour). Must be `>= 1` when set. Auth reuses
+    /// `--worker-introspect-key`. Used by `pd_proxy` to publish aggregate
+    /// decode load, and by load-aware gateway policies for routing pressure.
+    #[arg(long)]
+    pub load_poll_interval_secs: Option<u64>,
+
+    // ---- alias fallback (optional) ----
+    /// Public model alias that should first be rewritten to
+    /// `--alias-primary-model-id`, then fallback to
+    /// `--alias-fallback-model-id` at `--alias-fallback-url` on retryable
+    /// primary failures.
+    #[arg(long)]
+    pub alias_model_id: Option<String>,
+    #[arg(long)]
+    pub alias_primary_model_id: Option<String>,
+    #[arg(long)]
+    pub alias_fallback_model_id: Option<String>,
+    #[arg(long)]
+    pub alias_fallback_url: Option<String>,
+    #[arg(long)]
+    pub alias_fallback_bearer_token: Option<String>,
+
+    // ---- direct external model route (optional) ----
+    /// Public model id routed directly to a fixed external
+    /// OpenAI-compatible upstream instead of the local worker pool.
+    #[arg(long)]
+    pub external_model_id: Option<String>,
+    /// Base URL for `--external-model-id`. Request paths such as
+    /// `/v1/chat/completions` are joined against this origin.
+    #[arg(long)]
+    pub external_model_url: Option<String>,
+    /// Gateway-owned bearer token for the external upstream. The inbound
+    /// client credential is never forwarded to this upstream.
+    #[arg(long)]
+    pub external_model_bearer_token: Option<String>,
 
     // ---- observability ----
     /// Default tracing level (overridden by `RUST_LOG`).
@@ -143,7 +378,29 @@ impl Cli {
     /// [`Config::validate`] for the remaining value-level invariants
     /// (model id, static worker URLs).
     pub fn into_config(self) -> Result<Config> {
-        let discovery = self.build_discovery()?;
+        if self.worker_urls.is_empty()
+            && (!self.worker_bearer_keys.is_empty() || self.default_worker_bearer_key.is_some())
+        {
+            return Err(anyhow!(
+                "--worker-bearer-keys and --default-worker-bearer-key require \
+                 --worker-urls static discovery"
+            ));
+        }
+        let discovery = if matches!(
+            self.mode,
+            RuntimeMode::CacheState | RuntimeMode::RouterState
+        ) {
+            if !self.worker_urls.is_empty() || self.service_discovery {
+                self.build_discovery()?
+            } else {
+                DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
+                    urls: Vec::new(),
+                    bearer_keys: Vec::new(),
+                })
+            }
+        } else {
+            self.build_discovery()?
+        };
 
         // Reject knobs that only take effect alongside another flag, rather
         // than silently dropping them — mirrors the discovery mutual-exclusion
@@ -157,12 +414,74 @@ impl Cli {
         }
         let tuned_cache_aware = self.cache_threshold.is_some()
             || self.balance_abs_threshold.is_some()
-            || self.balance_rel_threshold.is_some();
-        if tuned_cache_aware && self.policy != PolicyKind::CacheAwareZmq {
+            || self.balance_rel_threshold.is_some()
+            || self.hit_load_abs_threshold.is_some()
+            || self.hit_load_rel_threshold.is_some()
+            || self.cache_tree_source.is_some()
+            || self.cache_tree_page_size.is_some()
+            || self.cache_tree_bigram
+            || self.cache_tree_max_nodes.is_some()
+            || self.ttft_first_routing
+            || self.ttft_score_mode.is_some()
+            || self.ttft_idle_first_routing
+            || self.ttft_token_scale.is_some()
+            || self.ttft_cache_score_margin.is_some()
+            || self.cache_state_url.is_some()
+            || self.cache_state_timeout_ms != 20;
+        if matches!(self.mode, RuntimeMode::Gateway | RuntimeMode::PdProxy)
+            && tuned_cache_aware
+            && !matches!(
+                self.policy,
+                PolicyKind::CacheAwareZmq | PolicyKind::CacheAwareSpillover
+            )
+        {
             return Err(anyhow!(
                 "--cache-threshold / --balance-abs-threshold / --balance-rel-threshold \
-                 require --policy cache_aware_zmq"
+                 / --hit-load-abs-threshold / --hit-load-rel-threshold \
+                 / --cache-tree-source / --cache-tree-page-size / --cache-tree-bigram \
+                 / --cache-tree-max-nodes / --ttft-first-routing / --ttft-score-mode / --ttft-token-scale \
+                 / --ttft-cache-score-margin / --cache-state-url / --cache-state-timeout-ms \
+                 require --policy cache_aware_zmq or --policy cache_aware_spillover"
             ));
+        }
+        if self.cache_state_timeout_ms == 0 {
+            return Err(anyhow!("--cache-state-timeout-ms must be greater than 0"));
+        }
+        if let Some(scale) = self.ttft_token_scale {
+            if scale == 0 {
+                return Err(anyhow!("--ttft-token-scale must be greater than 0"));
+            }
+        }
+        // route_history tree source needs an explicit page size: there is no
+        // worker introspection in that mode to seed the block-size oracle, and
+        // a wrong block size makes the router's hashes never match the
+        // workers' — silent cache-routing failure. Require it explicitly.
+        let tree_source = self.cache_tree_source.unwrap_or_default();
+        if tree_source == CacheTreeSource::RouteHistory && self.cache_tree_page_size.is_none() {
+            return Err(anyhow!(
+                "--cache-tree-source route_history requires --cache-tree-page-size \
+                 (must equal the workers' --page-size)"
+            ));
+        }
+        if tree_source == CacheTreeSource::Zmq
+            && (self.cache_tree_page_size.is_some() || self.cache_tree_bigram)
+        {
+            return Err(anyhow!(
+                "--cache-tree-page-size / --cache-tree-bigram only apply to \
+                 --cache-tree-source route_history (zmq mode reads them from /server_info)"
+            ));
+        }
+        // The relative hit-load guard arms the divert logic; a value < 1.0
+        // would divert on almost any gap and defeat the cache. Reject NaN
+        // explicitly (it would otherwise slip past a plain `< 1.0`).
+        // Infinity is allowed and means "guard off".
+        if let Some(rel) = self.hit_load_rel_threshold {
+            if rel.is_nan() || rel < 1.0 {
+                return Err(anyhow!(
+                    "--hit-load-rel-threshold must be >= 1.0 \
+                     (omit it or use infinity to disable the guard)"
+                ));
+            }
         }
 
         let tuned_sticky = self.routing_key_header.is_some()
@@ -174,6 +493,30 @@ impl Cli {
                 "--routing-key-header / --sticky-fallback-policy / --sticky-idle-secs / \
                  --sticky-eviction-interval-secs require --policy sticky"
             ));
+        }
+
+        let tuned_tiered = self.tier_primary.is_some()
+            || self.tier_spillover.is_some()
+            || self.tier_primary_pressure_threshold.is_some()
+            || self.tier_pressure_token_scale.is_some();
+        if tuned_tiered
+            && !matches!(
+                self.policy,
+                PolicyKind::TieredSpillover | PolicyKind::CacheAwareSpillover
+            )
+        {
+            return Err(anyhow!(
+                "--tier-primary / --tier-spillover / --tier-primary-pressure-threshold / \
+                 --tier-pressure-token-scale require --policy tiered_spillover or \
+                 --policy cache_aware_spillover"
+            ));
+        }
+        if let Some(scale) = self.tier_pressure_token_scale {
+            if scale == 0 {
+                return Err(anyhow!(
+                    "--tier-pressure-token-scale must be greater than 0"
+                ));
+            }
         }
 
         // Build (and validate) the sticky config exactly when the sticky
@@ -190,11 +533,15 @@ impl Cli {
             let fallback_policy = self.sticky_fallback_policy.unwrap_or(d.fallback_policy);
             if matches!(
                 fallback_policy,
-                PolicyKind::Sticky | PolicyKind::CacheAwareZmq
+                PolicyKind::Sticky
+                    | PolicyKind::CacheAwareZmq
+                    | PolicyKind::TieredSpillover
+                    | PolicyKind::CacheAwareSpillover
             ) {
                 return Err(anyhow!(
                     "--sticky-fallback-policy must be one of round_robin / random / \
-                     power_of_two / load_based; cache_aware_zmq and sticky are not allowed"
+                     power_of_two / load_based; cache-aware, sticky, and tiered-spillover \
+                     policies are not allowed"
                 ));
             }
             let idle_secs = self.sticky_idle_secs.unwrap_or(d.idle_secs);
@@ -231,10 +578,117 @@ impl Cli {
             cool_down_secs: self.cb_cool_down_secs.unwrap_or_else(default_cb_cool_down),
         });
 
-        // Only build a CacheAwareConfig when the operator tuned at least
-        // one knob; otherwise leave it None so the policy uses its own
-        // defaults. Unset knobs fall back to the per-field defaults.
-        let cache_aware = if tuned_cache_aware {
+        // Real-load polling: validate, and decide whether policies should
+        // consume reported load. SGLang workers are polled; vLLM workers are
+        // skipped by the poller and rely on local pending pressure.
+        if let Some(secs) = self.load_poll_interval_secs {
+            if secs == 0 {
+                return Err(anyhow!("--load-poll-interval-secs must be >= 1"));
+            }
+            let load_aware_policy = matches!(
+                self.policy,
+                PolicyKind::CacheAwareZmq
+                    | PolicyKind::TieredSpillover
+                    | PolicyKind::CacheAwareSpillover
+            );
+            if self.mode != RuntimeMode::PdProxy && !load_aware_policy {
+                return Err(anyhow!(
+                    "--load-poll-interval-secs requires pd_proxy mode or a load-aware \
+                     policy (cache_aware_zmq, tiered_spillover, or cache_aware_spillover)"
+                ));
+            }
+        }
+        if self.worker_probe_timeout_secs == 0 {
+            return Err(anyhow!("--worker-probe-timeout-secs must be >= 1"));
+        }
+        let use_reported_load = self.load_poll_interval_secs.is_some();
+        let ttft_score_mode = self.ttft_score_mode.unwrap_or_default();
+        if ttft_score_mode != TtftScoreMode::Additive {
+            if !self.ttft_first_routing {
+                return Err(anyhow!(
+                    "non-additive --ttft-score-mode requires --ttft-first-routing"
+                ));
+            }
+            if !use_reported_load {
+                return Err(anyhow!(
+                    "non-additive --ttft-score-mode requires --load-poll-interval-secs"
+                ));
+            }
+            if self.ttft_idle_first_routing {
+                return Err(anyhow!(
+                    "non-additive --ttft-score-mode cannot be combined with --ttft-idle-first-routing"
+                ));
+            }
+        }
+        if self.trace_capture_bodies && self.trace_sink_url.is_none() {
+            return Err(anyhow!(
+                "--trace-capture-bodies requires --trace-sink-url (otherwise captured bodies have nowhere to go)"
+            ));
+        }
+        if self.trace_body_max_bytes == 0 {
+            return Err(anyhow!("--trace-body-max-bytes must be greater than 0"));
+        }
+        let trusted_priority_fields = [
+            self.trusted_priority_header.is_some(),
+            self.trusted_priority_secret_header.is_some(),
+            self.trusted_priority_secret.is_some(),
+        ];
+        let trusted_priority_count = trusted_priority_fields
+            .iter()
+            .filter(|configured| **configured)
+            .count();
+        if trusted_priority_count != 0 && trusted_priority_count != trusted_priority_fields.len() {
+            return Err(anyhow!(
+                "--trusted-priority-header / --trusted-priority-secret-header / \
+                 --trusted-priority-secret must be set together"
+            ));
+        }
+        if let Some(header) = self.trusted_priority_header.as_deref() {
+            axum::http::HeaderName::try_from(header).map_err(|e| {
+                anyhow!("--trusted-priority-header {header:?} is not a valid HTTP header name: {e}")
+            })?;
+        }
+        if let Some(header) = self.trusted_priority_secret_header.as_deref() {
+            axum::http::HeaderName::try_from(header).map_err(|e| {
+                anyhow!(
+                    "--trusted-priority-secret-header {header:?} is not a valid HTTP header name: {e}"
+                )
+            })?;
+        }
+        if let (Some(priority_header), Some(secret_header)) = (
+            self.trusted_priority_header.as_deref(),
+            self.trusted_priority_secret_header.as_deref(),
+        ) {
+            if priority_header.eq_ignore_ascii_case(secret_header) {
+                return Err(anyhow!(
+                    "--trusted-priority-header and --trusted-priority-secret-header must differ"
+                ));
+            }
+        }
+        if self
+            .trusted_priority_secret
+            .as_deref()
+            .is_some_and(|secret| secret.trim().is_empty())
+        {
+            return Err(anyhow!("--trusted-priority-secret must be non-empty"));
+        }
+        if self.external_queue_admission_enabled
+            && self.external_queue_admission_threshold.is_none()
+        {
+            return Err(anyhow!(
+                "--external-queue-admission-enabled requires --external-queue-admission-threshold"
+            ));
+        }
+
+        // Build a CacheAwareConfig when the operator tuned a knob OR enabled
+        // the load poller (which flips use_reported_load on); otherwise leave
+        // it None so the policy uses its own defaults. Unset knobs fall back
+        // to the per-field defaults.
+        let cache_aware = if matches!(
+            self.policy,
+            PolicyKind::CacheAwareZmq | PolicyKind::CacheAwareSpillover
+        ) && (tuned_cache_aware || use_reported_load)
+        {
             let d = CacheAwareConfig::default();
             Some(CacheAwareConfig {
                 cache_threshold: self.cache_threshold.unwrap_or(d.cache_threshold),
@@ -244,12 +698,106 @@ impl Cli {
                 balance_rel_threshold: self
                     .balance_rel_threshold
                     .unwrap_or(d.balance_rel_threshold),
+                hit_load_abs_threshold: self
+                    .hit_load_abs_threshold
+                    .unwrap_or(d.hit_load_abs_threshold),
+                hit_load_rel_threshold: self
+                    .hit_load_rel_threshold
+                    .unwrap_or(d.hit_load_rel_threshold),
+                use_reported_load,
+                tree_source,
+                ttft_first_routing: self.ttft_first_routing,
+                ttft_score_mode,
+                ttft_idle_first_routing: self.ttft_idle_first_routing,
+                ttft_token_scale: self.ttft_token_scale.unwrap_or(d.ttft_token_scale),
+                ttft_cache_score_margin: self
+                    .ttft_cache_score_margin
+                    .unwrap_or(d.ttft_cache_score_margin),
             })
         } else {
             None
         };
 
+        let tiered_spillover = if matches!(
+            self.policy,
+            PolicyKind::TieredSpillover | PolicyKind::CacheAwareSpillover
+        ) {
+            let d = TieredSpilloverConfig::default();
+            let primary_tier = self.tier_primary.unwrap_or(d.primary_tier);
+            let spillover_tier = self.tier_spillover.unwrap_or(d.spillover_tier);
+            if primary_tier == spillover_tier {
+                return Err(anyhow!(
+                    "--tier-primary and --tier-spillover must be different"
+                ));
+            }
+            Some(TieredSpilloverConfig {
+                primary_tier,
+                spillover_tier,
+                primary_pressure_threshold: self
+                    .tier_primary_pressure_threshold
+                    .unwrap_or(d.primary_pressure_threshold),
+                use_reported_load,
+                pressure_token_scale: self
+                    .tier_pressure_token_scale
+                    .unwrap_or(d.pressure_token_scale),
+            })
+        } else {
+            None
+        };
+
+        let alias_fallback = match (
+            self.alias_model_id,
+            self.alias_primary_model_id,
+            self.alias_fallback_model_id,
+            self.alias_fallback_url,
+        ) {
+            (None, None, None, None) => {
+                if self.alias_fallback_bearer_token.is_some() {
+                    return Err(anyhow!(
+                        "--alias-fallback-bearer-token requires alias fallback to be configured"
+                    ));
+                }
+                None
+            }
+            (
+                Some(alias_model_id),
+                Some(primary_model_id),
+                Some(fallback_model_id),
+                Some(fallback_base_url),
+            ) => Some(AliasFallbackConfig {
+                alias_model_id,
+                primary_model_id,
+                fallback_model_id,
+                fallback_base_url,
+                fallback_bearer_token: self.alias_fallback_bearer_token,
+            }),
+            _ => {
+                return Err(anyhow!(
+                    "--alias-model-id / --alias-primary-model-id / --alias-fallback-model-id / --alias-fallback-url must be set together"
+                ));
+            }
+        };
+
+        let external_model = match (
+            self.external_model_id,
+            self.external_model_url,
+            self.external_model_bearer_token,
+        ) {
+            (None, None, None) => None,
+            (Some(model_id), Some(base_url), Some(bearer_token)) => Some(ExternalModelConfig {
+                model_id,
+                base_url,
+                bearer_token,
+            }),
+            _ => {
+                return Err(anyhow!(
+                    "--external-model-id / --external-model-url / --external-model-bearer-token must be set together"
+                ));
+            }
+        };
+
         let config = Config {
+            runtime_mode: self.mode,
             server: ServerConfig {
                 host: self.host,
                 port: self.port,
@@ -266,15 +814,41 @@ impl Cli {
                 policy: self.policy,
                 circuit_breaker,
                 cache_aware,
+                tiered_spillover,
                 sticky,
             },
             discovery,
             proxy: ProxyConfig {
                 request_timeout_secs: self.request_timeout_secs,
+                worker_probe_timeout_secs: self.worker_probe_timeout_secs,
+                external_queue_admission: ExternalQueueAdmissionConfig {
+                    enabled: self.external_queue_admission_enabled,
+                    queue_threshold: self.external_queue_admission_threshold,
+                },
             },
             active_load: ActiveLoadConfig {
                 stale_request_timeout_secs: self.stale_request_timeout_secs,
             },
+            trace: TraceConfig {
+                sink_url: self.trace_sink_url,
+                capture_bodies: self.trace_capture_bodies,
+                body_max_bytes: self.trace_body_max_bytes,
+            },
+            priority_override: PriorityOverrideConfig {
+                force_request_priority: self.force_request_priority,
+                trusted_priority_header: self.trusted_priority_header,
+                trusted_priority_secret_header: self.trusted_priority_secret_header,
+                trusted_priority_secret: self.trusted_priority_secret,
+            },
+            worker_introspect_key: self.worker_introspect_key,
+            load_poll_interval_secs: self.load_poll_interval_secs,
+            cache_tree_page_size: self.cache_tree_page_size,
+            cache_tree_bigram: self.cache_tree_bigram,
+            cache_tree_max_nodes: self.cache_tree_max_nodes.unwrap_or(1_000_000),
+            cache_state_url: self.cache_state_url,
+            cache_state_timeout_ms: self.cache_state_timeout_ms,
+            alias_fallback,
+            external_model,
         };
         config.validate()?;
         Ok(config)
@@ -316,9 +890,19 @@ impl Cli {
                 }
                 DiscoveryBackend::StaticUrls(StaticUrlsDiscoveryConfig {
                     urls: self.worker_urls.clone(),
+                    bearer_keys: build_static_bearer_keys(
+                        &self.worker_urls,
+                        &self.worker_bearer_keys,
+                        self.default_worker_bearer_key.as_deref(),
+                    )?,
                 })
             }
             (false, true) => {
+                if !self.worker_bearer_keys.is_empty() || self.default_worker_bearer_key.is_some() {
+                    return Err(anyhow!(
+                        "worker bearer-key options require --worker-urls static discovery"
+                    ));
+                }
                 // Resolve (and validate) the selector flags into a
                 // K8sDiscoveryMode here, so an invalid combination can't be
                 // stored. Surfaces ConfigError as anyhow for the CLI.
@@ -348,6 +932,56 @@ fn join_selector(terms: &[String]) -> Option<String> {
     } else {
         Some(terms.join(","))
     }
+}
+
+fn parse_worker_bearer_key(raw: &str) -> Result<WorkerBearerKeyConfig> {
+    let (worker_url, bearer_token) = raw.split_once('=').ok_or_else(|| {
+        anyhow!("--worker-bearer-keys entries must have format <worker-url>=<token>")
+    })?;
+    let worker_url = worker_url.trim();
+    let bearer_token = bearer_token.trim();
+    if worker_url.is_empty() || bearer_token.is_empty() {
+        return Err(anyhow!(
+            "--worker-bearer-keys entries require non-empty URL and token"
+        ));
+    }
+    Ok(WorkerBearerKeyConfig {
+        worker_url: worker_url.to_string(),
+        bearer_token: bearer_token.to_string(),
+    })
+}
+
+fn build_static_bearer_keys(
+    worker_urls: &[String],
+    explicit_entries: &[String],
+    default_bearer_key: Option<&str>,
+) -> Result<Vec<WorkerBearerKeyConfig>> {
+    let mut bearer_keys = explicit_entries
+        .iter()
+        .map(|raw| parse_worker_bearer_key(raw))
+        .collect::<Result<Vec<_>>>()?;
+    let Some(default_bearer_key) = default_bearer_key else {
+        return Ok(bearer_keys);
+    };
+    let default_bearer_key = default_bearer_key.trim();
+    if default_bearer_key.is_empty() {
+        return Err(anyhow!("--default-worker-bearer-key must be non-empty"));
+    }
+
+    let explicit_urls = bearer_keys
+        .iter()
+        .map(|entry| crate::discovery::static_urls::normalize_worker_url(&entry.worker_url))
+        .collect::<Result<std::collections::HashSet<_>>>()?;
+    for worker_url in worker_urls {
+        let normalized = crate::discovery::static_urls::normalize_worker_url(worker_url)?;
+        if !explicit_urls.contains(&normalized) {
+            bearer_keys.push(WorkerBearerKeyConfig {
+                worker_url: worker_url.clone(),
+                bearer_token: default_bearer_key.to_string(),
+            });
+        }
+    }
+    Ok(bearer_keys)
 }
 
 #[cfg(test)]
@@ -391,6 +1025,36 @@ mod tests {
         assert_eq!(c.model.id, "qwen3-0.6b");
         assert_eq!(c.proxy.request_timeout_secs, 300);
         assert_eq!(c.active_load.stale_request_timeout_secs, 600);
+    }
+
+    #[test]
+    fn parses_pd_proxy_mode_with_static_workers() {
+        let c = into_config_owned(with_model(&[
+            "--mode",
+            "pd_proxy",
+            "--load-poll-interval-secs",
+            "1",
+            "--worker-urls",
+            "http://prefill:30100",
+            "http://decode:30200",
+        ]))
+        .unwrap();
+        assert_eq!(c.runtime_mode, RuntimeMode::PdProxy);
+        assert_eq!(c.load_poll_interval_secs, Some(1));
+    }
+
+    #[test]
+    fn gateway_round_robin_rejects_load_poll_interval() {
+        let err = into_config_owned(with_model(&[
+            "--load-poll-interval-secs",
+            "1",
+            "--worker-urls",
+            "http://worker:30000",
+        ]))
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("requires pd_proxy mode or a load-aware policy"));
     }
 
     /// With `--tokenizer-path` omitted, the tokenizer source defaults to the
@@ -440,6 +1104,50 @@ mod tests {
             ),
             _ => panic!("expected static_urls backend"),
         }
+    }
+
+    #[test]
+    fn default_worker_bearer_key_fills_only_workers_without_explicit_mapping() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://10.0.0.1:30000@min_priority=100",
+            "http://10.0.0.2:30000",
+            "--worker-bearer-keys",
+            "http://10.0.0.1:30000=explicit-worker-secret",
+            "--default-worker-bearer-key",
+            "default-worker-secret",
+        ]))
+        .unwrap();
+        let DiscoveryBackend::StaticUrls(static_urls) = c.discovery else {
+            panic!("expected static URLs discovery");
+        };
+        assert_eq!(static_urls.bearer_keys.len(), 2);
+        assert_eq!(
+            static_urls.bearer_keys[0].bearer_token,
+            "explicit-worker-secret"
+        );
+        assert_eq!(
+            static_urls.bearer_keys[1].worker_url,
+            "http://10.0.0.2:30000"
+        );
+        assert_eq!(
+            static_urls.bearer_keys[1].bearer_token,
+            "default-worker-secret"
+        );
+    }
+
+    #[test]
+    fn default_worker_bearer_key_requires_static_worker_urls() {
+        let error = into_config_owned(with_model(&[
+            "--service-discovery",
+            "--selector",
+            "app=sglang",
+            "--default-worker-bearer-key",
+            "worker-secret",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("require --worker-urls"), "got: {error}");
     }
 
     #[test]
@@ -668,6 +1376,115 @@ mod tests {
         assert_eq!(c.model.policy, PolicyKind::LoadBased);
     }
 
+    #[test]
+    fn tiered_spillover_flags_build_config_and_force_priority() {
+        let c = into_config_owned(with_model(&[
+            "--policy",
+            "tiered_spillover",
+            "--tier-primary",
+            "bulk",
+            "--tier-spillover",
+            "shared",
+            "--tier-primary-pressure-threshold",
+            "3",
+            "--tier-pressure-token-scale",
+            "128",
+            "--force-request-priority",
+            "0",
+            "--load-poll-interval-secs",
+            "2",
+            "--worker-urls",
+            "http://h20:8006@backend=vllm@tier=bulk",
+            "http://b200:30000@tier=shared",
+        ]))
+        .unwrap();
+
+        assert_eq!(c.model.policy, PolicyKind::TieredSpillover);
+        assert_eq!(c.priority_override.force_request_priority, Some(0));
+        let t = c.model.tiered_spillover.unwrap();
+        assert_eq!(t.primary_tier, WorkerTier::Bulk);
+        assert_eq!(t.spillover_tier, WorkerTier::Shared);
+        assert_eq!(t.primary_pressure_threshold, 3);
+        assert!(t.use_reported_load);
+        assert_eq!(t.pressure_token_scale, 128);
+    }
+
+    #[test]
+    fn cache_aware_spillover_accepts_cache_and_tier_knobs() {
+        let c = into_config_owned(with_model(&[
+            "--policy",
+            "cache_aware_spillover",
+            "--tier-primary",
+            "shared",
+            "--tier-spillover",
+            "bulk",
+            "--tier-primary-pressure-threshold",
+            "1",
+            "--cache-tree-source",
+            "route_history",
+            "--cache-tree-page-size",
+            "64",
+            "--cache-tree-bigram",
+            "--cache-tree-max-nodes",
+            "50000",
+            "--ttft-first-routing",
+            "--ttft-token-scale",
+            "64",
+            "--ttft-cache-score-margin",
+            "0",
+            "--load-poll-interval-secs",
+            "1",
+            "--worker-urls",
+            "http://h20:8006@tier=bulk",
+            "http://b200:30000@tier=shared",
+        ]))
+        .unwrap();
+
+        assert_eq!(c.model.policy, PolicyKind::CacheAwareSpillover);
+        let t = c.model.tiered_spillover.unwrap();
+        assert_eq!(t.primary_tier, WorkerTier::Shared);
+        assert_eq!(t.spillover_tier, WorkerTier::Bulk);
+        assert_eq!(t.primary_pressure_threshold, 1);
+        assert!(t.use_reported_load);
+        let ca = c.model.cache_aware.unwrap();
+        assert_eq!(ca.tree_source, CacheTreeSource::RouteHistory);
+        assert!(ca.ttft_first_routing);
+        assert!(ca.use_reported_load);
+        assert_eq!(c.cache_tree_page_size, Some(64));
+        assert!(c.cache_tree_bigram);
+        assert_eq!(c.cache_tree_max_nodes, 50000);
+    }
+
+    #[test]
+    fn rejects_tiered_flags_without_tiered_policy() {
+        let err = into_config_owned(with_model(&[
+            "--tier-primary",
+            "bulk",
+            "--worker-urls",
+            "http://x:30000",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("tiered_spillover"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_same_tiered_primary_and_spillover() {
+        let err = into_config_owned(with_model(&[
+            "--policy",
+            "tiered_spillover",
+            "--tier-primary",
+            "bulk",
+            "--tier-spillover",
+            "bulk",
+            "--worker-urls",
+            "http://x:30000",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("must be different"), "got: {err}");
+    }
+
     /// clap rejects `--cb-threshold 0` because the field is `NonZeroU32`.
     #[test]
     fn rejects_zero_cb_threshold() {
@@ -694,6 +1511,35 @@ mod tests {
         let cb = c.model.circuit_breaker.expect("cb enabled");
         assert_eq!(cb.threshold.get(), 5);
         assert_eq!(cb.cool_down_secs, 30);
+    }
+
+    #[test]
+    fn worker_probe_timeout_defaults_to_three_seconds_and_accepts_override() {
+        let default_config =
+            into_config_owned(with_model(&["--worker-urls", "http://x:30000"])).unwrap();
+        assert_eq!(default_config.proxy.worker_probe_timeout_secs, 3);
+
+        let overridden = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--worker-probe-timeout-secs",
+            "5",
+        ]))
+        .unwrap();
+        assert_eq!(overridden.proxy.worker_probe_timeout_secs, 5);
+    }
+
+    #[test]
+    fn rejects_zero_worker_probe_timeout() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--worker-probe-timeout-secs",
+            "0",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("--worker-probe-timeout-secs must be >= 1"));
     }
 
     #[test]
@@ -775,6 +1621,260 @@ mod tests {
     }
 
     #[test]
+    fn hit_load_guard_flags_build_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--hit-load-abs-threshold",
+            "6",
+            "--hit-load-rel-threshold",
+            "1.2",
+        ]))
+        .unwrap();
+        let ca = c.model.cache_aware.expect("cache_aware set");
+        assert_eq!(ca.hit_load_abs_threshold, 6);
+        assert_eq!(ca.hit_load_rel_threshold, 1.2);
+    }
+
+    #[test]
+    fn hit_load_guard_defaults_off_when_untouched() {
+        // cache_aware_zmq with only an unrelated knob: guard stays OFF.
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--cache-threshold",
+            "0.7",
+        ]))
+        .unwrap();
+        let ca = c.model.cache_aware.expect("cache_aware set");
+        assert_eq!(ca.hit_load_abs_threshold, 0);
+        assert!(ca.hit_load_rel_threshold.is_infinite());
+    }
+
+    #[test]
+    fn rejects_hit_load_flag_without_cache_aware_policy() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--hit-load-abs-threshold",
+            "6",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("require --policy cache_aware_zmq"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_hit_load_rel_below_one() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--hit-load-rel-threshold",
+            "0.5",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("--hit-load-rel-threshold must be >= 1.0"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn hit_load_rel_infinity_is_allowed_off() {
+        // Explicit infinity parses and means guard OFF.
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--hit-load-rel-threshold",
+            "inf",
+        ]))
+        .unwrap();
+        let ca = c.model.cache_aware.expect("cache_aware set");
+        assert!(ca.hit_load_rel_threshold.is_infinite());
+    }
+
+    #[test]
+    fn ttft_first_flags_build_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-token-scale",
+            "128",
+            "--ttft-cache-score-margin",
+            "2",
+        ]))
+        .unwrap();
+        let ca = c.model.cache_aware.expect("cache_aware set");
+        assert!(ca.ttft_first_routing);
+        assert_eq!(ca.ttft_score_mode, TtftScoreMode::Additive);
+        assert_eq!(ca.ttft_token_scale, 128);
+        assert_eq!(ca.ttft_cache_score_margin, 2);
+    }
+
+    #[test]
+    fn lmetric_score_mode_builds_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "lmetric-candidate-aware",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.model.cache_aware.unwrap().ttft_score_mode,
+            TtftScoreMode::LmetricCandidateAware
+        );
+    }
+
+    #[test]
+    fn prefill_work_only_score_mode_builds_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "prefill-work-only",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.model.cache_aware.unwrap().ttft_score_mode,
+            TtftScoreMode::PrefillWorkOnly
+        );
+    }
+
+    #[test]
+    fn prefill_work_normalized_score_mode_builds_cache_aware_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000@prefill_capacity=0.5",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "prefill-work-normalized",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.model.cache_aware.unwrap().ttft_score_mode,
+            TtftScoreMode::PrefillWorkNormalized
+        );
+    }
+
+    #[test]
+    fn rejects_lmetric_without_ttft_first() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-score-mode",
+            "lmetric",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("requires --ttft-first-routing"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_lmetric_without_load_poller() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-score-mode",
+            "lmetric",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("requires --load-poll-interval-secs"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_lmetric_with_idle_first_prefilter() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-first-routing",
+            "--ttft-idle-first-routing",
+            "--ttft-score-mode",
+            "lmetric",
+            "--load-poll-interval-secs",
+            "1",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("cannot be combined"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_ttft_first_flag_without_cache_aware_policy() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--ttft-first-routing",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("require --policy cache_aware_zmq"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_ttft_token_scale() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--policy",
+            "cache_aware_zmq",
+            "--ttft-token-scale",
+            "0",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("--ttft-token-scale must be greater than 0"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
     fn log_format_parses_json() {
         let c = into_config_owned(with_model(&[
             "--worker-urls",
@@ -802,6 +1902,37 @@ mod tests {
         .unwrap();
         assert_eq!(c.proxy.request_timeout_secs, 120);
         assert_eq!(c.active_load.stale_request_timeout_secs, 240);
+    }
+
+    #[test]
+    fn external_queue_admission_requires_threshold_when_enabled() {
+        let err = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--external-queue-admission-enabled",
+        ]))
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("--external-queue-admission-threshold"),
+            "{err:#}",
+        );
+    }
+
+    #[test]
+    fn external_queue_admission_flags_land_in_proxy_config() {
+        let c = into_config_owned(with_model(&[
+            "--worker-urls",
+            "http://x:30000",
+            "--external-queue-admission-enabled",
+            "--external-queue-admission-threshold",
+            "8",
+        ]))
+        .unwrap();
+
+        assert!(c.proxy.external_queue_admission.enabled);
+        assert_eq!(c.proxy.external_queue_admission.queue_threshold, Some(8));
     }
 
     #[test]
