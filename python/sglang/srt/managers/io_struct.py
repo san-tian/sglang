@@ -38,6 +38,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Tuple,
     Type,
     Union,
 )
@@ -806,7 +807,7 @@ class TokenizedGenerateReqInput(BaseReq, kw_only=True):
     return_indexer_topk: bool = False
 
     # Session info for continual prompting
-    session_id: Optional[str] = field(default=None, kw_only=True)
+    session_id: Optional[str] = None
     session_params: Optional[SessionParams] = None
 
     # LoRA related
@@ -2025,7 +2026,17 @@ class GetLoadsReqInput(BaseReq, kw_only=True):
     """Request for /v1/loads endpoint."""
 
     VALID_SECTIONS = frozenset(
-        {"core", "memory", "spec", "lora", "disagg", "queues", "all"}
+        {
+            "core",
+            "memory",
+            "spec",
+            "lora",
+            "disagg",
+            "queues",
+            "prefill_queue",
+            "prefill_work",
+            "all",
+        }
     )
 
     include: List[str] = msgspec.field(default_factory=lambda: ["all"])
@@ -2040,6 +2051,54 @@ class GetLoadsReqInput(BaseReq, kw_only=True):
                     f"Invalid include sections: {invalid}. "
                     f"Valid options: {sorted(self.VALID_SECTIONS)}"
                 )
+
+
+class PrefillQueueMetrics(msgspec.Struct, array_like=True):
+    """Bounded work-ahead summary for length-aware prefill scheduling."""
+
+    detail_complete: bool
+    chunked_remaining_uncached_tokens: int
+    work_bucket_bounds: Tuple[int, ...]
+    priority_scheduling_enabled: bool
+    schedule_low_priority_values_first: bool
+    priority_values: Tuple[int, ...]
+    priority_total_uncached_tokens: Tuple[int, ...]
+    priority_ahead_uncached_tokens: Tuple[Tuple[int, ...], ...]
+
+
+class PrefillWorkRequestMetrics(msgspec.Struct):
+    """Bounded request-level Prefill work state for Gateway routing."""
+
+    request_id: str
+    priority: int
+    total_uncached_tokens: int
+    processed_uncached_tokens: int = 0
+    current_chunk_end_tokens: int = 0
+
+
+class PrefillWorkOverflowMetrics(msgspec.Struct):
+    """Aggregate for Prefill entries omitted by the response bound."""
+
+    priority: int
+    length_bucket: int
+    request_count: int
+    total_uncached_tokens: int
+
+
+class PrefillWorkMetrics(msgspec.Struct):
+    """Versioned, bounded waiting/running Prefill snapshot."""
+
+    schema_version: int
+    snapshot_id: int
+    generated_at_ms: int
+    worker_boot_id: str
+    priority_scheduling_enabled: bool
+    schedule_low_priority_values_first: bool
+    detail_complete: bool
+    truncated: bool
+    waiting_prefill: Tuple[PrefillWorkRequestMetrics, ...] = ()
+    running_prefill: Tuple[PrefillWorkRequestMetrics, ...] = ()
+    overflow_summary: Tuple[PrefillWorkOverflowMetrics, ...] = ()
 
 
 class GetLoadsReqOutput(BaseReq, kw_only=True):
@@ -2069,6 +2128,8 @@ class GetLoadsReqOutput(BaseReq, kw_only=True):
     lora: Optional[LoRAMetrics] = None
     disaggregation: Optional[DisaggregationMetrics] = None
     queues: Optional[QueueMetrics] = None
+    prefill_queue: Optional[PrefillQueueMetrics] = None
+    prefill_work: Optional[PrefillWorkMetrics] = None
 
 
 class SetInjectDumpMetadataReqInput(BaseReq, kw_only=True):
