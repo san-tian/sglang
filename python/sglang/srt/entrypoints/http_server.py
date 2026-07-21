@@ -422,10 +422,8 @@ async def sls_trace_context_middleware(request: Request, call_next):
     a single round trip is reconstructable across 中转站 → SGLang Router → Worker.
     """
     from sglang.srt.utils.io_log import (
-        IO_LOG_MAX_BODY_BYTES,
         io_log_enabled,
         log_io_input,
-        log_io_output,
     )
     from sglang.srt.utils.log_utils import get_sls_log_filter
 
@@ -486,26 +484,56 @@ async def _io_log_tee_response(
     target: str,
     stream: bool,
 ) -> None:
-    """Wrap a StreamingResponse so a capped copy of the output is logged on close."""
-    from sglang.srt.utils.io_log import log_io_output
+    """Wrap a StreamingResponse so a capped head+tail copy of the output is logged on close."""
+    from sglang.srt.utils.io_log import log_io_output_clipped
 
     original_body_iterator = getattr(response, "body_iterator", None)
     if original_body_iterator is None:
         return
 
-    captured = bytearray()
-    cap = IO_LOG_MAX_BODY_BYTES
+    cap = _max_body_bytes()
+    half = max(1, cap // 2)
+    head = bytearray()
+    tail = bytearray()
+    total = 0
 
     async def tee():
+        nonlocal total
         try:
             async for chunk in original_body_iterator:
-                if len(captured) < cap and chunk:
-                    captured.extend(chunk[: cap - len(captured)])
+                if chunk:
+                    total += len(chunk)
+                    # Fill head up to half the cap.
+                    if len(head) < half:
+                        head.extend(chunk[: half - len(head)])
+                    # Track the last `half` bytes (bounded memory).
+                    tail.extend(chunk)
+                    if len(tail) > half:
+                        del tail[: len(tail) - half]
                 yield chunk
         finally:
-            log_io_output(
+            # Materialize head + tail with a marker when the stream exceeded the cap.
+            if total <= cap:
+                if total <= half:
+                    body = bytes(head).decode("utf-8", errors="replace")
+                else:
+                    body = bytes(head).decode("utf-8", errors="replace") + bytes(
+                        tail[len(tail) - (total - half) :]
+                    ).decode("utf-8", errors="replace")
+                clipped = body
+                truncated = False
+            else:
+                dropped = total - cap
+                clipped = (
+                    bytes(head).decode("utf-8", errors="replace")
+                    + f"\n...[truncated {dropped} bytes]...\n"
+                    + bytes(tail).decode("utf-8", errors="replace")
+                )
+                truncated = True
+            log_io_output_clipped(
                 response,
-                bytes(captured),
+                clipped,
+                truncated,
                 trace_id,
                 request_id,
                 method,

@@ -54,17 +54,27 @@ def test_env_mode_prod_disables(iol, monkeypatch):
     assert iol.io_log_enabled() is False
 
 
-def test_clip_caps_and_marks_truncation(iol):
-    big = b"x" * (iol.IO_LOG_MAX_BODY_BYTES + 10)
+def test_clip_caps_and_marks_truncation(iol, monkeypatch):
+    monkeypatch.setenv("UPSTREAM_IO_LOG_MAX_BODY_BYTES", "8")  # head=4, tail=4
+    big = b"HEADmiddleTAIL"  # 14 bytes, exceeds cap
     clipped, truncated = iol._clip(big)
     assert truncated is True
-    assert len(clipped) == iol.IO_LOG_MAX_BODY_BYTES
+    assert "HEAD" in clipped, f"head retained: {clipped}"
+    assert "TAIL" in clipped, f"tail retained: {clipped}"
+    assert "truncated 6 bytes" in clipped, f"marker names dropped count: {clipped}"
 
 
 def test_clip_preserves_small_body(iol):
     clipped, truncated = iol._clip(b"hello")
     assert clipped == "hello"
     assert truncated is False
+
+
+def test_parse_byte_size_suffixes(iol):
+    assert iol._parse_byte_size("2MB", 0) == 2 * 1024 * 1024
+    assert iol._parse_byte_size("1KB", 0) == 1024
+    assert iol._parse_byte_size("1024", 0) == 1024
+    assert iol._parse_byte_size("garbage", 99) == 99
 
 
 def test_is_stream_detection(iol):
