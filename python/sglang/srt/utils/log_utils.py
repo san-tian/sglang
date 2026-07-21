@@ -102,6 +102,25 @@ class SLSJsonFormatter(logging.Formatter):
             value = getattr(record, field, None)
             if value:
                 log_entry[field] = str(value)
+        # Full upstream request/response IO fields (feat-MAC-9867). These mirror the
+        # relay (macaron-relay-stack) and sgl-router field set so a single LLM round
+        # trip is reconstructable across all three services in SLS. Attached by
+        # sglang.srt.utils.io_log via logger.info(..., extra={...}).
+        for field in (
+            "io_event",
+            "x_request_id",
+            "method",
+            "path",
+            "target",
+            "stream",
+            "status_code",
+            "body_truncated",
+            "request_body",
+            "response_body",
+        ):
+            value = getattr(record, field, None)
+            if value is not None and value != "":
+                log_entry[field] = str(value)
         return log_entry
 
     def format(self, record: logging.LogRecord) -> str:
