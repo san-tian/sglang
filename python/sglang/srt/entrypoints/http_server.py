@@ -485,7 +485,7 @@ async def _io_log_tee_response(
     stream: bool,
 ) -> None:
     """Wrap a StreamingResponse so a capped head+tail copy of the output is logged on close."""
-    from sglang.srt.utils.io_log import log_io_output_clipped
+    from sglang.srt.utils.io_log import _max_body_bytes, log_io_output_clipped
 
     original_body_iterator = getattr(response, "body_iterator", None)
     if original_body_iterator is None:

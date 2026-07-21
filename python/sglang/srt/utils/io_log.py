@@ -20,7 +20,6 @@ import os
 
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import Message
 
 # Per-side logged-copy cap default. Override via UPSTREAM_IO_LOG_MAX_BODY_BYTES
 # (plain bytes or KB/MB/GB suffix, e.g. 2MB). The live client stream is never
@@ -197,4 +196,3 @@ __all__ = [
     "log_io_output",
     "log_io_output_clipped",
 ]
-

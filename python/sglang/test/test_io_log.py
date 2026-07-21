@@ -7,7 +7,6 @@ field set.
 """
 
 import importlib.util
-import os
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,9 @@ _MODULE_PATH = (
 
 @pytest.fixture(scope="module")
 def iol():
-    spec = importlib.util.spec_from_file_location("sglang_io_log_under_test", _MODULE_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "sglang_io_log_under_test", _MODULE_PATH
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -87,6 +88,7 @@ def test_is_stream_detection(iol):
 def test_log_io_input_noop_when_disabled(iol, monkeypatch):
     # Must not raise and must short-circuit without env gate.
     monkeypatch.setenv("ENV_MODE", "prod")
+
     # log_io_input accepts a Request-like object; pass a minimal stand-in.
     class _FakeReq:
         method = "POST"
