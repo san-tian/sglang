@@ -59,11 +59,7 @@ class DecodeHiCachePreallocMixin:
     """HiCache hooks for ``DecodePreallocQueue``: issue prefetch + reserve tokens."""
 
     def _build_decode_prefix_match(self, req: Req, result: Any) -> DecodePrefixMatch:
-        """Convert a ``match_prefix_for_req`` result into ``DecodePrefixMatch``.
-
-        Performs the optional L3 storage hit length query when decode-side
-        HiCache is enabled and the last host node is backed up.
-        """
+        """Convert a ``match_prefix_for_req`` result into ``DecodePrefixMatch``."""
         prefix_indices = result.device_indices
         l1_prefix_len = len(prefix_indices)
         l2_host_hit_length = result.host_hit_length
@@ -179,13 +175,7 @@ class DecodeHiCacheTransferMixin:
             decode_req.hicache_restored_node = None
 
     def _try_hicache_queue_load_back(self, dr: DecodeRequest) -> bool:
-        """Queue one L2->L1 load_back op for ``dr``; True iff a DMA was queued.
-
-        On success, ``dr.hicache_restored_node`` and ``hicache_restored_kv_indices``
-        are populated, and an inc_lock_ref is held until commit/abort.
-        Trivial cases (all-on-device / no needed coverage) auto-flip to READY.
-        Failback paths flip to FAILED.
-        """
+        """Queue one L2->L1 load_back op for ``dr``; True iff a DMA was queued."""
         pm = dr.prefix_match
 
         # Wait for L3 -> L2 prefetch to drain (skip when no L3 hit).
