@@ -415,7 +415,18 @@ app.add_middleware(
 
 @app.middleware("http")
 async def sls_trace_context_middleware(request: Request, call_next):
-    """Bind inbound trace identifiers to logs produced by this request."""
+    """Bind inbound trace identifiers to logs produced by this request.
+
+    Also captures the full LLM request input / response output (feat-MAC-9867) when
+    UPSTREAM_IO_LOG=1 or ENV_MODE=alpha, mirroring the relay and sgl-router designs so
+    a single round trip is reconstructable across 中转站 → SGLang Router → Worker.
+    """
+    from sglang.srt.utils.io_log import (
+        IO_LOG_MAX_BODY_BYTES,
+        io_log_enabled,
+        log_io_input,
+        log_io_output,
+    )
     from sglang.srt.utils.log_utils import get_sls_log_filter
 
     trace_id = request.headers.get("x-trace-id") or f"trace_{uuid.uuid4().hex}"
@@ -425,12 +436,85 @@ async def sls_trace_context_middleware(request: Request, call_next):
         trace_id=trace_id or None,
         request_id=request_id or None,
     )
+
+    # Capture the request body for logging and cache it so the route handler can
+    # still parse it (Starlette memoises request._body after the first read).
+    request_body = b""
+    stream_flag = False
+    if io_log_enabled():
+        try:
+            request_body = await request.body()
+            stream_flag = _io_log_is_stream(request_body)
+            log_io_input(request, request_body, trace_id, request_id)
+        except Exception:
+            request_body = b""
+
     try:
         response = await call_next(request)
         response.headers["x-trace-id"] = trace_id
+        if io_log_enabled() and request.method.upper() in ("POST", "PUT", "PATCH"):
+            await _io_log_tee_response(
+                response,
+                trace_id,
+                request_id,
+                request.method,
+                request.url.path if request.url else "",
+                str(request.url) if request.url else "",
+                stream_flag,
+            )
         return response
     finally:
         sls_filter.reset_context(context_tokens)
+
+
+def _io_log_is_stream(body: bytes) -> bool:
+    import json as _json
+
+    try:
+        payload = _json.loads(body)
+    except (ValueError, TypeError):
+        return False
+    return bool(isinstance(payload, dict) and payload.get("stream"))
+
+
+async def _io_log_tee_response(
+    response,
+    trace_id: str,
+    request_id: str,
+    method: str,
+    path: str,
+    target: str,
+    stream: bool,
+) -> None:
+    """Wrap a StreamingResponse so a capped copy of the output is logged on close."""
+    from sglang.srt.utils.io_log import log_io_output
+
+    original_body_iterator = getattr(response, "body_iterator", None)
+    if original_body_iterator is None:
+        return
+
+    captured = bytearray()
+    cap = IO_LOG_MAX_BODY_BYTES
+
+    async def tee():
+        try:
+            async for chunk in original_body_iterator:
+                if len(captured) < cap and chunk:
+                    captured.extend(chunk[: cap - len(captured)])
+                yield chunk
+        finally:
+            log_io_output(
+                response,
+                bytes(captured),
+                trace_id,
+                request_id,
+                method,
+                path,
+                target,
+                stream,
+            )
+
+    response.body_iterator = tee()
 
 
 if envs.SGLANG_ENABLE_REQUEST_DECOMPRESSION.get():
