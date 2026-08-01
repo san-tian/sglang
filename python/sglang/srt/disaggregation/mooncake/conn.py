@@ -236,7 +236,11 @@ class MooncakeKVManager(CommonKVManager):
             self.start_decode_thread()
 
     def init_engine(self):
-        self.engine = get_mooncake_transfer_engine()
+        # Use the physical gpu_id (matches the key used by
+        # init_mooncake_transfer_engine in model_runner) so each rank fetches
+        # its own engine and thus its own IB device. attn_tp_rank would be
+        # wrong under context-parallel prefill (attn_tp_size=1 => all ranks 0).
+        self.engine = get_mooncake_transfer_engine(self.kv_args.gpu_id)
 
     def register_buffer_to_engine(self):
         # Batch register KV data buffers

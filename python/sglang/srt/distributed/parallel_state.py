@@ -1761,16 +1761,18 @@ def get_pp_group() -> GroupCoordinator:
 get_pipeline_model_parallel_group = get_pp_group
 
 
-def get_mooncake_transfer_engine():
+def get_mooncake_transfer_engine(gpu_id: Optional[int] = None):
     """
-    Return the shared MooncakeTransferEngine if initialized in device_communicators,
-    else None. Used by disaggregation mooncake backend and mem_cache mooncake_store.
+    Return the per-rank MooncakeTransferEngine for ``gpu_id`` if initialized in
+    device_communicators, else None. Used by disaggregation mooncake backend and
+    mem_cache mooncake_store. ``gpu_id`` selects the rank-specific engine (each
+    rank can bind its own IB device); None falls back to the rank-0 engine.
     """
     from sglang.srt.distributed.device_communicators.mooncake_transfer_engine import (
         get_mooncake_transfer_engine as _get_engine,
     )
 
-    return _get_engine()
+    return _get_engine(gpu_id)
 
 
 @contextmanager

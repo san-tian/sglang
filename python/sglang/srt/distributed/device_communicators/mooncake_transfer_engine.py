@@ -8,8 +8,13 @@ from sglang.srt.utils.network import NetworkAddress, get_free_port
 
 logger = logging.getLogger(__name__)
 
-# Module-level shared engine instance, set by init_mooncake_transfer_engine().
-_mooncake_transfer_engine: Optional["MooncakeTransferEngine"] = None
+# Module-level per-rank engine cache, keyed by gpu_id.
+# Previously this was a single shared singleton, which meant every GPU rank
+# reused rank 0's engine (and thus rank 0's IB device). On multi-HCA nodes
+# (e.g. 8x MI300X with 8x 400G IB NICs) that pinned 100% of KV transfers onto
+# a single NIC while the other 7 sat idle. Caching per gpu_id lets each rank
+# bind its own IB device (see --disaggregation-ib-device per-GPU JSON map).
+_mooncake_transfer_engines: Dict[int, "MooncakeTransferEngine"] = {}
 
 
 def parse_ib_device_config(
@@ -278,20 +283,34 @@ def init_mooncake_transfer_engine(
     ib_device: Optional[str] = None,
 ) -> MooncakeTransferEngine:
     """
-    Initialize the shared MooncakeTransferEngine. Note: if already
-    initialized with the same (hostname, gpu_id, ib_device), returns existing
-    instance. Call from parallel_state when model parallel is set up and
-    mooncake transfer is needed.
+    Initialize the per-rank MooncakeTransferEngine for ``gpu_id``.
+
+    Each GPU rank gets its own engine instance so it can bind its own IB device
+    (via the per-GPU JSON map passed to ``--disaggregation-ib-device``). If an
+    engine for ``gpu_id`` already exists, the existing instance is returned.
+    Call from model_runner / parallel_state once model parallel is set up.
     """
-    global _mooncake_transfer_engine
-    if _mooncake_transfer_engine is not None:
-        return _mooncake_transfer_engine
-    _mooncake_transfer_engine = MooncakeTransferEngine(
+    rank = gpu_id if gpu_id is not None else 0
+    engine = _mooncake_transfer_engines.get(rank)
+    if engine is not None:
+        return engine
+    engine = MooncakeTransferEngine(
         hostname=hostname, gpu_id=gpu_id, ib_device=ib_device
     )
-    return _mooncake_transfer_engine
+    _mooncake_transfer_engines[rank] = engine
+    return engine
 
 
-def get_mooncake_transfer_engine() -> Optional[MooncakeTransferEngine]:
-    """Return the shared MooncakeTransferEngine if initialized, else None."""
-    return _mooncake_transfer_engine
+def get_mooncake_transfer_engine(
+    gpu_id: Optional[int] = None,
+) -> Optional[MooncakeTransferEngine]:
+    """
+    Return the per-rank MooncakeTransferEngine for ``gpu_id``.
+
+    ``gpu_id=None`` falls back to the rank-0 engine for backward compatibility
+    with callers that do not track the current rank (elastic EP backup,
+    mooncake_store, encode server/receiver). The PD disaggregation path always
+    passes the caller's attn_tp_rank so each rank uses its own IB device.
+    """
+    rank = gpu_id if gpu_id is not None else 0
+    return _mooncake_transfer_engines.get(rank)
