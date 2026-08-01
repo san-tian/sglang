@@ -236,7 +236,11 @@ class MooncakeKVManager(CommonKVManager):
             self.start_decode_thread()
 
     def init_engine(self):
-        self.engine = get_mooncake_transfer_engine()
+        # Pass this rank's attn_tp_rank so each rank fetches its own engine
+        # (and thus its own IB device when --disaggregation-ib-device is a
+        # per-GPU JSON map). Without this, every rank shared rank 0's engine
+        # and all KV transfers funneled through a single IB NIC.
+        self.engine = get_mooncake_transfer_engine(self.attn_tp_rank)
 
     def register_buffer_to_engine(self):
         # Batch register KV data buffers
