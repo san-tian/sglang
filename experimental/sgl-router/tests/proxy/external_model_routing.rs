@@ -72,6 +72,7 @@ fn base_config(external_url: String) -> Config {
             base_url: external_url,
             bearer_token: PROVIDER_TOKEN.into(),
         }),
+        allow_raw_context_tokens: false,
     }
 }
 
@@ -112,6 +113,7 @@ fn build_test_context(cfg: Config, local_worker_url: String) -> Arc<AppContext> 
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),

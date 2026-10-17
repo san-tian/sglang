@@ -8,6 +8,7 @@ pub mod kv_events;
 pub mod load_based;
 pub mod load_poller;
 pub mod power_of_two;
+mod prefill_score;
 pub mod random;
 pub mod registry;
 pub mod round_robin;

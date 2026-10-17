@@ -71,6 +71,7 @@ fn config() -> Config {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 
@@ -111,6 +112,7 @@ fn spec_with_backend(
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
         min_priority,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend,
@@ -627,6 +629,7 @@ async fn unknown_model_with_gated_worker_is_404_not_503() {
         model_ids: vec![ModelId("ghost".into())],
         bootstrap_port: None,
         min_priority: Some(100),
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),

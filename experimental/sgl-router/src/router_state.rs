@@ -491,6 +491,17 @@ impl RouterStateReservationGuard {
         ttl_ms: u64,
     ) -> Option<Self> {
         let request_id = Uuid::new_v4().to_string();
+        Self::reserve_with_request_id(client, worker_url, request_id, pending_tokens, ttl_ms)
+    }
+
+    pub fn reserve_with_request_id(
+        client: Arc<dyn RouterStateClient>,
+        worker_url: String,
+        request_id: impl Into<String>,
+        pending_tokens: usize,
+        ttl_ms: u64,
+    ) -> Option<Self> {
+        let request_id = request_id.into();
         let req = RouterStateReserveRequest {
             worker_url,
             request_id: request_id.clone(),

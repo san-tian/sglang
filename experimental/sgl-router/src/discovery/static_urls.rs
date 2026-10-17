@@ -35,6 +35,7 @@ use tokio::sync::mpsc;
 /// `http://host:port@min_priority=100`. A distinctive literal (not a bare
 /// `@`) so it cannot collide with URL userinfo (`user:pass@host`).
 const MIN_PRIORITY_TOKEN: &str = "@min_priority=";
+const MIN_CONTEXT_TOKENS_TOKEN: &str = "@min_context_tokens=";
 const MAX_CONTEXT_TOKENS_TOKEN: &str = "@max_context_tokens=";
 const BACKEND_TOKEN: &str = "@backend=";
 const TIER_TOKEN: &str = "@tier=";
@@ -46,6 +47,7 @@ const PREFILL_MEMBERS_TOKEN: &str = "@prefill_members=";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorkerCapabilities {
     pub min_priority: Option<i64>,
+    pub min_context_tokens: Option<usize>,
     pub max_context_tokens: Option<usize>,
     pub backend: WorkerBackend,
     pub tier: WorkerTier,
@@ -58,6 +60,7 @@ impl Default for WorkerCapabilities {
     fn default() -> Self {
         Self {
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             backend: WorkerBackend::Sglang,
             tier: WorkerTier::Default,
@@ -92,6 +95,7 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
     loop {
         let Some((pos, token)) = [
             MIN_PRIORITY_TOKEN,
+            MIN_CONTEXT_TOKENS_TOKEN,
             MAX_CONTEXT_TOKENS_TOKEN,
             BACKEND_TOKEN,
             TIER_TOKEN,
@@ -115,6 +119,20 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
                 )
             })?;
             caps.min_priority = Some(prio);
+        } else if token == MIN_CONTEXT_TOKENS_TOKEN {
+            let min_context_tokens = value.trim().parse::<usize>().map_err(|_| {
+                anyhow::anyhow!(
+                    "invalid min_context_tokens in worker URL entry {entry:?}: \
+                     {value:?} is not a positive integer"
+                )
+            })?;
+            if min_context_tokens == 0 {
+                return Err(anyhow::anyhow!(
+                    "invalid min_context_tokens in worker URL entry {entry:?}: \
+                     value must be greater than zero"
+                ));
+            }
+            caps.min_context_tokens = Some(min_context_tokens);
         } else if token == MAX_CONTEXT_TOKENS_TOKEN {
             let max_context_tokens = value.trim().parse::<usize>().map_err(|_| {
                 anyhow::anyhow!(
@@ -176,6 +194,14 @@ pub(crate) fn parse_worker_entry(entry: &str) -> Result<(String, WorkerCapabilit
             caps.prefill_capacity_milli = prefill_profile_capacity_milli(value.trim(), entry)?;
         } else {
             caps.prefill_members = parse_prefill_members(value.trim(), entry)?;
+        }
+    }
+    if let (Some(min), Some(max)) = (caps.min_context_tokens, caps.max_context_tokens) {
+        if min > max {
+            return Err(anyhow::anyhow!(
+                "invalid context range in worker URL entry {entry:?}: \
+                 min_context_tokens ({min}) must not exceed max_context_tokens ({max})"
+            ));
         }
     }
     Ok((base.to_string(), caps))
@@ -352,6 +378,7 @@ pub(crate) fn build_worker_specs(cfg: &StaticUrlsDiscoveryConfig) -> Result<Vec<
                 model_ids: Vec::new(),
                 bootstrap_port: None,
                 min_priority: caps.min_priority,
+                min_context_tokens: caps.min_context_tokens,
                 max_context_tokens: caps.max_context_tokens,
                 bearer_token,
                 backend: caps.backend,
@@ -417,6 +444,7 @@ mod tests {
         let (url, caps) = parse_worker_entry("http://w0:30000").unwrap();
         assert_eq!(url, "http://w0:30000");
         assert_eq!(caps.min_priority, None);
+        assert_eq!(caps.min_context_tokens, None);
         assert_eq!(caps.max_context_tokens, None);
         assert_eq!(caps.backend, WorkerBackend::Sglang);
         assert_eq!(caps.tier, WorkerTier::Default);
@@ -439,6 +467,15 @@ mod tests {
         assert_eq!(url, "http://amd-01:30000");
         assert_eq!(caps.max_context_tokens, Some(500_000));
         assert_eq!(caps.min_priority, None);
+    }
+
+    #[test]
+    fn parse_entry_extracts_min_context_tokens_suffix() {
+        let (url, caps) =
+            parse_worker_entry("http://nvidia-01:30000@min_context_tokens=65536").unwrap();
+        assert_eq!(url, "http://nvidia-01:30000");
+        assert_eq!(caps.min_context_tokens, Some(65_536));
+        assert_eq!(caps.max_context_tokens, None);
     }
 
     #[test]
@@ -558,13 +595,14 @@ mod tests {
     #[test]
     fn parse_entry_extracts_combined_suffixes_in_either_order() {
         let (url, caps) = parse_worker_entry(
-            "http://h20-r0:8006@backend=vllm@tier=bulk@min_priority=100@max_context_tokens=500000",
+            "http://h20-r0:8006@backend=vllm@tier=bulk@min_priority=100@min_context_tokens=65536@max_context_tokens=500000",
         )
         .unwrap();
         assert_eq!(url, "http://h20-r0:8006");
         assert_eq!(caps.backend, WorkerBackend::Vllm);
         assert_eq!(caps.tier, WorkerTier::Bulk);
         assert_eq!(caps.min_priority, Some(100));
+        assert_eq!(caps.min_context_tokens, Some(65_536));
         assert_eq!(caps.max_context_tokens, Some(500_000));
 
         let (url, caps) = parse_worker_entry(
@@ -576,6 +614,21 @@ mod tests {
         assert_eq!(caps.tier, WorkerTier::Bulk);
         assert_eq!(caps.min_priority, Some(100));
         assert_eq!(caps.max_context_tokens, Some(500_000));
+    }
+
+    #[test]
+    fn parse_entry_rejects_invalid_or_empty_context_range() {
+        for value in ["0", "-1", "many", ""] {
+            let err = parse_worker_entry(&format!("http://w:30000@min_context_tokens={value}"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("min_context_tokens"), "got: {err}");
+        }
+        let err =
+            parse_worker_entry("http://w:30000@min_context_tokens=65536@max_context_tokens=65535")
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("context range"), "got: {err}");
     }
 
     #[test]

@@ -67,6 +67,7 @@ fn build_ctx_with_worker(worker_url: &str) -> Arc<AppContext> {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     };
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
     let registry = Arc::new(WorkerRegistry::default());
@@ -78,6 +79,7 @@ fn build_ctx_with_worker(worker_url: &str) -> Arc<AppContext> {
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),

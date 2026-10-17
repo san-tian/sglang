@@ -238,6 +238,7 @@ mod tests {
             model_ids: vec![ModelId("tiny".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend: Default::default(),

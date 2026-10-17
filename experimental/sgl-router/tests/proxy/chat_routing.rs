@@ -57,6 +57,7 @@ fn config_for(_worker_url: &str) -> Config {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     }
 }
 
@@ -71,6 +72,7 @@ fn build_ctx_with_worker(url: &str) -> Arc<AppContext> {
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),
@@ -800,6 +802,7 @@ async fn unknown_model_with_no_policy_returns_404_model_not_found() {
         model_ids: vec![ModelId("ghost-7b".into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),
@@ -1139,6 +1142,7 @@ async fn streaming_load_guard_persists_for_body_lifetime() {
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),
@@ -1281,6 +1285,7 @@ async fn streaming_active_load_persists_for_body_lifetime() {
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),
@@ -1426,6 +1431,7 @@ async fn janitor_expiry_returns_504_stale_request_expired() {
         model_ids: vec![ModelId("tiny".into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),

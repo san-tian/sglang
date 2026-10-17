@@ -19,11 +19,10 @@
 //! plain HTTP on the worker's normal port — reachable over NAT/Vast public
 //! mappings with no special port.
 //!
-//! Failure handling: any `/get_load` or `/health` error (timeout, non-2xx,
-//! parse) writes the `REPORTED_LOAD_FAILED` sentinel so the policy treats that
-//! worker as HIGH load and PD admission removes it. `/get_load` alone is not a
-//! sufficient liveness check: the HTTP process can still return cached load
-//! while the scheduler health endpoint is wedged.
+//! Failure handling separates load-data availability from worker health.
+//! Load-only failures retain a bounded last-good snapshot and reservations;
+//! health or authentication failures still fail closed. Repeated load failures
+//! open a snapshot circuit that requires consecutive successes to recover.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -35,9 +34,22 @@ use tokio_util::sync::CancellationToken;
 use crate::policies::active_load::JanitorHandle;
 use crate::workers::worker::{
     CandidatePrefillLoad, MemberPrefillLoadSnapshot, PrefillLoadRole, PrefillLoadSnapshot,
-    PrefillPriorityLoad, REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET,
+    PrefillPriorityLoad, PrefillWorkOverflowSnapshot, PrefillWorkRequestSnapshot,
+    PrefillWorkSnapshot, REPORTED_LOAD_FAILED, REPORTED_LOAD_UNSET,
 };
 use crate::workers::WorkerRegistry;
+
+const PREFILL_WORK_SCHEMA_VERSION: u32 = 1;
+const DEFAULT_LOAD_FAILURE_THRESHOLD: usize = 3;
+const DEFAULT_LOAD_RECOVERY_THRESHOLD: usize = 2;
+
+fn env_threshold(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
 
 /// Per-`dp_rank` entry from a worker's `/get_load` response, e.g.
 /// `[{"dp_rank":0,"num_reqs":0,"num_waiting_reqs":0,"num_tokens":0,...}, ...]`.
@@ -60,6 +72,60 @@ struct GetLoadEntry {
     prefill_capacity_milli: Option<usize>,
     #[serde(default)]
     prefill_queue: Option<PrefillQueueEntry>,
+    #[serde(default)]
+    prefill_work: Option<PrefillWorkEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrefillWorkEntry {
+    #[serde(default)]
+    schema_version: u32,
+    #[serde(default)]
+    snapshot_id: u64,
+    #[serde(default)]
+    generated_at_ms: u64,
+    #[serde(default)]
+    worker_boot_id: String,
+    #[serde(default)]
+    priority_scheduling_enabled: bool,
+    #[serde(default)]
+    schedule_low_priority_values_first: bool,
+    #[serde(default)]
+    detail_complete: bool,
+    #[serde(default)]
+    truncated: bool,
+    #[serde(default)]
+    waiting_prefill: Vec<PrefillWorkRequestEntry>,
+    #[serde(default)]
+    running_prefill: Vec<PrefillWorkRequestEntry>,
+    #[serde(default)]
+    overflow_summary: Vec<PrefillWorkOverflowEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrefillWorkRequestEntry {
+    #[serde(default)]
+    request_id: String,
+    #[serde(default)]
+    priority: i64,
+    #[serde(default)]
+    total_uncached_tokens: i64,
+    #[serde(default)]
+    processed_uncached_tokens: i64,
+    #[serde(default)]
+    current_chunk_end_tokens: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrefillWorkOverflowEntry {
+    #[serde(default)]
+    priority: i64,
+    #[serde(default)]
+    length_bucket: i64,
+    #[serde(default)]
+    request_count: i64,
+    #[serde(default)]
+    total_uncached_tokens: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +160,43 @@ struct ParsedWorkerLoad {
     request_pressure: i64,
     prefill: Option<PrefillLoadSnapshot>,
     prefill_members: Vec<MemberPrefillLoadSnapshot>,
+    prefill_work: Option<PrefillWorkSnapshot>,
+    prefill_member_work: Vec<(String, PrefillWorkSnapshot)>,
+}
+
+fn parse_prefill_work(entry: &PrefillWorkEntry) -> Option<PrefillWorkSnapshot> {
+    if entry.schema_version != PREFILL_WORK_SCHEMA_VERSION || entry.worker_boot_id.is_empty() {
+        return None;
+    }
+    let request = |value: &PrefillWorkRequestEntry| PrefillWorkRequestSnapshot {
+        request_id: value.request_id.clone(),
+        priority: value.priority,
+        total_uncached_tokens: value.total_uncached_tokens.max(0) as usize,
+        processed_uncached_tokens: value.processed_uncached_tokens.max(0) as usize,
+        current_chunk_end_tokens: value.current_chunk_end_tokens.max(0) as usize,
+    };
+    Some(PrefillWorkSnapshot {
+        schema_version: entry.schema_version,
+        snapshot_id: entry.snapshot_id,
+        generated_at_ms: entry.generated_at_ms,
+        worker_boot_id: entry.worker_boot_id.clone(),
+        priority_scheduling_enabled: entry.priority_scheduling_enabled,
+        schedule_low_priority_values_first: entry.schedule_low_priority_values_first,
+        detail_complete: entry.detail_complete,
+        truncated: entry.truncated,
+        waiting_prefill: entry.waiting_prefill.iter().map(request).collect(),
+        running_prefill: entry.running_prefill.iter().map(request).collect(),
+        overflow_summary: entry
+            .overflow_summary
+            .iter()
+            .map(|value| PrefillWorkOverflowSnapshot {
+                priority: value.priority,
+                length_bucket: value.length_bucket.max(0) as usize,
+                request_count: value.request_count.max(0) as usize,
+                total_uncached_tokens: value.total_uncached_tokens.max(0) as usize,
+            })
+            .collect(),
+    })
 }
 
 /// Sum active plus waiting requests across all dp ranks reported by one worker.
@@ -109,6 +212,7 @@ fn parse_total_request_pressure(body: &str) -> Option<i64> {
 
 fn parse_worker_load(body: &str) -> Option<ParsedWorkerLoad> {
     let entries: Vec<GetLoadEntry> = serde_json::from_str(body).ok()?;
+    let prefill_work = parse_prefill_work_entries(&entries);
     let request_pressure = entries.iter().fold(0i64, |total, entry| {
         total.saturating_add(
             entry
@@ -143,6 +247,8 @@ fn parse_worker_load(body: &str) -> Option<ParsedWorkerLoad> {
         request_pressure,
         prefill,
         prefill_members: Vec::new(),
+        prefill_work,
+        prefill_member_work: Vec::new(),
     })
 }
 
@@ -170,11 +276,49 @@ fn parse_v1_worker_load(
         crate::discovery::WorkerMode::Decode => None,
     };
     let prefill = role.and_then(|role| snapshot_from_entries(&response.loads, role));
+    let prefill_work = role.and_then(|_| parse_prefill_work_entries(&response.loads));
     Some(ParsedWorkerLoad {
         request_pressure,
         prefill,
         prefill_members: Vec::new(),
+        prefill_work,
+        prefill_member_work: Vec::new(),
     })
+}
+
+fn merge_prefill_work_entries(
+    entries: impl IntoIterator<Item = PrefillWorkSnapshot>,
+) -> Option<PrefillWorkSnapshot> {
+    let mut entries = entries.into_iter();
+    let mut merged = entries.next()?;
+    for right in entries {
+        if merged.schema_version != right.schema_version
+            || merged.worker_boot_id != right.worker_boot_id
+            || merged.priority_scheduling_enabled != right.priority_scheduling_enabled
+            || merged.schedule_low_priority_values_first != right.schedule_low_priority_values_first
+        {
+            return None;
+        }
+        merged.snapshot_id = merged.snapshot_id.max(right.snapshot_id);
+        merged.generated_at_ms = merged.generated_at_ms.max(right.generated_at_ms);
+        merged.detail_complete &= right.detail_complete;
+        merged.truncated |= right.truncated;
+        merged.waiting_prefill.extend(right.waiting_prefill);
+        merged.running_prefill.extend(right.running_prefill);
+        merged.overflow_summary.extend(right.overflow_summary);
+    }
+    Some(merged)
+}
+
+fn parse_prefill_work_entries(entries: &[GetLoadEntry]) -> Option<PrefillWorkSnapshot> {
+    if entries.is_empty() {
+        return None;
+    }
+    let snapshots = entries
+        .iter()
+        .map(|entry| parse_prefill_work(entry.prefill_work.as_ref()?))
+        .collect::<Option<Vec<_>>>()?;
+    merge_prefill_work_entries(snapshots)
 }
 
 fn parse_proxy_v1_load(
@@ -219,6 +363,17 @@ fn parse_proxy_v1_load(
         request_pressure: request_pressure.max(0),
         prefill: None,
         prefill_members: members,
+        prefill_work: None,
+        prefill_member_work: response
+            .loads
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    entry.worker_url.clone()?,
+                    parse_prefill_work(entry.prefill_work.as_ref()?)?,
+                ))
+            })
+            .collect(),
     })
 }
 
@@ -364,8 +519,12 @@ fn worker_get(
 async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker::Worker>) {
     if !worker.backend().supports_sglang_load() {
         worker.set_reported_load(REPORTED_LOAD_UNSET);
+        worker.set_reported_load_stale(false);
         worker.set_reported_prefill_load(None);
         worker.set_reported_prefill_members(Vec::new());
+        worker.set_reported_prefill_work(None);
+        worker.set_reported_prefill_member_work(Vec::new());
+        worker.reset_reported_load_poll_state();
         tracing::debug!(
             worker_url = %worker.url,
             backend = ?worker.backend(),
@@ -374,42 +533,63 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
         return;
     }
     let base = worker.url.trim_end_matches('/');
-    let v1_loads_url = format!("{base}/v1/loads?include=core,prefill_queue");
+    let v1_loads_url = format!("{base}/v1/loads?include=core,prefill_queue,prefill_work");
     let legacy_load_url = format!("{base}/get_load");
     let health_url = format!("{base}/health");
     let load_probe = async {
         if worker.prefill_members().is_empty() {
-            let legacy = worker_get(client, worker, &legacy_load_url)
-                .send()
-                .await
-                .ok()?;
-            if !legacy.status().is_success() {
-                return None;
+            let Ok(legacy) = worker_get(client, worker, &legacy_load_url).send().await else {
+                return (None, false);
+            };
+            if matches!(
+                legacy.status(),
+                reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+            ) {
+                return (None, true);
             }
-            return parse_worker_load(&legacy.text().await.ok()?);
+            if !legacy.status().is_success() {
+                return (None, false);
+            }
+            let parsed = match legacy.text().await {
+                Ok(body) => parse_worker_load(&body),
+                Err(_) => None,
+            };
+            return (parsed, false);
         }
-        let resp = worker_get(client, worker, &v1_loads_url)
-            .send()
-            .await
-            .ok()?;
-        if resp.status().is_success() {
-            let body = resp.text().await.ok()?;
-            return parse_v1_worker_load(&body, worker);
+        let v1 = worker_get(client, worker, &v1_loads_url).send().await.ok();
+        if let Some(resp) = v1 {
+            if resp.status().is_success() {
+                if let Ok(body) = resp.text().await {
+                    if let Some(parsed) = parse_v1_worker_load(&body, worker) {
+                        return (Some(parsed), false);
+                    }
+                }
+            } else if matches!(
+                resp.status(),
+                reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+            ) {
+                // Authentication failures are not capability gaps. Falling
+                // back would weaken the logical proxy's auth boundary.
+                return (None, true);
+            }
         }
-        if !matches!(
-            resp.status(),
-            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+        let Ok(legacy) = worker_get(client, worker, &legacy_load_url).send().await else {
+            return (None, false);
+        };
+        if matches!(
+            legacy.status(),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
         ) {
-            return None;
+            return (None, true);
         }
-        let legacy = worker_get(client, worker, &legacy_load_url)
-            .send()
-            .await
-            .ok()?;
         if !legacy.status().is_success() {
-            return None;
+            return (None, false);
         }
-        parse_worker_load(&legacy.text().await.ok()?)
+        let parsed = match legacy.text().await {
+            Ok(body) => parse_worker_load(&body),
+            Err(_) => None,
+        };
+        (parsed, false)
     };
     let health_probe = async {
         let resp = match worker_get(client, worker, &health_url).send().await {
@@ -418,21 +598,58 @@ async fn poll_one(client: &reqwest::Client, worker: &Arc<crate::workers::worker:
         };
         resp.status().is_success()
     };
-    let (load, health_ok) = tokio::join!(load_probe, health_probe);
-    match (load, health_ok) {
-        (Some(load), true) => {
+    let ((load, auth_failed), health_ok) = tokio::join!(load_probe, health_probe);
+    let failure_threshold = env_threshold(
+        "PREFILL_LOAD_FAILURE_THRESHOLD",
+        DEFAULT_LOAD_FAILURE_THRESHOLD,
+    );
+    let recovery_threshold = env_threshold(
+        "PREFILL_LOAD_RECOVERY_THRESHOLD",
+        DEFAULT_LOAD_RECOVERY_THRESHOLD,
+    );
+    match (load, health_ok, auth_failed) {
+        (Some(load), true, false) => {
+            if !worker.record_reported_load_success(recovery_threshold) {
+                worker.set_reported_load_stale(true);
+                tracing::debug!(
+                    worker_url = %worker.url,
+                    recovery_threshold,
+                    "load-poller: successful probe retained for recovery hysteresis"
+                );
+                return;
+            }
             worker.set_reported_load(load.request_pressure);
+            worker.set_reported_load_stale(false);
             worker.set_reported_prefill_load(load.prefill);
             worker.set_reported_prefill_members(load.prefill_members);
+            worker.set_reported_prefill_work(load.prefill_work);
+            worker.set_reported_prefill_member_work(load.prefill_member_work);
         }
-        (load, health_ok) => {
-            worker.set_reported_load(REPORTED_LOAD_FAILED);
-            worker.set_reported_prefill_load(None);
-            worker.set_reported_prefill_members(Vec::new());
+        (None, true, false) => {
+            // A load endpoint failure is not a worker health failure. Keep
+            // the last-good snapshot for the bounded stale fallback; the
+            // routing policy will use its age and reservations conservatively.
+            worker.set_reported_load_stale(true);
+            let failures = worker.record_reported_load_failure(failure_threshold);
             tracing::debug!(
                 worker_url = %worker.url,
-                load_ok = load.is_some(),
-                health_ok,
+                failures,
+                circuit_open = worker.reported_load_circuit_open(),
+                "load-poller: load endpoint unavailable; retaining last-good snapshot"
+            );
+        }
+        (_, false, _) | (_, _, true) => {
+            worker.record_reported_load_failure(failure_threshold);
+            worker.set_reported_load(REPORTED_LOAD_FAILED);
+            worker.set_reported_load_stale(false);
+            worker.set_reported_prefill_load(None);
+            worker.set_reported_prefill_members(Vec::new());
+            worker.set_reported_prefill_work(None);
+            worker.set_reported_prefill_member_work(Vec::new());
+            tracing::debug!(
+                worker_url = %worker.url,
+                load_ok = false,
+                health_ok = false,
                 "load-poller: worker introspection failed; marking HIGH load"
             );
         }
@@ -500,8 +717,11 @@ mod tests {
     use crate::discovery::{ModelId, WorkerBackend, WorkerId, WorkerMode, WorkerSpec};
     use crate::workers::worker::REPORTED_LOAD_FAILED;
     use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     use axum::{routing::get, Json, Router};
     use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc as StdArc;
     use tokio::net::TcpListener;
 
     #[test]
@@ -682,6 +902,77 @@ mod tests {
     }
 
     #[test]
+    fn parses_versioned_request_level_prefill_work() {
+        let worker = test_worker(
+            "direct",
+            "http://direct",
+            WorkerMode::Plain,
+            WorkerBackend::Sglang,
+            Vec::new(),
+        );
+        let parsed = parse_v1_worker_load(
+            r#"{
+              "loads":[{
+                "num_running_reqs":1,
+                "num_waiting_reqs":1,
+                "num_waiting_uncached_tokens":4096,
+                "prefill_work":{
+                  "schema_version":1,
+                  "snapshot_id":42,
+                  "generated_at_ms":1000,
+                  "worker_boot_id":"boot-a",
+                  "priority_scheduling_enabled":true,
+                  "schedule_low_priority_values_first":false,
+                  "detail_complete":true,
+                  "truncated":false,
+                  "waiting_prefill":[{"request_id":"w","priority":0,"total_uncached_tokens":4096}],
+                  "running_prefill":[{"request_id":"r","priority":0,"total_uncached_tokens":1000,"processed_uncached_tokens":200,"current_chunk_end_tokens":400}],
+                  "overflow_summary":[]
+                }
+              }]
+            }"#,
+            &worker,
+        )
+        .expect("v1 loads parses");
+        let work = parsed.prefill_work.expect("request-level work");
+        assert_eq!(work.snapshot_id, 42);
+        assert_eq!(work.waiting_prefill[0].request_id, "w");
+        assert_eq!(work.work_ahead_tokens(100), Some(200));
+        assert_eq!(work.work_ahead_tokens(0), Some(4296));
+    }
+
+    #[test]
+    fn parses_request_level_prefill_work_from_legacy_array() {
+        let parsed = parse_worker_load(
+            r#"[{
+                "num_reqs":1,
+                "num_running_reqs":0,
+                "num_waiting_reqs":1,
+                "num_waiting_uncached_tokens":256,
+                "load_role":"integrated",
+                "prefill_work":{
+                    "schema_version":1,
+                    "snapshot_id":8,
+                    "generated_at_ms":1000,
+                    "worker_boot_id":"boot-a",
+                    "detail_complete":true,
+                    "truncated":false,
+                    "waiting_prefill":[{
+                        "request_id":"legacy-request",
+                        "priority":0,
+                        "total_uncached_tokens":256
+                    }]
+                }
+            }]"#,
+        )
+        .expect("legacy load parses");
+
+        let work = parsed.prefill_work.expect("request-level work");
+        assert_eq!(work.snapshot_id, 8);
+        assert_eq!(work.waiting_prefill[0].request_id, "legacy-request");
+    }
+
+    #[test]
     fn parses_proxy_member_snapshots_without_summing_members() {
         let worker = test_worker(
             "proxy",
@@ -757,6 +1048,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::Vllm,
@@ -794,6 +1086,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::Sglang,
@@ -853,6 +1146,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::SglangProxy,
@@ -912,6 +1206,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::SglangProxy,
@@ -958,6 +1253,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::Sglang,
@@ -973,6 +1269,100 @@ mod tests {
 
         assert_eq!(worker.reported_load(), REPORTED_LOAD_FAILED);
         assert!(!worker.introspection_probe_allows_routing());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn load_failure_opens_circuit_and_two_successes_recover() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_url = format!("http://{}", listener.local_addr().unwrap());
+        let fail_load = StdArc::new(AtomicBool::new(false));
+        let route_fail = StdArc::clone(&fail_load);
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/get_load",
+                get(move || {
+                    let fail = route_fail.load(Ordering::Relaxed);
+                    async move {
+                        if fail {
+                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        } else {
+                            Json(json!([{
+                                "num_reqs": 0,
+                                "load_role": "integrated",
+                                    "num_running_reqs": 0,
+                                    "num_waiting_reqs": 1,
+                                    "num_waiting_uncached_tokens": 256,
+                                    "prefill_work": {
+                                        "schema_version": 1,
+                                        "snapshot_id": 7,
+                                        "generated_at_ms": 1,
+                                        "worker_boot_id": "boot-a",
+                                        "detail_complete": true,
+                                        "truncated": false,
+                                        "waiting_prefill": [{
+                                            "request_id": "req-7",
+                                            "priority": 0,
+                                            "total_uncached_tokens": 256
+                                        }]
+                                    }
+                            }]))
+                            .into_response()
+                        }
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let registry = Arc::new(WorkerRegistry::default());
+        let id = WorkerId("stale-load".into());
+        registry
+            .add(WorkerSpec {
+                id: id.clone(),
+                url: worker_url,
+                mode: WorkerMode::Plain,
+                model_ids: vec![ModelId("m".into())],
+                bootstrap_port: None,
+                min_priority: None,
+                min_context_tokens: None,
+                max_context_tokens: None,
+                bearer_token: None,
+                backend: WorkerBackend::Sglang,
+                tier: Default::default(),
+                routes: crate::discovery::WorkerRouteSet::all(),
+                prefill_capacity_milli: 1000,
+                prefill_members: Vec::new(),
+            })
+            .unwrap();
+        let worker = registry.get(&id).unwrap();
+
+        poll_round(&reqwest::Client::new(), &registry).await;
+        assert_eq!(worker.reported_load(), 1);
+        assert!(!worker.reported_load_stale());
+        assert_eq!(worker.reported_prefill_work().unwrap().snapshot_id, 7);
+
+        fail_load.store(true, Ordering::Relaxed);
+        for expected_failures in 1..=3 {
+            poll_round(&reqwest::Client::new(), &registry).await;
+            assert_eq!(worker.reported_load_failures(), expected_failures);
+        }
+        assert_eq!(worker.reported_load(), 1);
+        assert!(worker.reported_load_stale());
+        assert!(worker.introspection_probe_allows_routing());
+        assert!(worker.reported_load_circuit_open());
+        assert_eq!(worker.reported_prefill_work().unwrap().snapshot_id, 7);
+
+        fail_load.store(false, Ordering::Relaxed);
+        poll_round(&reqwest::Client::new(), &registry).await;
+        assert!(worker.reported_load_stale());
+        assert!(worker.reported_load_circuit_open());
+
+        poll_round(&reqwest::Client::new(), &registry).await;
+        assert!(!worker.reported_load_stale());
+        assert!(!worker.reported_load_circuit_open());
+        assert_eq!(worker.reported_load_failures(), 0);
+        assert_eq!(worker.reported_prefill_work().unwrap().snapshot_id, 7);
         server.abort();
     }
 
@@ -1010,6 +1400,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::Sglang,
@@ -1046,6 +1437,7 @@ mod tests {
             model_ids: vec![ModelId("m".into())],
             bootstrap_port: None,
             min_priority: None,
+            min_context_tokens: None,
             max_context_tokens: None,
             bearer_token: None,
             backend,
@@ -1082,6 +1474,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::Sglang,
@@ -1139,6 +1532,7 @@ mod tests {
                 model_ids: vec![ModelId("m".into())],
                 bootstrap_port: None,
                 min_priority: None,
+                min_context_tokens: None,
                 max_context_tokens: None,
                 bearer_token: None,
                 backend: WorkerBackend::Sglang,

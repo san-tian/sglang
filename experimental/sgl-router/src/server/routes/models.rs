@@ -25,20 +25,25 @@ pub async fn list_models(
     State(ctx): State<Arc<AppContext>>,
     identity: Option<Extension<GatewayKeyIdentity>>,
 ) -> Json<ModelsList> {
-    // The router serves a single configured model; OpenAI clients still
-    // expect a list shape, so return a one-element `data` array.
+    // OpenAI clients expect a list shape; key policy may hide either the
+    // local or configured external model.
     let m = &ctx.config.model;
-    let mut data = vec![ModelEntry {
-        id: m.id.clone(),
-        object: "model",
-        owned_by: "sglang",
-    }];
-    let external_allowed = match identity.as_ref() {
-        Some(identity) => identity.allows_external_model(),
-        None => true,
-    };
-    if external_allowed {
-        if let Some(external) = &ctx.config.external_model {
+    let mut data = Vec::new();
+    if identity
+        .as_ref()
+        .is_none_or(|identity| identity.allows_model(&m.id, &m.id))
+    {
+        data.push(ModelEntry {
+            id: m.id.clone(),
+            object: "model",
+            owned_by: "sglang",
+        });
+    }
+    if let Some(external) = &ctx.config.external_model {
+        if identity
+            .as_ref()
+            .is_none_or(|identity| identity.allows_model(&external.model_id, &m.id))
+        {
             data.push(ModelEntry {
                 id: external.model_id.clone(),
                 object: "model",

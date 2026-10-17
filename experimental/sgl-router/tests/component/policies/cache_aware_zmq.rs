@@ -43,6 +43,7 @@ fn build_worker(url: &str, model: &str) -> Arc<Worker> {
         model_ids: vec![ModelId(model.into())],
         bootstrap_port: None,
         min_priority: None,
+        min_context_tokens: None,
         max_context_tokens: None,
         bearer_token: None,
         backend: Default::default(),
@@ -102,6 +103,7 @@ async fn zmq_indexer_routes_to_publishing_worker_e2e() {
         cache_state_timeout_ms: 20,
         alias_fallback: None,
         external_model: None,
+        allow_raw_context_tokens: false,
     };
     let tokenizers = Arc::new(TokenizerRegistry::load_from_config(&cfg).unwrap());
 

@@ -9,7 +9,9 @@ use crate::policies::registry::{
 use crate::policies::{request_tokens_for, RequestTokens, SelectionContext};
 use crate::router_state::RouterStateReservationGuard;
 use crate::server::app_context::AppContext;
-use crate::server::entry_auth::{filter_key_scope, GatewayKeyIdentity};
+use crate::server::entry_auth::{
+    filter_key_scope, input_length_routing_enabled, GatewayKeyIdentity,
+};
 use crate::server::error::ApiError;
 use crate::server::metrics::{
     MetricsRegistry, PriorityFilterOutcome, RequestOutcome, SseClientDisconnectPhase,
@@ -19,7 +21,7 @@ use crate::server::routes::admission::enforce_external_queue_admission;
 use crate::server::routes::alias_fallback::{
     fallback_reason_for_error, fallback_reason_for_response, forward_to_fallback, rewrite_model,
 };
-use crate::server::routes::context_window::{enforce_context_eligibility, required_context_tokens};
+use crate::server::routes::context_window::enforce_context_eligibility;
 use crate::server::routes::external_model::maybe_forward as maybe_forward_external_model;
 use crate::server::routes::priority_override::apply_request_priority_override;
 use crate::server::routes::reasoning_compat::{normalize_reasoning_request, ReasoningEndpoint};
@@ -36,6 +38,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 /// Observability header carrying the decode-pool URL selected via host
 /// affinity for a PD-disaggregated request. The router fans the
@@ -74,11 +77,26 @@ pub(crate) fn reserve_pending_load(
     crate::workers::worker::PendingLoadGuard,
     Option<RouterStateReservationGuard>,
 ) {
+    let request_id = format!("legacy-{}", Uuid::new_v4().simple());
+    reserve_pending_load_with_request(ctx, worker, pending_tokens, &request_id, 0)
+}
+
+pub(crate) fn reserve_pending_load_with_request(
+    ctx: &AppContext,
+    worker: &Worker,
+    pending_tokens: usize,
+    request_id: &str,
+    request_priority: i64,
+) -> (
+    crate::workers::worker::PendingLoadGuard,
+    Option<RouterStateReservationGuard>,
+) {
     let pending_tokens = pending_tokens.max(1);
     let remote_guard = ctx.router_state_client.as_ref().and_then(|client| {
-        RouterStateReservationGuard::reserve(
+        RouterStateReservationGuard::reserve_with_request_id(
             Arc::clone(client),
             worker.url.clone(),
+            request_id.to_string(),
             pending_tokens,
             ctx.config
                 .active_load
@@ -87,9 +105,39 @@ pub(crate) fn reserve_pending_load(
         )
     });
     (
-        worker.pending_guard_with_tokens(pending_tokens),
+        worker.pending_guard_with_request(request_id.to_string(), request_priority, pending_tokens),
         remote_guard,
     )
+}
+
+pub(crate) fn ensure_internal_request_id(headers: &mut HeaderMap) -> String {
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "-")
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("gw-{}", Uuid::new_v4().simple()));
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        headers.insert("x-request-id", value);
+    }
+    request_id
+}
+
+pub(crate) fn inject_internal_request_id(body: &Bytes, request_id: &str) -> Bytes {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.clone();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return body.clone();
+    };
+    object.insert(
+        "rid".to_string(),
+        serde_json::Value::String(request_id.to_string()),
+    );
+    serde_json::to_vec(&value)
+        .map(Bytes::from)
+        .unwrap_or_else(|_| body.clone())
 }
 
 pub(crate) fn make_client_disconnect_hook(
@@ -132,10 +180,6 @@ struct RequestProbe {
     /// capacity-restricted workers (see [`filter_eligible`]).
     #[serde(default)]
     priority: Option<serde_json::Value>,
-    #[serde(default)]
-    max_tokens: Option<serde_json::Value>,
-    #[serde(default)]
-    max_completion_tokens: Option<serde_json::Value>,
 }
 
 /// RAII guard that records `sgl_router_request_duration_seconds` when
@@ -286,9 +330,10 @@ pub async fn chat_completions(
         .model
         .clone()
         .ok_or_else(|| ApiError::BadRequest("missing `model` field".into()))?;
-    if entry_identity.as_ref().is_some_and(|identity| {
-        !identity.allows_external_model() && model_str != ctx.config.model.id
-    }) {
+    if entry_identity
+        .as_ref()
+        .is_some_and(|identity| !identity.allows_model(&model_str, &ctx.config.model.id))
+    {
         return Err(ApiError::ModelNotFound(model_str));
     }
     let Some(cfg) = ctx
@@ -364,10 +409,13 @@ pub async fn chat_completions(
 async fn chat_completions_inner(
     State(ctx): State<Arc<AppContext>>,
     entry_identity: Option<GatewayKeyIdentity>,
-    mut headers: HeaderMap,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, ApiError> {
     let start = std::time::Instant::now();
+    let mut headers = headers;
+    let request_id = ensure_internal_request_id(&mut headers);
+    let reservation_id = format!("gw-{}", Uuid::new_v4().simple());
     let probe = parse_probe(&body)?;
     let streaming = probe.stream.unwrap_or(false);
     let model_str = probe
@@ -474,11 +522,6 @@ async fn chat_completions_inner(
     // with 503 rather than spilled onto a gated worker — keeping long
     // internal requests off the small-context worker even under degradation.
     let request_priority = crate::policies::priority_from_value(probe.priority.as_ref());
-    let request_id = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("-")
-        .to_string();
     let route_decision_log = crate::server::route_decision::context_from_headers(
         &headers,
         &request_id,
@@ -503,6 +546,7 @@ async fn chat_completions_inner(
             .record_priority_filtered(PriorityFilterOutcome::WorkerExcluded);
     }
     let workers = eligible.workers;
+    let use_input_length_routing = input_length_routing_enabled(entry_identity.as_ref());
 
     // Tokenize once at ingress whenever it can pay off — decoupled from the
     // routing policy, because forwarding `input_ids` is a property of the
@@ -525,7 +569,7 @@ async fn chat_completions_inner(
     // injection). `parse_probe` already validated the object shape.
     let want_tokens = ctx.tokenizers.has_chat_encoder(&model_str)
         || policy.needs_request_tokens()
-        || has_context_limited_worker(&workers);
+        || (use_input_length_routing && has_context_limited_worker(&workers));
     let request_value: Option<serde_json::Value> = if want_tokens {
         Some(serde_json::from_slice(&body).map_err(|_| {
             ApiError::BadRequest("invalid request: body must be a JSON object".into())
@@ -543,22 +587,25 @@ async fn chat_completions_inner(
         .as_ref()
         .and_then(|v| request_tokens_for(&ctx.tokenizers, &model_id, v));
 
+    // The explicit Chat opt-in accepts any extracted text tokens as a
+    // routing-only approximation. Engine input forwarding has its own strict
+    // engine-equivalence gate below and never consumes these approximate ids.
     let reliable_prompt_tokens = match (request_value.as_ref(), request_tokens.as_ref()) {
         (Some(value), Some(tokens))
-            if tokens.engine_equivalent && context_prompt_tokens_reliable(value) =>
+            if use_input_length_routing
+                && ((tokens.engine_equivalent && context_prompt_tokens_reliable(value))
+                    || ctx.config.allow_raw_context_tokens) =>
         {
             Some(tokens.ids.len())
         }
         _ => None,
     };
-    let required_context_tokens = required_context_tokens(
-        reliable_prompt_tokens,
-        &[
-            probe.max_tokens.as_ref(),
-            probe.max_completion_tokens.as_ref(),
-        ],
-    );
-    let workers = enforce_context_eligibility(&ctx, &model_str, workers, required_context_tokens)?;
+    let routing_input_tokens = reliable_prompt_tokens;
+    let workers = if use_input_length_routing {
+        enforce_context_eligibility(&ctx, &model_str, workers, routing_input_tokens)?
+    } else {
+        workers
+    };
     enforce_external_queue_admission(&ctx, &model_str, &workers)?;
 
     // Sticky-session routing key. When the sticky policy is configured,
@@ -595,7 +642,13 @@ async fn chat_completions_inner(
             .as_ref()
             .map(|t| t.ids.len().max(1))
             .unwrap_or(1);
-        let pending_guard = reserve_pending_load(&ctx, &worker, pending_tokens);
+        let pending_guard = reserve_pending_load_with_request(
+            &ctx,
+            &worker,
+            pending_tokens,
+            &reservation_id,
+            request_priority,
+        );
         (worker, pending_guard)
     };
 
@@ -618,7 +671,8 @@ async fn chat_completions_inner(
                     &model_id,
                     &worker.url,
                     request_priority,
-                    required_context_tokens,
+                    routing_input_tokens,
+                    use_input_length_routing,
                     dedicated_request,
                 )
                 .map_err(|e| match e {
@@ -771,6 +825,11 @@ async fn chat_completions_inner(
     // untouched when neither applies.
     let outgoing_body =
         build_outgoing_body(&body, request_value, forward_input_ids, bootstrap.as_ref())?;
+    let outgoing_body = if worker.backend().supports_sglang_load() {
+        inject_internal_request_id(&outgoing_body, &reservation_id)
+    } else {
+        outgoing_body
+    };
 
     let pd_stream_duration = if streaming && decode_peer.is_some() {
         Some(Arc::new(make_duration_guard()))
@@ -879,7 +938,8 @@ async fn chat_completions_inner(
                 &model_id,
                 &worker.url,
                 request_priority,
-                required_context_tokens,
+                routing_input_tokens,
+                use_input_length_routing,
                 dedicated_request,
                 &failed_worker,
             ) {
@@ -1572,6 +1632,24 @@ mod tests {
                 "generate_room_id() returned {r} > i64::MAX; would wrap negative as torch.int64",
             );
         }
+    }
+
+    #[test]
+    fn internal_request_id_is_stable_across_header_and_body() {
+        let mut headers = HeaderMap::new();
+        let request_id = ensure_internal_request_id(&mut headers);
+        let body = Bytes::from_static(br#"{"model":"x","messages":[]}"#);
+        let injected = inject_internal_request_id(&body, &request_id);
+        let parsed: serde_json::Value = serde_json::from_slice(&injected).unwrap();
+
+        assert_eq!(
+            headers.get("x-request-id").unwrap().to_str().unwrap(),
+            request_id
+        );
+        assert_eq!(
+            parsed.get("rid").and_then(|value| value.as_str()),
+            Some(request_id.as_str())
+        );
     }
 
     /// When the prefill worker has no `bootstrap_port` configured

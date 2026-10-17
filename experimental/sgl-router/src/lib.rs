@@ -13,6 +13,7 @@ pub mod cache_event_stream;
 pub mod cache_state;
 pub mod config;
 pub mod discovery;
+pub mod gateway_config;
 pub mod health;
 pub mod observability;
 pub mod policies;
