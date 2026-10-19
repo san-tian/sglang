@@ -151,21 +151,23 @@ R26: D, M and base each returned 256 tokens after the same 999,744-token input,
 with D/M output IDs matching. First-warm TTFT was 2,001.23 / 1,993.29 seconds
 for D/M, explaining the earlier 1,800-second client read timeout. This evidence
 covers one fixed input and its first warmup. A separate raw-SSE audit now
-confirms the first formal cold/hot round: six of the 18 measured requests,
-excluding both warmups. Both D/M natural output sequences match; all three hot
-requests report 999,424 cached input tokens. These are one-request observations
-per cell, with other GPU experiments running concurrently:
+confirms the first two formal cold/hot rounds: twelve of the 18 measured
+requests, excluding both warmups. All four D/M natural output sequence pairs
+match; all three controls' hot requests report 999,424 cached input tokens.
+These are means of two requests per cell, with other GPU experiments running
+concurrently:
 
 | Control | Cold TTFT, seconds | Hot TTFT, seconds | Hot TPOT, ms | Hot end-to-end, seconds |
 | --- | ---: | ---: | ---: | ---: |
-| Dynamic LoRA | 1,996.84 | 1.95 | 105.54 | 28.86 |
-| Independent merged | 1,988.94 | 1.88 | 56.93 | 16.40 |
-| Base | 1,987.98 | 1.85 | 57.15 | 16.43 |
+| Dynamic LoRA | 1,996.84 | 1.94 | 105.50 | 28.84 |
+| Independent merged | 1,988.95 | 1.88 | 56.91 | 16.39 |
+| Base | 1,987.79 | 1.85 | 57.11 | 16.41 |
 
-These values are not latency percentiles or isolated speedups. The other two
-formal rounds remain live; full-prompt logprob and multi-input/task-quality
-long-context gates remain unaccepted. The snapshot includes the raw-payload
-hashes, recomputed first/last-token timing and audit source.
+These values are not latency percentiles or isolated speedups. The third formal
+round remains live; full-prompt logprob and multi-input/task-quality long-context
+gates remain unaccepted. The snapshot retains the earlier first-round audit,
+plus all twelve raw-payload hashes and recomputed first/last-token timing in
+`million-two-measured-rounds-audit-r68.json` with its independent audit source.
 
 A fresh R34 cache lifecycle/prefix attempt at static memory fraction 0.52 retained
 exactly 65,536 KV rows and 256 Mamba slots on D and all independent M references.

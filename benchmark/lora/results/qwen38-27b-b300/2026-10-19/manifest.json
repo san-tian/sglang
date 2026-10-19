@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T20:16:00.283230+00:00",
+  "as_of_utc": "2026-10-19T20:18:28.305333+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -38,7 +38,9 @@
     "dpa4-threeway-audit-r58.json": "7511d28beb7a57301f0162d945bdc62367299683664a800e223ac56523182fab",
     "multigpu-threeway-audits-finished-r58.json": "5f9a994e2f887b3833394bbad413393e6a6179b0433c9abc6c4d6db6f7dee899",
     "threeway-percentiles-audit-r67.json": "e5fec5b92fe99c9c653b5b02250c9486d4c9b8b358522993d964ab73081f0724",
-    "audit_threeway_percentiles_r67.py": "14594e40ed89eaa6b3905a3b23289cf842478f841e41de31298afcebf56b85f7"
+    "audit_threeway_percentiles_r67.py": "14594e40ed89eaa6b3905a3b23289cf842478f841e41de31298afcebf56b85f7",
+    "million-two-measured-rounds-audit-r68.json": "d190c11e1b37a0c5de3da5da0f10b6730a8b01c8b89ce40b94e46a22a8c4b497",
+    "audit_million_two_rounds_r68.py": "c5fd3321c154753989e5dfa1955b061966d24c692ab029703b53025524a226f2"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -90,7 +92,7 @@
     "failure_log_sha256": "86b8c7349fac497b5f305e94e0daf1ad344764544f7c3d5862ecc6483b99fb89"
   },
   "multigpu_threeway_scope": "TP2,attention DP2,TP4 andattention DP4 each D/M/base636 native requests:7632 actual payloads and36 ranktraces checked. All192 speed points and2304 latency statistics independently recomputed; TTFT/TPOT from raw SSE, E2E from client completion records with last-event lower-bound checks. DP4 autoKV D1541229 vsM/base1609421; all pools exceed73728requested batchtokens. Background experiments concurrent and controls at different times, not isolated/equalKV evidence.",
-  "long_measured_scope": "First formal cold/hot round only:6of18 measured requests, excluding all warmups. Identical999744-token input and256 natural output tokens, twoD/M native-ID pairs equal, actual hot cached_tokens999424 all3sides. Other two rounds live. No full-prompt logprob or multi-input/task-quality acceptance.",
+  "long_measured_scope": "First two formal cold/hot rounds:12of18 measured requests, excluding all warmups. Identical999744-token input and256 natural output tokens, fourD/M native-ID pairs equal, actual hot cached_tokens999424 all3sides. Third round live. Per-cell means have only2observations, not percentiles/isolated speed. No full-prompt logprob or multi-input/task-quality acceptance.",
   "kv_measurement_protocol": {
     "coordinator_source_manifest_sha256": "e3e4720bb4053c283984bb25c798807f6103f089e8a6a44ab5e575c84ffe4508",
     "planned_full_attention_bytes_per_rank_including_dummy_page": 536870912,
