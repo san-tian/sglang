@@ -456,8 +456,12 @@ Four-identity mixed routing also passed:48 requests /768 original scores were
 reconstructed from64 captures with zero error, against each identity's isolated
 reference. This mixed result is separate from D/M precision.
 The full-prefill runs recorded zero cached prompt tokens in both nominal cache
-modes; actual prefix restoration, lifecycle and speed are separate gates still
-running for this candidate. This does not establish an active-policy speedup.
+modes. A separate actual-prefix raw audit subsequently passed ten pairs /160
+original scores across five identities: cold hits0, hot hits1,600 tokens and zero
+score drift against sealed independent merge/base references. Both endpoints'
+payloads, responses and original capture scores were checked. Lifecycle and speed
+remain separate gates still running. This does not establish an active-policy
+speedup.
 
 The queued KV audit retains complete labeled Prometheus scrapes, verifies actual
 allocation logs and device/image identities, and computes a resident-token peak
@@ -465,3 +469,16 @@ from one common scrape within each request interval. Seven CPU controls reject
 replicated-rank inflation, missing/ambiguous series, nonfinite values and adding
 worker peaks from different times. These controls prepare the measurement;
 actual all-eight-GPU residency and capacity gains are not yet accepted.
+
+The waiting isolated-speed protocol was corrected before it acquired GPUs. The
+same R34 image had previously resolved65,501 KV rows instead of the requested
+65,536 at memory fraction0.50; matched0.52 controls passed the requested capacity
+in R54. R69 now fixes all six arms to0.52, the same immutable R34 image,
+KV65,536/SSM256, while retaining six matrices /3,816 natural requests,40 first-fill
+requests and idle checks on all other GPUs. Six CPU launch construction cases
+passed. The migration proof records a waiting, childless old coordinator with no
+isolated containers; no running GPU worker was stopped. Old sources/failure
+records are retained. This is protocol preparation; isolated GPU results remain
+pending. The snapshot includes all eight sealed source dependencies and the
+construction checker; the full experiment still requires the private model,
+corpus and existing experiment-host layout.

@@ -1,0 +1,43 @@
+{
+  "old_pid": 781208,
+  "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_isolated_speed_r51.py ",
+  "old_wchan": "hrtimer_nanosleep",
+  "old_children": [],
+  "unfinished_barriers": [
+    "pd4-precision-perf-complete-r33.json",
+    "eight-gpu-suite-complete-r31.json",
+    "cached-topologies-finished-r50.json"
+  ],
+  "old_isolated_containers": [],
+  "old_source_manifest_sha256": "c88b522a4607fa48ec8aa81b3bbeaebb2fa1ceff7b2eab4ca200e1b4fa93e653",
+  "new_source_manifest_sha256": "e07c97f307141666f786f22f0a3af1543f9eda869a189804ce443c57e92956a2",
+  "R39_actual_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
+  "R39_pool_clamp_log_sha256": "f3ee9456d02b0854a1ced8a32e3af3c7e82e0d8379db21505523ce56a0be38a9",
+  "R39_relevant_log_lines": [
+    "[2026-10-19 18:55:10] max_total_tokens=65536 is larger than the profiled value 65501. Use the profiled value instead.",
+    "[2026-10-19 18:55:10] KV Cache is allocated. dtype: torch.bfloat16, #tokens: 65501, K size: 2.00 GB, V size: 2.00 GB"
+  ],
+  "R54_mem52_passed_audit_sha256": "a2f09ee60efe84b5d5db76dbc4a30fd8bd45569f1c3a57aed089ebc84c233eb5",
+  "changes": [
+    "All six arms memory fraction0.50 to0.52",
+    "Immutable R34 image digest rather than mutable tag",
+    "Auditor verifies actual image identity and exact memory fraction",
+    "Fresh r69 output names; original r51/r39 evidence preserved"
+  ],
+  "unchanged": [
+    "six matrices3816 natural requests",
+    "forty first-fill requests",
+    "KV65536/SSM256",
+    "cache order reversed",
+    "other seven GPUs idle in every one-second sample",
+    "same runtime code and clients",
+    "all topology/PD/cached-topology barriers"
+  ],
+  "runtime_workers_interrupted": false,
+  "gpu_acceptance": false,
+  "old_coordinator_terminal": true,
+  "new_pid": 903028,
+  "new_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_isolated_speed_r69.py ",
+  "new_waiting_verified": true,
+  "unix_s": 1792441360.3954854
+}

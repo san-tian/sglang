@@ -1,0 +1,7 @@
+{"position": 0, "side": "nocache", "image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7", "memory_fraction": 0.52, "KV_requested": 65536, "SSM_slots": 256, "passed": true}
+{"position": 1, "side": "cached", "image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7", "memory_fraction": 0.52, "KV_requested": 65536, "SSM_slots": 256, "passed": true}
+{"position": 2, "side": "m", "image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7", "memory_fraction": 0.52, "KV_requested": 65536, "SSM_slots": 256, "passed": true}
+{"position": 3, "side": "base", "image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7", "memory_fraction": 0.52, "KV_requested": 65536, "SSM_slots": 256, "passed": true}
+{"position": 4, "side": "cached", "image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7", "memory_fraction": 0.52, "KV_requested": 65536, "SSM_slots": 256, "passed": true}
+{"position": 5, "side": "nocache", "image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7", "memory_fraction": 0.52, "KV_requested": 65536, "SSM_slots": 256, "passed": true}
+Six CPU launch construction cases passed; no GPU execution or acceptance.

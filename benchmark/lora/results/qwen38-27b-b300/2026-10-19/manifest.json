@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T20:18:28.305333+00:00",
+  "as_of_utc": "2026-10-19T20:24:59.012586+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -40,7 +40,20 @@
     "threeway-percentiles-audit-r67.json": "e5fec5b92fe99c9c653b5b02250c9486d4c9b8b358522993d964ab73081f0724",
     "audit_threeway_percentiles_r67.py": "14594e40ed89eaa6b3905a3b23289cf842478f841e41de31298afcebf56b85f7",
     "million-two-measured-rounds-audit-r68.json": "d190c11e1b37a0c5de3da5da0f10b6730a8b01c8b89ce40b94e46a22a8c4b497",
-    "audit_million_two_rounds_r68.py": "c5fd3321c154753989e5dfa1955b061966d24c692ab029703b53025524a226f2"
+    "audit_million_two_rounds_r68.py": "c5fd3321c154753989e5dfa1955b061966d24c692ab029703b53025524a226f2",
+    "perf_cache_fill_r47.py": "8d22eceb275504eb06456e24b1c5773efd5dde31dfa8319e306d70ac95e80e3a",
+    "run_isolated_speed_r69.py": "1ea0a2b590e04f3f2f799efa28b3e642d13339836f9a49196625a04a07fc925a",
+    "audit_isolated_speed_r69.py": "01d170dd7c45c42d2bc084e06f25c4420f4f7ea487cb89a066ff858b214180c3",
+    "perf_endpoint_r29.py": "b75694384ddd38b9aa657dc26bdb07610ad016775f0f73568a35d8bbf6d9dcfe",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+    "host_common_r50.py": "6fd9d7d77a813bda5a5adb565dda78c5d812c7acebd7d567cdac33741a055106",
+    "check_isolated_launch_r69.py": "0325df6c65b1248b8fbea8c833b933b33950e5faa299ab9d5e274a3e62c99663",
+    "source-host-r69.json": "e07c97f307141666f786f22f0a3af1543f9eda869a189804ce443c57e92956a2",
+    "isolated-queue-migration-r69.json": "29bf04488267da2c053fd55c98e7b9a790f3e26075fd95a8d0751c9519f00d65",
+    "isolated-launch-construction-r69.log": "e9aa482afb8f83e19e403acc2f8bcb84373610e567faf3df0566cfcd4a9ea229",
+    "audit_active_prefix_raw_r70.py": "42320852d197cf973782c5004b99cd314949eb110028f54099c73c16358ce252",
+    "active-prefix-raw-audit-r70.json": "0e046072c79fe17f563c3297dcfde459b232166fdbb5b3f2c5de714ce2c49982"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -59,7 +72,7 @@
     "image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
     "cpu_unit_tests": 18,
     "cpu_launch_construction_cases": 5,
-    "gpu_acceptance": "Partial: TP1 full240/GDN8 independent D/M raw-score audit passed; speed, prefix and lifecycle candidate suite still running.",
+    "gpu_acceptance": "Partial: TP1 full240/GDN8, mixed48 and actual-prefix10-pair raw audits passed. Candidate speed/lifecycle suite still live; no active-policy speedup accepted.",
     "source_manifest_sha256": "8cfd3efe64d9b1470b37a969836494aea4b9c11dab4fdba5bfefcbae197959f9",
     "cpu_test_log_sha256": "1d06a74d12a48a8ab4ecc76876610dcfcde3317ab1e392fe8fdb9bb3b46ccdfb",
     "raw_accuracy_audit": {
@@ -81,6 +94,15 @@
         "rank_capture_files_reparsed": 64,
         "raw_evidence_files_rehashed": 102,
         "scope": "Mixed versus per-identity isolated references; no independent D/M or full-prefill claim."
+      },
+      "actual_prefix": {
+        "pairs": 10,
+        "scores": 160,
+        "max_abs_nat": 0,
+        "cold_cached_tokens": 0,
+        "hot_cached_tokens": 1600,
+        "raw_files_rehashed": 82,
+        "scope": "Last-prompt plus15decode, five identities against sealed independent merge/base references; not full-prefill or lifecycle."
       }
     }
   },
@@ -110,5 +132,17 @@
       "gpu_results": "pending",
       "scope": "Full raw Prometheus label/rank normalization and common-scrape peaks, actual allocation logs and native completions required; never adds replicated TP constants or asynchronous per-worker peaks."
     }
+  },
+  "isolated_speed_protocol": {
+    "source_manifest_sha256": "e07c97f307141666f786f22f0a3af1543f9eda869a189804ce443c57e92956a2",
+    "memory_fraction_all_six_arms": 0.52,
+    "KV_rows_required": 65536,
+    "SSM_slots": 256,
+    "matrix_requests_required": 3816,
+    "first_fill_requests_required": 40,
+    "cpu_launch_construction_cases": 6,
+    "state": "Queued after all8/PD4/cached-topology leases; no new isolated GPU results",
+    "reason": "R39 same-image mem.50 actually clamped65536requested KV rows to65501; R54 all-arm mem.52 retained65536 and passed. Only proven-waiting R51 coordinator replaced; no running GPU engine interrupted. R39 failure and R51 source preserved.",
+    "migration_proof": "isolated-queue-migration-r69.json"
   }
 }

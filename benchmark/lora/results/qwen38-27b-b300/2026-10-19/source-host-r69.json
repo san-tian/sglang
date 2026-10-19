@@ -1,0 +1,31 @@
+{
+  "purpose": "Preflight correction of still-waiting isolated controls: mem.52 for all six arms, exact immutable R34 image; no GPU acceptance from CPU construction cases.",
+  "runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
+  "runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
+  "client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
+  "source_files": {
+    "perf_cache_fill_r47.py": "8d22eceb275504eb06456e24b1c5773efd5dde31dfa8319e306d70ac95e80e3a",
+    "run_isolated_speed_r69.py": "1ea0a2b590e04f3f2f799efa28b3e642d13339836f9a49196625a04a07fc925a",
+    "audit_isolated_speed_r69.py": "01d170dd7c45c42d2bc084e06f25c4420f4f7ea487cb89a066ff858b214180c3",
+    "perf_endpoint_r29.py": "b75694384ddd38b9aa657dc26bdb07610ad016775f0f73568a35d8bbf6d9dcfe",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+    "host_common_r50.py": "6fd9d7d77a813bda5a5adb565dda78c5d812c7acebd7d567cdac33741a055106",
+    "check_isolated_launch_r69.py": "0325df6c65b1248b8fbea8c833b933b33950e5faa299ab9d5e274a3e62c99663"
+  },
+  "parent_manifests": {
+    "source-r34.json": "c4212e12a18d4c9c67f7af3b9656dff834491d366f7293bcae1094d09ecf3375",
+    "source-host-r44.json": "7fb498b12ab0f21f87b050891ce8dd6548b154cb908155c12ea6d291d4d067df",
+    "source-host-r50.json": "a807b3613c0c5bd712962f59741fa4d457b5d2e761f08e398e7dbcfa4ee1a730",
+    "source-host-r51.json": "c88b522a4607fa48ec8aa81b3bbeaebb2fa1ceff7b2eab4ca200e1b4fa93e653"
+  },
+  "protocol_tests": {
+    "count": 6,
+    "passed": true,
+    "kind": "CPU launch construction plus runner AST memory argument check",
+    "log_sha256": "e9aa482afb8f83e19e403acc2f8bcb84373610e567faf3df0566cfcd4a9ea229"
+  },
+  "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "supersedes_queued_only": "R51 still awaiting unfinished topology/PD/cached-topology barriers, no child or GPU lease. R39 actual same-image dynamic pool clamped65536 to65501 at mem.5; R54 same-image all-mem.52 matched65536 passed. Preserve R51 and R39; new R69 all six arms mem.52. Six matrices3816 and forty fill requests, order, KV/SSM, clients and idle-GPU gates unchanged.",
+  "memory_fraction_all_arms": 0.52
+}

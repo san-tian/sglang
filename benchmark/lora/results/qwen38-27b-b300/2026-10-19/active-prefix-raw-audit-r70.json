@@ -1,0 +1,86 @@
+{
+  "passed": true,
+  "case_pairs": 10,
+  "score_count": 160,
+  "scores": {
+    "count": 160,
+    "mean_abs_nat": 0.0,
+    "p99_abs_nat": 0.0,
+    "max_abs_nat": 0.0,
+    "argmax_matches": 160,
+    "argmax_match_fraction": 1.0,
+    "passes_logprob_gate": true
+  },
+  "identity_cache_proofs": [
+    {
+      "variant": "real",
+      "cache": "cold",
+      "cached_tokens": 0,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "real",
+      "cache": "hot",
+      "cached_tokens": 1600,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "base",
+      "cache": "cold",
+      "cached_tokens": 0,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "base",
+      "cache": "hot",
+      "cached_tokens": 1600,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "zero",
+      "cache": "cold",
+      "cached_tokens": 0,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "zero",
+      "cache": "hot",
+      "cached_tokens": 1600,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "gdn",
+      "cache": "cold",
+      "cached_tokens": 0,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "gdn",
+      "cache": "hot",
+      "cached_tokens": 1600,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "twin",
+      "cache": "cold",
+      "cached_tokens": 0,
+      "max_abs_nat": 0.0
+    },
+    {
+      "variant": "twin",
+      "cache": "hot",
+      "cached_tokens": 1600,
+      "max_abs_nat": 0.0
+    }
+  ],
+  "raw_reference_and_dynamic_files_rehashed": 82,
+  "reference_seal_sha256": {
+    "real": "f13eaa67becdba5574c1d2be4548563adc5a02d62d6f962640be948336d3c755",
+    "base": "992da9ca0009bb91fa93cf453bc239ff523d7c54f1d7d9499d72fe398f0278b6",
+    "gdn": "92deaab76071ffc2a009fcc0642d20e3540fe50add6c4091c7b655f31c66dfeb"
+  },
+  "dynamic_summary_sha256": "1d188ff0de6456c67051f72a05019ffd8e29246e641fdb8072458443cd707c04",
+  "audit_source_sha256": "42320852d197cf973782c5004b99cd314949eb110028f54099c73c16358ce252",
+  "score_auditor_dependency_sha256": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+  "scope": "R55 TP1 active cache, mem.52/KV65536/SSM256. Five identities, actual cold0/hot1600. Original last-prompt plus15decode scores, paired to independently merged sealed references (base for zero; same real merge for twin). Raw requests/responses/captures checked on both sides; not full-prefill, lifecycle or speed acceptance."
+}
