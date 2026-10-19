@@ -153,6 +153,18 @@ for D/M, explaining the earlier 1,800-second client read timeout. This evidence
 covers one fixed input and its first warmup; the repeated 18-request speed
 matrix and full-prompt/multi-input long-context accuracy gates remain pending.
 
+A fresh R34 cache lifecycle/prefix attempt at static memory fraction 0.52 retained
+exactly 65,536 KV rows and 256 Mamba slots on D and all independent M references.
+Its real/base/zero/GDN/twin identity checks compared 160 fixed scores with zero
+difference, with cold misses and actual 1,600-token hot prefix hits for every
+identity. Rehashing all 36 sealed reference files and replaying the saved scores
+confirmed the result. One hundred same-alias weight swaps also matched 1,600
+same-service reference logprobs exactly; a 256-token in-flight generation finished
+while new requests were rejected during unload, which took 13.82 seconds. This
+covers fixed last-prefill/decode scores, not all prompt tokens, and the lifecycle
+references are same-service controls. The initial fraction-0.5 attempt resolved
+only 65,501 KV rows and was rejected before scoring. Its failure remains recorded.
+
 Its current supported configuration is DP1/PP1, unquantized BF16 weights,
 deterministic inference, eager execution, an explicit maximum LoRA rank of
 1 through 64, and dense targets only:
@@ -211,6 +223,23 @@ TP/attention-DP layouts, other adapted GDN layouts, DCP and PD require their own
 acceptance results; accepting a configuration at startup is not such a result.
 The same result snapshot includes TP4's per-phase accuracy audit and all four
 dynamic rank trace hashes and kernel counts.
+
+Attention DP4 subsequently completed 636 natural requests per D/M side with all
+outputs matching, plus the same 240-pair real and eight-pair GDN independent-merge
+accuracy gates. At 2,048 input/256 output tokens and concurrency32, cold throughput
+was 231.83/337.15 tok/s and P95 completion latency35.35/24.38 seconds for D/M.
+Automatic KV allocation differed: 1,541,229 rows on D and1,609,421 on M, both above
+the largest requested batch of73,728 tokens. These are concurrent-background
+observations, not equal-KV or isolated topology speedup evidence. All1,272 native
+payloads and all eight rank traces were checked. The dynamic short profile had
+50,817 CUDA events across four ranks, with1,920/2,560/1,920/1,920 FP32 merge kernels;
+each rank had1,290 BF16 NCCL tree all-reduces, ten routing all-gathers and twenty
+u32 metadata all-reduces. The aggregate snapshot records these hashes and counts.
+
+The optional FA4 candidate failed before acceptance: its SM100 head-dimension256
+paged-KV path rejected seqused_q/seqused_k. Scheduler child failure preceded manual
+cleanup of the remaining parent; OOMKilled was false. No FA4 accuracy or speed
+result is claimed.
 
 ## Compare sequential instances on the same GPUs
 

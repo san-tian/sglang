@@ -1,0 +1,36 @@
+{
+  "passed": true,
+  "independent_prefix_pairs": 10,
+  "prefix_scores_recomputed": 160,
+  "max_abs_nat": 0,
+  "argmax_match_fraction": 1,
+  "hot_cached_tokens_each": 1600,
+  "reference_seals_rehashed": {
+    "real": {
+      "files": 12,
+      "seal_sha256": "4a3cccde494c7868e70d2946de03f3579dd2e2a1964801fc649016296d64f73c"
+    },
+    "base": {
+      "files": 12,
+      "seal_sha256": "dbf76724b3200b044b378e26b5d3a5561c2c01efbcba74e5adc9ec4e35f7a08c"
+    },
+    "gdn": {
+      "files": 12,
+      "seal_sha256": "e53018228aac15dabda5c6bf407bebd1142b299fefa14467182dff1221ad664c"
+    }
+  },
+  "config_hashes": {
+    "cache-prefix-dynamic-r54": "481fb067edec328ace9ef91346bb70c30bf377bcb88f84004ad374a866b2a129",
+    "cache-prefix-reference-r54/real": "16addafc4b68869342a2baf52d9c0cf8abf3ecbde392d9d4e1a8847d35927680",
+    "cache-prefix-reference-r54/base": "39bcd150229d3828fca29110ec8a5848ca4bd4cdb3dd2d573f3988c9cae7177f",
+    "cache-prefix-reference-r54/gdn": "8d23f575a9af4e643e8b7e6656b3471b3386f6a4985ad8ded0a84548c6440398"
+  },
+  "alias_reuse_cycles_recomputed": 100,
+  "reused_alias_score_count": 1600,
+  "explicit_unload_and_drain_generate_rejections": 101,
+  "inflight_output_tokens": 256,
+  "unload_wait_s": 13.820722462005506,
+  "api_sha256": "c91c905fa9268945808c54356d9d4ac37f89187ae7b707ebd254c21a7b0d8fcd",
+  "inflight_events_sha256": "6492e1e722b23837932d62389f82b82833aaaa734de2d61b253eb1771d2fe008",
+  "scope": "Prefix 16 fixed scores per case, not all-prompt accuracy; lifecycle compares same-service own-weight references, not independent merges. Fresh R54 .52 memory, 65536 KV rows/256 SSM slots. No new bad-load/LRU test in this attempt."
+}
