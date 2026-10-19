@@ -1,0 +1,18 @@
+{
+  "unix_s": 1792449584.2267985,
+  "old_pid": 996223,
+  "old_cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_million_cache_r97.py",
+  "old_children": [],
+  "old_wchan": "hrtimer_nanosleep",
+  "source_manifest_sha256": "d0cfec8f4d04cb6f222e5f320a652683973f08f24bed7cc7375f6ef02ac46d4c",
+  "scope": "Only verified waiting childless CPU coordinator migrated; no million GPU arms started, no GPU worker signaled.",
+  "runtime_workers_interrupted": false,
+  "tp8_container_id": "d4c8385882ab227531fea47aba8efb35cfdd82f544348f9a702b8b03927d62a6",
+  "tp8_started_at": "2026-10-19T22:24:57.442088777Z",
+  "old_terminal": true,
+  "new_pid": 1070664,
+  "new_cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_million_cache_r106.py",
+  "new_wchan": "hrtimer_nanosleep",
+  "new_waiting_verified": true,
+  "tp8_continued_verified": true
+}

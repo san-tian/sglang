@@ -1,0 +1,45 @@
+{
+  "passed": true,
+  "scope": "CPU source/protocol preservation only; not GPU acceptance.",
+  "unchanged_functions": {
+    "perf_million_cache_r97.py:metrics": {
+      "new_source": "perf_million_cache_r106.py",
+      "ast_sha256": "8420f29ee442bdece80107e74d353cad8c85b0cafe2f5fbbc138e2655978aa6f"
+    },
+    "perf_million_cache_r97.py:stream": {
+      "new_source": "perf_million_cache_r106.py",
+      "ast_sha256": "0b615b35489a6ef2bc33972d9c612d6399991128fc2081183e2dd8d2a35ab759"
+    },
+    "perf_million_cache_r97.py:call": {
+      "new_source": "perf_million_cache_r106.py",
+      "ast_sha256": "42e886ef893a3d468561c716ec08f09f304706f5743e5b73f0ad9b58b5dc075b"
+    },
+    "run_million_cache_r97.py:monitor": {
+      "new_source": "run_million_cache_r106.py",
+      "ast_sha256": "0553794ddf9fc2660516b393e16ef0a64a268c4242fd275a5134c6e8fe19261a"
+    },
+    "run_million_cache_r97.py:release": {
+      "new_source": "run_million_cache_r106.py",
+      "ast_sha256": "22066435b525de5cc1483a8300bd549be2ce9fe39b8485e597e48c35054118a1"
+    }
+  },
+  "original_files_sha256": {
+    "run_million_cache_r97.py": "84d3f900c055b96aa032da6bf43d1d19986250382f966ff6e3c0089f1cce0d22",
+    "perf_million_cache_r97.py": "1044c07600d12044d77a2c6125920c131287197bd64f232ce09d40975f92547b",
+    "audit_million_cache_r97.py": "97c6bc1b3642e30822461ed490ef931f658f93e172a084599a674fb8cfb2c440",
+    "check_million_cache_r97.py": "4f15bdba7e173f4a7f55872627ba51c625180e1dc83fb0b0a48429ecb72b1238",
+    "host_common_r90.py": "1b5415cfdbf833cae974542c1fe18d8aaa4292f3bd474a499dac3f6ce4cb4328",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b"
+  },
+  "arms": [
+    "nocache",
+    "cached",
+    "m",
+    "base",
+    "cached",
+    "nocache"
+  ],
+  "measured_requests": 36,
+  "cold_KV_warmups": 12
+}

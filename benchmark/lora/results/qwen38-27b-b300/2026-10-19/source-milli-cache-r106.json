@@ -1,0 +1,85 @@
+{
+  "runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
+  "runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
+  "corpus_sha256": "0ed759c5251e6664e9fc144249a96ad865aa23d8d88257bbf195cd1b2780c465",
+  "source_files": {
+    "run_million_cache_r97.py": "84d3f900c055b96aa032da6bf43d1d19986250382f966ff6e3c0089f1cce0d22",
+    "perf_million_cache_r97.py": "1044c07600d12044d77a2c6125920c131287197bd64f232ce09d40975f92547b",
+    "audit_million_cache_r97.py": "97c6bc1b3642e30822461ed490ef931f658f93e172a084599a674fb8cfb2c440",
+    "check_million_cache_r97.py": "4f15bdba7e173f4a7f55872627ba51c625180e1dc83fb0b0a48429ecb72b1238",
+    "host_common_r90.py": "1b5415cfdbf833cae974542c1fe18d8aaa4292f3bd474a499dac3f6ce4cb4328",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "source-milli-cache-r97.json": "538208dc1c17f4cf6fe9f1574a573c48d31197242c72c590a5b9fb77ff1aa001",
+    "perf_million_cache_r106.py": "a5374733a1e6842a289a985389695ce97bf1a3da232140e41e2572c364037567",
+    "audit_million_cache_r106.py": "eff58fb667d8bd8da66bb898aeb1af2e78d7a1097fc1a4d59f89bc0cd9f8ecd2",
+    "run_million_cache_r106.py": "fe602fe0e38195e6ab5691a35c42a1d7f772598f18ecd810a133e87c75b018fe",
+    "check_million_cache_r106.py": "8257c6fc3f087f0afb2bd7b1d7315c911da5a67c7d3b613c00a597b6076fd91e",
+    "million-cache-cpu-check-r106.json": "bb1b5552a7415fd60aff9680e0854b6f4af71ed187544984b661ac8f056fb3b7"
+  },
+  "rope_override": {
+    "text_config": {
+      "rope_parameters": {
+        "mrope_interleaved": true,
+        "mrope_section": [
+          11,
+          11,
+          10
+        ],
+        "rope_type": "yarn",
+        "rope_theta": 10000000,
+        "partial_rotary_factor": 0.25,
+        "factor": 4.0,
+        "original_max_position_embeddings": 262144
+      }
+    }
+  },
+  "CPU_checks": {
+    "passed": true,
+    "CPU_cases": 38,
+    "cases": {
+      "valid": true,
+      "forced_processor": true,
+      "wrong_input_length": true,
+      "wrong_sampling": true,
+      "rewrite_SSE_prefix": true,
+      "truncated_output": true,
+      "nonfinite_time": true,
+      "backward_time": true,
+      "false_HTTP_elapsed": true,
+      "early_finish": true,
+      "launch-0-nocache": true,
+      "launch-1-cached": true,
+      "launch-2-m": true,
+      "launch-3-base": true,
+      "launch-4-cached": true,
+      "launch-5-nocache": true,
+      "role-valid-m-None": true,
+      "role-valid-m-False": true,
+      "role-valid-base-None": true,
+      "role-valid-base-False": true,
+      "role-valid-nocache-True": true,
+      "role-valid-cached-True": true,
+      "wrong-enabled-m": true,
+      "wrong-disabled-d": true,
+      "wrong-disabled-d-false": true,
+      "integer-disabled": true,
+      "string-disabled": true,
+      "integer-enabled": true,
+      "missing-m": true,
+      "missing-base": true,
+      "missing-cached": true,
+      "wrong-model-info": true,
+      "wrong-config-path": true,
+      "missing-launch-flag": true,
+      "unexpected-launch-flag": true,
+      "wrong-launch-path": true,
+      "wrong-image": true,
+      "unknown-role": true
+    },
+    "scope": "Parser/launch preparation only; no GPU execution, million-context performance or precision acceptance."
+  },
+  "scope": "Pending dedicated GPU2/TP1 R34 six-arm no-cache/cached/M/base/cached/no-cache, one fixed999744-token input+256 natural output,3cold/hot repeats+2cold-KV warmups each (36measured+12warmups). YaRN4/original262144/context1000000, identical maxKV1001024/SSM16/mem.8/chunk8192/requestlimit1. Cached projection budget36GiB, same immutable BF16 model/runtime, all other7GPUs sampled idle and clocks/power/temperature retained. No profiler or forced scoring during timing; originalrawSSE rehashed/recomputed and D/M outputs checked. This tests projection-warmed speed, not long-input full-prefill precision or task quality; short isolated/multiGPU/4P4D acceptance remain separate.",
+  "original_manifest_sha256": "538208dc1c17f4cf6fe9f1574a573c48d31197242c72c590a5b9fb77ff1aa001",
+  "correction": "Versioned queued client/auditor correction: explicit disabled null/false, enabled true; missing/string/integer rejected. Model paths, launch flag/image checked. All six GPU arms,36 measured+12 warmups, timed stream/metrics, resource controls, barrier and completion artifacts unchanged. Original R97 sources/manifest retained."
+}

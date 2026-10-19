@@ -614,6 +614,17 @@ new cached long-context GPU measurements and full-prefill/task-quality acceptanc
 remain pending. Capacity clamps fail the fixed protocol instead of reducing
 context length or silently changing the comparison.
 
+Before any million-context GPU arm started, the versioned R106 client/auditor
+corrected disabled `enable_lora=null` versus `false` checks. Only explicit
+null/false is accepted for merged/base, and only true for dynamic adapters;
+missing flags, strings, integers, wrong model paths or launch roles are rejected.
+The38CPU checks cover the existing parser/launch controls and22role controls.
+Timed streaming/metrics and six-arm36+12GPU protocol are unchanged. A guarded
+migration replaced only a sleeping childless CPU coordinator; TP8 container ID
+and start time stayed unchanged. Original R97 source hashes remain sealed.
+This prevents a known audit/client false failure; million GPU results remain
+pending. Source, CPU checks and migration proof are in the dated result snapshot.
+
 The R102 read-only observer now adds original per-rank precision, natural-SSE
 statistics and mixed-routing gates to each complete TP8/DCP2/attentionDP8 result.
 It requires the R85 actual coordinator, R92 cgroup/scheduler/GPU UUID placement
