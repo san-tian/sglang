@@ -1,0 +1,264 @@
+{
+  "passed": true,
+  "measured_rounds_audited": 1,
+  "formal_native_requests_audited": 6,
+  "formal_native_requests_required": 18,
+  "complete_measured_matrix": false,
+  "dynamic_merged_native_id_pairs_equal": 2,
+  "total_tokens_per_request": 1000000,
+  "warmups_included": false,
+  "logprob_alignment_measured": false,
+  "long_context_quality_accepted": false,
+  "scope": "TP1 BF16 eager deterministic; identical fixed 999744-token prompt and 256 natural output tokens. D/M/base ran on separate GPUs while other experiments ran concurrently. A single round is partial evidence; full 18-request matrix requires three rounds. Native ID agreement and runtime completion are not full-prompt logprob or long-context task quality acceptance.",
+  "client_provenance_sha256": "b6afe379eb6c3928b3d397f7b5e60f294561220536df7a52a112071c2c1e1481",
+  "recovery_audit_sha256": "df03b7579b66f8a37bcedc3fd88f4342e9bf5b4af064ad833bbc1aa8e72c038f",
+  "configurations": {
+    "new": {
+      "file": "new-get_server_info.json",
+      "sha256": "440e1b874bc6febb6c365f6ae45ef31d11cf082fc9061069c62e0f75b2991925",
+      "context_length": 1000000,
+      "model_path": "/work/models/Qwen3.8-27B",
+      "tp_size": 1,
+      "rope_override": {
+        "text_config": {
+          "rope_parameters": {
+            "mrope_interleaved": true,
+            "mrope_section": [
+              11,
+              11,
+              10
+            ],
+            "rope_type": "yarn",
+            "rope_theta": 10000000,
+            "partial_rotary_factor": 0.25,
+            "factor": 4.0,
+            "original_max_position_embeddings": 262144
+          }
+        }
+      },
+      "enable_lora": true
+    },
+    "M": {
+      "file": "M-get_server_info.json",
+      "sha256": "3ebf983428ed558b9c9ba9d79a8e89296d3ea88ec20cb4f3f464106d852c3ca8",
+      "context_length": 1000000,
+      "model_path": "/work/qwen38-mol-development-20261019/merged/real_r16",
+      "tp_size": 1,
+      "rope_override": {
+        "text_config": {
+          "rope_parameters": {
+            "mrope_interleaved": true,
+            "mrope_section": [
+              11,
+              11,
+              10
+            ],
+            "rope_type": "yarn",
+            "rope_theta": 10000000,
+            "partial_rotary_factor": 0.25,
+            "factor": 4.0,
+            "original_max_position_embeddings": 262144
+          }
+        }
+      },
+      "enable_lora": null
+    },
+    "base": {
+      "file": "base-get_server_info.json",
+      "sha256": "91ac390c5dd09de068a6b317aad74fe77668d9036ad2d5074a35a878e83c9f60",
+      "context_length": 1000000,
+      "model_path": "/work/models/Qwen3.8-27B",
+      "tp_size": 1,
+      "rope_override": {
+        "text_config": {
+          "rope_parameters": {
+            "mrope_interleaved": true,
+            "mrope_section": [
+              11,
+              11,
+              10
+            ],
+            "rope_type": "yarn",
+            "rope_theta": 10000000,
+            "partial_rotary_factor": 0.25,
+            "factor": 4.0,
+            "original_max_position_embeddings": 262144
+          }
+        }
+      },
+      "enable_lora": null
+    }
+  },
+  "points": [
+    {
+      "side": "new",
+      "cache": "cold",
+      "requests": 1,
+      "ttft_s": 1996.8358379460042,
+      "tpot_s": 0.10547471526666663,
+      "e2e_s": 2023.7319853209992,
+      "output_throughput_tokens_s": 0.1264961073256778,
+      "cached_tokens_min": 0,
+      "cached_tokens_max": 0
+    },
+    {
+      "side": "new",
+      "cache": "hot",
+      "requests": 1,
+      "ttft_s": 1.9459218959964346,
+      "tpot_s": 0.10553707643922797,
+      "e2e_s": 28.857967315998394,
+      "output_throughput_tokens_s": 8.856652551950086,
+      "cached_tokens_min": 999424,
+      "cached_tokens_max": 999424
+    },
+    {
+      "side": "M",
+      "cache": "cold",
+      "requests": 1,
+      "ttft_s": 1988.9385927920011,
+      "tpot_s": 0.056979541698049564,
+      "e2e_s": 2003.468460721997,
+      "output_throughput_tokens_s": 0.127775389669282,
+      "cached_tokens_min": 0,
+      "cached_tokens_max": 0
+    },
+    {
+      "side": "M",
+      "cache": "hot",
+      "requests": 1,
+      "ttft_s": 1.8823224299994763,
+      "tpot_s": 0.05692844825492049,
+      "e2e_s": 16.39914601700002,
+      "output_throughput_tokens_s": 15.566018311111646,
+      "cached_tokens_min": 999424,
+      "cached_tokens_max": 999424
+    },
+    {
+      "side": "base",
+      "cache": "cold",
+      "requests": 1,
+      "ttft_s": 1987.9817365439958,
+      "tpot_s": 0.05708581043530584,
+      "e2e_s": 2002.5387241339995,
+      "output_throughput_tokens_s": 0.12783479485471227,
+      "cached_tokens_min": 0,
+      "cached_tokens_max": 0
+    },
+    {
+      "side": "base",
+      "cache": "hot",
+      "requests": 1,
+      "ttft_s": 1.8539561549987411,
+      "tpot_s": 0.05715335713335377,
+      "e2e_s": 16.42816685100115,
+      "output_throughput_tokens_s": 15.534839389541666,
+      "cached_tokens_min": 999424,
+      "cached_tokens_max": 999424
+    }
+  ],
+  "raw_request_audits": [
+    {
+      "side": "new",
+      "round": 0,
+      "cache": "cold",
+      "raw_file": "in999744-out256-c1-r0-cold-i0-new.json",
+      "sha256": "e80e063df2d47219952bec3a3fd0351e04b3088bb96f2d74bdd273f2079a3f55",
+      "input_tokens": 999744,
+      "output_tokens": 256,
+      "cached_tokens": 0,
+      "first_sse_output_tokens": 1,
+      "sse_events": 256,
+      "ttft_s": 1996.8358379460042,
+      "tpot_s": 0.10547471526666663,
+      "e2e_s": 2023.7319853209992,
+      "group_elapsed_s": 2023.777690967996,
+      "output_throughput_tokens_s": 0.1264961073256778
+    },
+    {
+      "side": "M",
+      "round": 0,
+      "cache": "cold",
+      "raw_file": "in999744-out256-c1-r0-cold-i0-M.json",
+      "sha256": "e16eb87e496054b3d76eb9fea153788ecc7fab3429c14ec68b20a2f0fb677286",
+      "input_tokens": 999744,
+      "output_tokens": 256,
+      "cached_tokens": 0,
+      "first_sse_output_tokens": 1,
+      "sse_events": 256,
+      "ttft_s": 1988.9385927920011,
+      "tpot_s": 0.056979541698049564,
+      "e2e_s": 2003.468460721997,
+      "group_elapsed_s": 2003.5157056660028,
+      "output_throughput_tokens_s": 0.127775389669282
+    },
+    {
+      "side": "base",
+      "round": 0,
+      "cache": "cold",
+      "raw_file": "in999744-out256-c1-r0-cold-i0-base.json",
+      "sha256": "7bf8b2d47c2c77e4eb165ba7d5db6f6c741b81595cffa062c135417199636775",
+      "input_tokens": 999744,
+      "output_tokens": 256,
+      "cached_tokens": 0,
+      "first_sse_output_tokens": 1,
+      "sse_events": 256,
+      "ttft_s": 1987.9817365439958,
+      "tpot_s": 0.05708581043530584,
+      "e2e_s": 2002.5387241339995,
+      "group_elapsed_s": 2002.5846663340053,
+      "output_throughput_tokens_s": 0.12783479485471227
+    },
+    {
+      "side": "new",
+      "round": 0,
+      "cache": "hot",
+      "raw_file": "in999744-out256-c1-r0-hot-i0-new.json",
+      "sha256": "69f8501ca9606945a8a05ce519be38107a493f6a0a576a50ace680796cc4c913",
+      "input_tokens": 999744,
+      "output_tokens": 256,
+      "cached_tokens": 999424,
+      "first_sse_output_tokens": 1,
+      "sse_events": 256,
+      "ttft_s": 1.9459218959964346,
+      "tpot_s": 0.10553707643922797,
+      "e2e_s": 28.857967315998394,
+      "group_elapsed_s": 28.904825891993823,
+      "output_throughput_tokens_s": 8.856652551950086
+    },
+    {
+      "side": "M",
+      "round": 0,
+      "cache": "hot",
+      "raw_file": "in999744-out256-c1-r0-hot-i0-M.json",
+      "sha256": "590b33721be670d9a1ffe1a65b12fcf0329c64e20021efc76c3eeef1ada69ca6",
+      "input_tokens": 999744,
+      "output_tokens": 256,
+      "cached_tokens": 999424,
+      "first_sse_output_tokens": 1,
+      "sse_events": 256,
+      "ttft_s": 1.8823224299994763,
+      "tpot_s": 0.05692844825492049,
+      "e2e_s": 16.39914601700002,
+      "group_elapsed_s": 16.44608112899732,
+      "output_throughput_tokens_s": 15.566018311111646
+    },
+    {
+      "side": "base",
+      "round": 0,
+      "cache": "hot",
+      "raw_file": "in999744-out256-c1-r0-hot-i0-base.json",
+      "sha256": "3bed43691a60f58396314325460d3d9e8d5c1a878db2a6efeae5ce6a17f66d1c",
+      "input_tokens": 999744,
+      "output_tokens": 256,
+      "cached_tokens": 999424,
+      "first_sse_output_tokens": 1,
+      "sse_events": 256,
+      "ttft_s": 1.8539561549987411,
+      "tpot_s": 0.05715335713335377,
+      "e2e_s": 16.42816685100115,
+      "group_elapsed_s": 16.479088942003727,
+      "output_throughput_tokens_s": 15.534839389541666
+    }
+  ]
+}
