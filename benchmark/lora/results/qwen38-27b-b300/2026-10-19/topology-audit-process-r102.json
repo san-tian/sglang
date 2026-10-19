@@ -1,0 +1,6 @@
+{
+  "pid": 1012683,
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_topology_raw_r102.py ",
+  "source_manifest_sha256": "50143c8889d476a179724d1cc4a078534ab77f0832ce60037e12473734de2fe5",
+  "scope": "Read-only wait on actualR85PID954883 and capacityR64PID893959. No GPU request/start/stop or lease mutation."
+}

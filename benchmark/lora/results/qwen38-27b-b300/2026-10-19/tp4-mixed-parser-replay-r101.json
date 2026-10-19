@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "topology": "tp4",
+  "sampling_rank_coverage": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "full8GPU_accepted": false,
+  "mixed_requests": 48,
+  "isolated_scored_requests": 16,
+  "natural_reference_requests": 16,
+  "raw_rank_capture_files_reparsed": 256,
+  "scores": {
+    "prefill_last": {
+      "count": 48,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 48,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "decode": {
+      "count": 720,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 720,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    }
+  },
+  "raw_evidence_files_rehashed": 294,
+  "summary_sha256": "cdf1a3be5280582de8f0911ffc7e0e5f34977bb8d3b3c6043494481bada618a1",
+  "audit_source_sha256": "67785956d86357ec88bf1a1404abc5a6e82d511c0c0bda39c55d78a623bb308a",
+  "score_auditor_dependency_sha256": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+  "scope": "Original per-rank mixed routing versus isolated references; fouridentities(base/real/zero/GDN),3shuffledbatches48requests/768scores. TP sampling replicas agree; attentionDP capture rank membership checked without assuming requests share the same DP rank. Not independent D/M, full-prefill, actual prefix-restoration or KV residency acceptance; legacy4GPU replay is parser validation only."
+}

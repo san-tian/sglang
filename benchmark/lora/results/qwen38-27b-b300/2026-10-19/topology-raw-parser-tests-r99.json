@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "CPU_cases": 12,
+  "cases": {
+    "valid_tp2": true,
+    "missing_tp_replica": true,
+    "wrong_rank": true,
+    "different_rank_scores": true,
+    "wrong_step": true,
+    "nonfinite_capture": true,
+    "wrong_output_path": true,
+    "nonfinite_prefill": true,
+    "attention_dp8_one_local_sampling_rank": true,
+    "attention_dp8_extra_rank": true,
+    "dcp2_sampling_replicas_contract": true,
+    "dcp2_missing_sampling_replica": true
+  },
+  "scope": "Sampling-rank parser contract tests only. DCP8GPU runtime correctness remains untested."
+}

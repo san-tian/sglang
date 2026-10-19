@@ -1,0 +1,14 @@
+{
+  "source_files": {
+    "audit_topology_original_r99.py": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952",
+    "audit_topology_native_r100.py": "89c4bfc17163e052031dd661c4f5fe72a42497159b3e9e40209319c55e92a55c",
+    "audit_topology_mixed_r101.py": "67785956d86357ec88bf1a1404abc5a6e82d511c0c0bda39c55d78a623bb308a",
+    "watch_topology_raw_r102.py": "db16080f210400572e5a6de77ab7749b28f7fb20be6a7452a624f6f01ef686a8",
+    "test_topology_raw_r99.py": "d70655531950fb52d9ad9dc9c013874e48a91d7deb758aebc55ef80c33729170",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02"
+  },
+  "parent_source_manifest_sha256": "e8124d7bc96dfd6e4d2d5b6c84ff26c43cd3dd8dc8eda2680d2cf27825115658",
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "scope": "Read-only post-run original all8GPU precision/native/mixed and cgroup placement gates, plus existing independently normalized equal-byte KV reports. ExistingTP4/DP4 replays and12CPUtests validate parsers only; no new8GPU result. Per-topology full248pairs/114692scores+1908native/48points/576latency stats+24actualranktraces+48mixed/768scores+13capacityrequests and5actualcontainer-placement observations remain required.",
+  "full8GPU_accepted": false
+}

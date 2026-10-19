@@ -613,3 +613,22 @@ previous18million-context records also passed. These are preparation only;
 new cached long-context GPU measurements and full-prefill/task-quality acceptance
 remain pending. Capacity clamps fail the fixed protocol instead of reducing
 context length or silently changing the comparison.
+
+The R102 read-only observer now adds original per-rank precision, natural-SSE
+statistics and mixed-routing gates to each complete TP8/DCP2/attentionDP8 result.
+It requires the R85 actual coordinator, R92 cgroup/scheduler/GPU UUID placement
+for all five containers per topology, and independently normalized R64 equal-byte
+KV evidence. Each topology still needs248main/GDN pairs with114,692scores,
+D/M/base1,908natural requests/48speed points/576latency statistics/24rank traces,
+48mixed requests/768scores and13capacity requests. Marker files alone cannot pass.
+
+Auditor validation replayed existing TP4 and attentionDP4 original responses and
+2,480sampling-rank captures:496pairs/229,384scores; mixed routing added320capture
+files. Its native replay rechecked3,816rawSSE requests,24actual traces and1,152
+latency statistics. Twelve CPU controls reject missing/wrong/disagreeing sampling
+replicas, nonfinite scores and incorrect token/step sequences. AttentionDP checks
+local sampling membership rather than requiring every request on all DP ranks;
+DCP still needs its own actual eight-GPU run. Legacy provenance contains an exact
+eight-character runtime commit and full immutable image digest; only diagnostic
+replays accept that format. New8GPU outputs must match the complete R85 source
+manifest. These are parser validation results and provide no new8GPU acceptance.
