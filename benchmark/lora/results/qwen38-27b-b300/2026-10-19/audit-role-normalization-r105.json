@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "cpu_checks": 12,
+  "source_sha256": "2a9485e3fcba1f647d5f0cddfb5bb08a875bedfe59aeb551228b8648b22813ce",
+  "test_sha256": "043aab2ec4c7175feff31d2ece27b6d5e095a501a866cae43ec0908fa73eed93",
+  "scope": "CPU audit-role serialization regression only; no GPU acceptance."
+}

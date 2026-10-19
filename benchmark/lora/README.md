@@ -642,3 +642,39 @@ be retained in policy conclusions. Actual KV hits stayed0. No kernel profile was
 collected for this repeated arm; the first active profile cannot represent it.
 The reverse LRU and no-cache arms and full1,152-request audit remain required.
 See active-repeat-comparison-r103.json and mixed-cohort-audit-3-active-r93.json.
+
+All six R84 mixed controls have now completed,1,152natural requests in
+no-cache/LRU/active/active/LRU/no-cache order. Original payloads and natural
+outputs match across all six. Combining the two controls per policy gives six
+measured batches and192request latencies per cold/nominal-hot label:
+
+| Policy | Mean batch throughput cold/hot (tok/s) | P95 E2E cold/hot (s) |
+| --- | --- | --- |
+| No projection cache |97.79 /105.62 |82.51 /77.85 |
+|36GiB LRU |92.24 /105.65 |90.12 /81.79 |
+|36GiB active |116.45 /115.67 |72.76 /71.54 |
+
+Active/no-cache observed mean-throughput ratios are1.19085/1.09509 and
+active/LRU1.26255/1.09477. Forward and reverse ratios remain separately recorded;
+these are current mixed-workload observations, without confidence intervals or
+an isolated-machine/default-policy claim. All actual KV hits remain0 and the
+largest requested batch exceeds the fixed pool. The report also retains the
+ratio of total output tokens to total measured time; latency percentiles are
+recomputed over original requests rather than averaged across cohort percentiles.
+
+The original R84 terminal marker remains failed because its audit compared an
+explicit JSON null disabled LoRA flag with False. GPU requests themselves all
+completed. The separately versioned R105 recheck accepts only null/false for
+M/base and true for D, also checks actual role model paths and launch flags,
+and retains every original native, precision, lifecycle, prefix, counter and
+profile gate. Twelve CPU role-serialization regressions passed. Full original
+evidence replay then passed, preserving the original failed marker/log/source
+hashes. See active-cache-suite-recheck-r105.json and mixed-six-comparison-r104.json.
+No failed artifact was relabeled and no GPU rerun was needed for this audit fix.
+
+The first TP8 merged reference container is now actually running. The R92
+observer matched eight distinct scheduler host PIDs to all eight GPU UUIDs;
+tp8-first-actual-placement-r105.json preserves that placement snapshot only.
+TP8 numerical/native/kernel/equal-byte-capacity acceptance, DCP2, attentionDP8,
+full4P4D, cached multigpu, isolated speed and million-context cache controls
+remain pending and required for the overall goal.

@@ -1,0 +1,7 @@
+{
+  "passed": false,
+  "scope": "Fresh R55 six-policy mixed matrices, 1152 natural requests; R56 main/GDN/prefix/lifecycle/native evidence unchanged. Completion alone is not speed benefit.",
+  "root_safe_tmpdir": "/root/.cache/tmp",
+  "root_safe_pycache": "/root/.cache/pycache",
+  "error": "Traceback (most recent call last):\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_active_cache_recovery_r84.py\", line 73, in <module>\n    run(['python3', str(R / 'audit_active_cache_suite_r84.py')], 'active-cache-suite-audit-r84.log')\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/host_common_r84.py\", line 12, in run\n    with (R/log).open('x') as f:return subprocess.run(cmd,stdout=f,stderr=subprocess.STDOUT,check=True)\n                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['python3', '/opt/dlami/nvme/qwen38-mol-multigpu-20261019/audit_active_cache_suite_r84.py']' returned non-zero exit status 1.\n"
+}
