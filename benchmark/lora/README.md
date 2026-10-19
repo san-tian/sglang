@@ -232,7 +232,7 @@ natural performance controls each completed 636 requests with identical output
 tokens. Four dynamic rank traces contained 70,380 CUDA kernel events; each rank
 had 2,560 FP32 weight merges, 2,560 rounding kernels and 1,290 NCCL BF16 tree
 all-reduces. This short profile does not establish a wall-time bottleneck or a
-TP speedup. TP4's pure-base performance control remains pending. Larger
+TP speedup. TP4's pure-base control and raw threeway audit are now complete. Larger
 TP/attention-DP layouts, other adapted GDN layouts, DCP and PD require their own
 acceptance results; accepting a configuration at startup is not such a result.
 The same result snapshot includes TP4's per-phase accuracy audit and all four
@@ -255,19 +255,22 @@ paged-KV path rejected seqused_q/seqused_k. Scheduler child failure preceded man
 cleanup of the remaining parent; OOMKilled was false. No FA4 accuracy or speed
 result is claimed.
 
-The pure-base controls for TP2 and attention DP2 have now completed. Each topology
-has D/M/base controls of636 natural requests at16 points; all1,908 raw payloads
-and six rank traces per topology were checked. D/M output IDs match at every
+The pure-base controls for TP2, attention DP2 and TP4 have now completed. Each
+topology has D/M/base controls of636 natural requests at16 points; all1,908 raw
+payloads per topology were checked. TP2/attention DP2 each have six actual rank
+traces and TP4 has twelve, also rehashed and parsed. D/M output IDs match at every
 request. For2,048 input/256 output tokens, concurrency32 and cold KV cache:
 
 | Topology | D / M / base tok/s | D / M / base P95 completion, seconds |
 | --- | ---: | ---: |
 | TP2 | 245.19 / 376.59 / 367.65 | 33.45 / 21.87 / 22.27 |
 | Attention DP2 | 232.41 / 336.80 / 340.49 | 35.34 / 24.36 / 24.05 |
+| TP4 | 245.82 / 369.66 / 368.45 | 33.46 / 22.16 / 22.29 |
 
 The three controls use the same physical GPUs within each topology. Automatic KV
 pools differ: TP2 D2,794,792 vs M/base2,918,376 rows; attention DP2 D1,244,477 vs
-M/base1,321,149. All exceed the73,728 requested tokens of the largest batch.
+M/base1,321,149; TP4 D7,067,195 vs M/base7,262,267. All exceed the73,728
+requested tokens of the largest batch.
 Concurrent experiments and different measurement times prevent an isolated
 causal speedup claim. Base and merged weights differ, so their output IDs need
 not match. TP2 M/base profiles each had19,466 CUDA kernels; attention DP2 each
@@ -420,3 +423,13 @@ does not score full prefill or establish cross-adapter cache isolation. Both
 clients write raw responses and only write `summary.json` after passing; failed
 runs remain for inspection. The CPU fake-HTTP tests validate client protocol
 and rejection paths, not GPU serving correctness.
+
+The upcoming equal-byte resident-KV experiment also accounts for the pool's
+one-row dummy page. Executing the actual R28 buffer-shape method showed the
+original row caps would allocate 49,152 more full-attention KV bytes per rank on
+attention DP. Revised page-size1 caps are32,767 physical rows for TP8/DCP2 and
+8,191 for attention DP8: including the dummy row, each allocates536,870,912 BF16
+full-attention KV tensor bytes per rank. This is a CPU shape/provenance check,
+not a GPU allocation or residency result. SSM and allocator metadata are separate;
+actual runtime logs and same-time labeled metrics must still establish the
+allocation and residency claim.

@@ -1,0 +1,116 @@
+{
+  "scope": "CPU execution of actual R28 MHATokenToKVPool._kv_buffer_shapes, verified file hash against running immutable-image container. This proves planned physical tensor extents including the one-row dummy page; not GPU residency or performance acceptance. Runtime allocation logs/metrics must still match. Auxiliary pointer/allocator metadata and SSM are separate.",
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "runtime_source_sha256": "f5b306efdaeb5c59ebad99032246014bba39a50bd7cb37f48ea488e201a53d5b",
+  "model_config_sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+  "full_attention_layers": 16,
+  "dtype_bytes": 2,
+  "head_dim": 256,
+  "page_size": 1,
+  "old_dp_minus_tp_bytes_per_rank": 49152,
+  "corrected_equal_full_attention_bytes_per_rank": 536870912,
+  "topologies": [
+    {
+      "topology": "tp8",
+      "kv_heads_per_rank": 1,
+      "old": {
+        "physical_request_rows": 32768,
+        "rows_including_dummy_page": 32769,
+        "K_shape_per_layer": [
+          32769,
+          1,
+          256
+        ],
+        "V_shape_per_layer": [
+          32769,
+          1,
+          256
+        ],
+        "full_attention_bytes_per_rank": 536887296
+      },
+      "corrected": {
+        "physical_request_rows": 32767,
+        "rows_including_dummy_page": 32768,
+        "K_shape_per_layer": [
+          32768,
+          1,
+          256
+        ],
+        "V_shape_per_layer": [
+          32768,
+          1,
+          256
+        ],
+        "full_attention_bytes_per_rank": 536870912
+      }
+    },
+    {
+      "topology": "dcp8x2",
+      "kv_heads_per_rank": 1,
+      "old": {
+        "physical_request_rows": 32768,
+        "rows_including_dummy_page": 32769,
+        "K_shape_per_layer": [
+          32769,
+          1,
+          256
+        ],
+        "V_shape_per_layer": [
+          32769,
+          1,
+          256
+        ],
+        "full_attention_bytes_per_rank": 536887296
+      },
+      "corrected": {
+        "physical_request_rows": 32767,
+        "rows_including_dummy_page": 32768,
+        "K_shape_per_layer": [
+          32768,
+          1,
+          256
+        ],
+        "V_shape_per_layer": [
+          32768,
+          1,
+          256
+        ],
+        "full_attention_bytes_per_rank": 536870912
+      }
+    },
+    {
+      "topology": "dpa8",
+      "kv_heads_per_rank": 4,
+      "old": {
+        "physical_request_rows": 8192,
+        "rows_including_dummy_page": 8193,
+        "K_shape_per_layer": [
+          8193,
+          4,
+          256
+        ],
+        "V_shape_per_layer": [
+          8193,
+          4,
+          256
+        ],
+        "full_attention_bytes_per_rank": 536936448
+      },
+      "corrected": {
+        "physical_request_rows": 8191,
+        "rows_including_dummy_page": 8192,
+        "K_shape_per_layer": [
+          8192,
+          4,
+          256
+        ],
+        "V_shape_per_layer": [
+          8192,
+          4,
+          256
+        ],
+        "full_attention_bytes_per_rank": 536870912
+      }
+    }
+  ]
+}
