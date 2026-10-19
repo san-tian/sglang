@@ -1,0 +1,29 @@
+{
+  "unix_s": 1792444562.1557107,
+  "runtime_workers_interrupted": false,
+  "scope": "Only two verified waiting, childless CPU coordinators replaced. Full native counts, topology controls, audits and completion markers unchanged.",
+  "coordinators": [
+    {
+      "old_pid": 781207,
+      "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_cached_topologies_r50.py",
+      "old_wchan": "hrtimer_nanosleep",
+      "old_children": [],
+      "new_source": "run_cached_topologies_r90.py",
+      "source_manifest_sha256": "30d07c5d6f0a12468710279bba3db95cf75ad17d2f3afc6123f7ecd35f17c824",
+      "old_terminal": true,
+      "new_pid": 959735,
+      "new_waiting_verified": true
+    },
+    {
+      "old_pid": 903028,
+      "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_isolated_speed_r69.py",
+      "old_wchan": "hrtimer_nanosleep",
+      "old_children": [],
+      "new_source": "run_isolated_speed_r91.py",
+      "source_manifest_sha256": "a7ea46edb8b80f3f6aa0a98edc6c05d0833dfe66b90c6ab68040d8c995223d83",
+      "old_terminal": true,
+      "new_pid": 959739,
+      "new_waiting_verified": true
+    }
+  ]
+}

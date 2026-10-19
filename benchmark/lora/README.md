@@ -463,7 +463,8 @@ payloads, responses and original capture scores were checked. A subsequent raw
 lifecycle replay passed all765 API records:100 alias replacements,100 failed
 loads,108 LRU recoveries and a256-token in-flight unload, with309 comparisons /
 5,184 exact logprob scores. These are same-service references, separate from D/M
-precision. The candidate's six mixed-policy performance runs are still active.
+precision. The initial R56 mixed-policy suite subsequently failed; the fresh R84 recovery
+cohorts below preserve that failure and repeat the complete protocol.
 
 The queued KV audit retains complete labeled Prometheus scrapes, verifies actual
 allocation logs and device/image identities, and computes a resident-token peak
@@ -535,5 +536,32 @@ prefill,4/5 run decode, both containers see all four device nodes and share
 the host PID namespace. It retains the immutable R28 runtime, independent
 real/GDN references, pre-forcing rank captures, KV/SSM checksum configuration
 and both-role profiles. Six CPU launch checks and a partial-startup cleanup
-failure control passed. The diagnostic is running; neither those CPU controls
-nor its small smoke matrix replaces full4P4D performance/accuracy acceptance.
+failure control passed. The diagnostic subsequently failed during profile finalization after the real-M
+reference completed8 pairs /298 scores with zero repeat noise. Both role
+containers exited137, with Docker OOMKilled=false. Prefill traces were
+incomplete, so this establishes neither D/M precision nor full4P4D acceptance.
+
+The experiment host root filesystem filled during that incident. The original
+R56 active mixed warmup returned partial SSE, then connection refused; its
+scheduler traceback was truncated. The all8 coordinator failed at Docker
+creation. Concurrent ENOSPC is observed evidence, not proof of every failure's
+sole cause. Eight explicitly retired stopped-container writable snapshots
+(9,161,666,560 bytes) were archived to NVMe with original inspect/log metadata,
+verified SHA256 and tar listings before Docker removal. Base images, model
+bind mounts and raw results remain intact. Root space recovered to about8.6GiB;
+NVMe retained about26TiB free.
+
+Fresh R84 repeats all six no-cache/LRU/active/active/LRU/no-cache192-request
+cohorts using the unchanged immutable R55 runtime. R85 restores the full TP8,
+DCP2 and attentionDP8 precision/native/kernel/equal-byte-KV protocol; R86 keeps
+the complete4P4D scope; R90 and R91 retain cached TP4/DP4 and isolated R34 speed
+controls. Temporary files and Python bytecode now use per-container NVMe caches.
+CPU/GPU profiling remains enabled but stack and shape recording are disabled.
+AST comparison proves every other instruction in the three profile clients is
+unchanged. Four injected log-collection failures still attempt container cleanup;
+14 cached/isolated launch configurations passed CPU construction checks. Those
+are preparation, not GPU acceptance. Migration replaced only verified waiting,
+childless coordinators and interrupted no GPU worker. Frozen original failures,
+source dependencies and migration/archive proofs are in the dated snapshot.
+Full4P4D, equal-byte actual KV residency, candidate mixed speed and isolated
+performance remain required and pending.

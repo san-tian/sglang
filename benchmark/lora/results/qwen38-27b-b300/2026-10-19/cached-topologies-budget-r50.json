@@ -1,0 +1,16 @@
+{
+  "scope": "Shape-derived real-adapter working set; not an observed GPU allocation or cache hit counter. TP4 divides dense projections by4. AttentionDP4 keeps full attention weights perworker and divides MLP by4. Cache budgets reserved before KV sizing.",
+  "source_shape_audit_sha256": "409b9acbc5253dc1c9c5fb20dba02222838e5c9f0f4ddbfb9768ca65977e9ac8",
+  "unsharded_mlp_bytes": 34225520640,
+  "unsharded_attention_bytes": 3355443200,
+  "topologies": {
+    "cache-tp4-r50": {
+      "predicted_real_bf16_bytes_per_rank": 9395240960,
+      "budget_mib_per_rank": 10240
+    },
+    "cache-dpa4-r50": {
+      "predicted_real_bf16_bytes_per_rank": 11911823360,
+      "budget_mib_per_rank": 12288
+    }
+  }
+}

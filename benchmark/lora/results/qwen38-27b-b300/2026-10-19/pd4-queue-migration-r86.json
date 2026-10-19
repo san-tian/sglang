@@ -1,0 +1,33 @@
+{
+  "old_pid": 944959,
+  "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_pd4_suite_r81.py",
+  "old_wchan": "hrtimer_nanosleep",
+  "old_children": [],
+  "old_source_manifest_sha256": "7d0c733c581089729375974667accf0fbcbd9236b54d9087e9c2f0cd32a76982",
+  "new_source_manifest_sha256": "363f234e16af233cf2ab946f6ffdb3beeb5f7d1cc464bf2d85647dee13b2b350",
+  "actual_transport_audit_sha256": "6c92669f4cc1cb7c85c703d036db8052f525f7381906ada3dada97e749ba97d1",
+  "changes": [
+    "Explicit profiler with_stack=False and record_shapes=False; CPU/GPU activities retained",
+    "TMPDIR and Python pycache redirected to per-container NVMe cache",
+    "Source provenance updated to R86"
+  ],
+  "unchanged": [
+    "TP4 per role",
+    "KV+SSM checksum",
+    "extra_buffer strategy",
+    "NIXL/UCX and transport flags",
+    "M real240/GDN8/D matching pairs",
+    "D/M/base each636 native speed controls",
+    "Both role CUDA traces and metrics",
+    "All natural sampling and SSE timing code AST unchanged",
+    "P2/D10 profile steps unchanged",
+    "Stop both roles together",
+    "Existing all8-before-PD and subsequent cached/isolated barriers"
+  ],
+  "runtime_workers_interrupted": false,
+  "full_4P4D_accepted": false,
+  "old_coordinator_terminal": true,
+  "new_pid": 954267,
+  "new_waiting_verified": true,
+  "unix_s": 1792444190.588431
+}

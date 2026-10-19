@@ -1,0 +1,41 @@
+{
+  "purpose": "Root-disk recovery for waiting coordinator only; immutable R34 runtime and complete original measurement scope retained.",
+  "runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
+  "runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
+  "client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
+  "source_files": {
+    "audit_cached_topology_r50.py": "926930163a99e1ef53526b05aa25fae4f664623e9f71eb7b369aeb2894942343",
+    "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08",
+    "client-r33/compare_frozen.py": "b7628316d3b26ac311b87c71059087703b853544c2e1c5c6413440d8f23f1f7c",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "client-r33/compare_mixed.py": "17c0178b84d269e3f946645bf3c48f40aaab4727aa31dbbeffe6543fb9d302d2",
+    "client-r33/pd_native.py": "19576f0cdebf4f5d7a8b9723539e865edcc1134c24f10fa58f920f08104db7f2",
+    "cached-topologies-budget-r50.json": "4fcd8577f1fc92e8edc50a26390b339778a66203611958ad6e7d903220eddb5d",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+    "run_cached_topologies_r90.py": "b5b7aba041ffd19a3c1b39b9b5e142b98384314146fa0c8ba181947e6dd0f2be",
+    "host_common_r90.py": "1b5415cfdbf833cae974542c1fe18d8aaa4292f3bd474a499dac3f6ce4cb4328",
+    "perf_endpoint_r85.py": "fdff746aa3648a7d9037f55af68c5d3e9b37f1d43abd676e465214a7b6d649e8",
+    "check_queued_launch_r90.py": "6791ec57605a864e98fd986bf8ae04b75549d50c7e26339d58ead3454a922a8e"
+  },
+  "parent_manifests": {
+    "source-r34.json": "c4212e12a18d4c9c67f7af3b9656dff834491d366f7293bcae1094d09ecf3375",
+    "source-host-r44.json": "7fb498b12ab0f21f87b050891ce8dd6548b154cb908155c12ea6d291d4d067df"
+  },
+  "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "command_construction_check": {
+    "passed": true,
+    "configurations": 8,
+    "scope": "Mocked Docker command construction only, not GPU acceptance",
+    "log_sha256": "c3a83593d26384c7ba197fc59d784f63c97d392d7d404bd5e99e5f1e4a48395d"
+  },
+  "recovery": {
+    "parent": "source-host-r50.json",
+    "parent_sha256": "a807b3613c0c5bd712962f59741fa4d457b5d2e761f08e398e7dbcfa4ee1a730",
+    "driver_ast_identical_after_only_import_provenance_profiler_path_normalization": true,
+    "TMPDIR": "NVMe per-container cache/tmp",
+    "PYTHONPYCACHEPREFIX": "NVMe per-container cache/pycache",
+    "profiler": "CPU+GPU retained; with_stack=False,record_shapes=False; no profiler during isolated native timing",
+    "paired_cleanup": "docker stop in finally even if log collection fails",
+    "gpu_acceptance": false
+  }
+}

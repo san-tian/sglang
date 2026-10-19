@@ -1,0 +1,13 @@
+{
+  "all_non_profile_AST_identical": true,
+  "activities": [
+    "CPU",
+    "GPU"
+  ],
+  "record_shapes": false,
+  "with_stack": false,
+  "natural_requests_per_full_arm": 636,
+  "profile_prefill_steps": 2,
+  "profile_decode_steps": 10,
+  "gpu_acceptance": false
+}

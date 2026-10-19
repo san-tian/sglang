@@ -1,0 +1,18 @@
+{
+  "image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "runtime_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "source_files": {
+    "host_common_r84.py": "ba8f2be30d0f71261da2add25fe7b77ddcf45af7d1b44815c69befb7421b6f7a",
+    "run_active_cache_recovery_r84.py": "3c2b88822db1e086b7d8b5e959643e6a079bf94768bf5a53d54df4e68544ab06",
+    "profile_mixed_cache_r84.py": "b181b378cce6d8ae56e9dd65dba3ee82ecaef379b8c24eae873b8fd3325aff3f",
+    "perf_cache_mixed_r35.py": "792a56f5d533f9ace5feecd04d686ccac8255508abf54bdc00fc151b2c550f7f",
+    "audit_active_cache_suite_r84.py": "fe1b3ae436708363f35253e6b92d579d782f4842301b17fe9466d40e603ddc6e",
+    "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f"
+  },
+  "scope": "Fresh six mixed192 R55 matrices after terminal R56 ENOSPC; prior baseline evidence retained; no automatic benefit claim.",
+  "root_safe_tmpdir": "/root/.cache/tmp",
+  "root_safe_pycache": "/root/.cache/pycache",
+  "commit": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "runtime_commit": "0116d3a12bc893ae43d8dbfd594280eccdc8467c"
+}

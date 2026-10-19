@@ -1,0 +1,34 @@
+{
+  "utc_s": 1792443565.6137247,
+  "scope": "Read-only observation of live R80 profiler finalization; not inference speed or proof of its sole memory cause.",
+  "processes": {
+    "932549": {
+      "status": {
+        "Name": "sglang::schedul",
+        "State": "R (running)",
+        "VmHWM": "114357616 kB",
+        "VmRSS": "114357616 kB"
+      },
+      "wchan": "0"
+    },
+    "932620": {
+      "status": {
+        "Name": "sglang::schedul",
+        "State": "D (disk sleep)",
+        "VmHWM": "95940188 kB",
+        "VmRSS": "95155288 kB"
+      },
+      "wchan": "wb_wait_for_completion"
+    }
+  },
+  "profile_log_lines": [
+    "[2026-10-19 20:54:04 TP0] Profiling starts. Traces will be saved to: /work/qwen38-mol-multigpu-20261019/perf-pd2diag-m-r80/profile/prefill (with profile id: 1792443244.4200819)",
+    "[2026-10-19 20:54:04 TP1] Profiling starts. Traces will be saved to: /work/qwen38-mol-multigpu-20261019/perf-pd2diag-m-r80/profile/prefill (with profile id: 1792443244.4200819)",
+    "[2026-10-19 20:55:06 TP0] Stop profiling...",
+    "[2026-10-19 20:55:06 TP1] Stop profiling...",
+    "USDT:2026-10-19 20:56:27 932620:932620 SyncActivityProfilerHandler.cpp:46] profiler_stop",
+    "USDT:2026-10-19 20:56:55 932549:932549 SyncActivityProfilerHandler.cpp:46] profiler_stop"
+  ],
+  "runtime_profiler_source_sha256": "a2aed8f0191fdf6357fe0dc750201ad9dd2d9ae8ad9de253f65e083711dad8eb",
+  "actual_default_stack_setting_verified": true
+}

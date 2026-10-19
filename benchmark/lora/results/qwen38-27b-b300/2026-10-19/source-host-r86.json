@@ -1,0 +1,19 @@
+{
+  "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "source_files": {
+    "host_common_r86.py": "5721c753d28a8694571fac648f1ed5a36b9e1a5f53d8da1d657c8ddfeefe33d2",
+    "run_pd4_suite_r86.py": "1e30777cd491c776aadafd575ef6f65e8883f1ed11e056413ff7bc0bc08de4a1",
+    "check_pd4_launch_r86.py": "a9dc31b084754c8d1c39708969d60462cebfc4894869566f2d81bffca867ccd2",
+    "perf_pd_r81.py": "d04f2e5ba6ca0472b93973b83f3c365a72ed55cafa9b61c1dfd9f3d194a4c479",
+    "client-r33/pd_native.py": "19576f0cdebf4f5d7a8b9723539e865edcc1134c24f10fa58f920f08104db7f2",
+    "client-r33/compare_frozen.py": "b7628316d3b26ac311b87c71059087703b853544c2e1c5c6413440d8f23f1f7c",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f"
+  },
+  "scope": "Full4P4D unchanged matrices/checksums/transport/placement; profiler stack/shape disabled and TMPDIR/Python pycache bound to private NVMe cache. Follows completed all8.",
+  "root_safe_tmpdir": "/root/.cache/tmp",
+  "root_safe_pycache": "/root/.cache/pycache",
+  "commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
+  "runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c"
+}

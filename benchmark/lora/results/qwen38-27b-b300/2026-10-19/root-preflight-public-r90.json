@@ -1,0 +1,42 @@
+{
+  "actual_command": [
+    "python3",
+    "-c",
+    "import tempfile,pathlib,json; p=tempfile.NamedTemporaryFile(delete=False);p.write(b'root-safe NVMe smoke');p.close();print(json.dumps({'tmpdir':tempfile.gettempdir(),'path':p.name,'bytes':pathlib.Path(p.name).stat().st_size}));assert p.name.startswith('/root/.cache/')"
+  ],
+  "actual_environment": [
+    "TMPDIR=/root/.cache",
+    "PYTHONPYCACHEPREFIX=/root/.cache/pycache"
+  ],
+  "result": {
+    "tmpdir": "/root/.cache",
+    "path": "/root/.cache/tmptr2639rj",
+    "bytes": 20
+  },
+  "actual_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "actual_mounts": [
+    {
+      "Type": "bind",
+      "Source": "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/root-preflight-r84",
+      "Destination": "/root/.cache",
+      "Mode": "",
+      "RW": true,
+      "Propagation": "rprivate"
+    }
+  ],
+  "state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-10-19T21:09:08.698219403Z",
+    "FinishedAt": "2026-10-19T21:09:09.105323198Z"
+  },
+  "root_free_bytes": 9249153024,
+  "nvme_payload_verified": true
+}
