@@ -1,0 +1,17 @@
+{
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
+  "client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
+  "source_files": {
+    "host_common_r80.py": "d4af1cbbe9fc750b01c60f98b95059f7500914508ddd714313b70465e7ca6a3c",
+    "run_pd2_diagnostic_r80.py": "db3940ed3896c6b910591f29721cba7ad00938d6c4c9ba1ab858e775e4a59299",
+    "check_pd2_launch_r80.py": "de15daac67ddfec796d455f2b74aa23e61430922dd0537452ba2faa0b8687d94",
+    "perf_pd_r31.py": "22bda3957d2fe4d316edcacff15fd571624dee70559cfc33aba5ca1e641b58fb",
+    "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08",
+    "client-r33/pd_native.py": "19576f0cdebf4f5d7a8b9723539e865edcc1134c24f10fa58f920f08104db7f2",
+    "client-r33/compare_frozen.py": "b7628316d3b26ac311b87c71059087703b853544c2e1c5c6413440d8f23f1f7c",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f"
+  },
+  "scope": "Additional real 2P2D diagnostic on physical0/3 for prefill,4/5 for decode. Both containers share host PID and see all four GPU nodes. Independent real/GDN merge8pairs each; two measured natural requests per side and actual both-role profiles. Does not replace full4P4D."
+}

@@ -518,3 +518,22 @@ containers before replacing it; no runtime worker was interrupted. Actual4P4D
 KV/SSM layouts, device placement, numerical equivalence and performance still
 require the full run. Reports and runnable preflight sources are in the dated
 partial-results snapshot, including nixl-transport-controls-audit-r78.json.
+
+The full1,000,000-total-token natural matrix has now completed:18 measured SSE
+requests across D/M/base, three rounds per cold/hot point, with all six D/M
+natural output sequences matching. The raw auditor checked999,744 input tokens
+and256 outputs per request, cold prefix hits0 and hot hits999,424. Hot mean
+TPOT was105.51/56.91/57.10ms for D/M/base; output throughput was8.86/15.58/15.56
+tok/s. This R26 TP1 control still exposes a substantial dynamic-path cost.
+Each point uses one fixed input, with concurrent experiments on other GPUs;
+it does not establish full-prompt logprob alignment or long-context task quality.
+See million-measured-full-audit-r60.json in the dated snapshot. The three long
+workers were stopped together after genuine completion, releasing their GPUs.
+
+R80 adds a real2P2D diagnostic before the full4P4D queue: physical GPUs0/3 run
+prefill,4/5 run decode, both containers see all four device nodes and share
+the host PID namespace. It retains the immutable R28 runtime, independent
+real/GDN references, pre-forcing rank captures, KV/SSM checksum configuration
+and both-role profiles. Six CPU launch checks and a partial-startup cleanup
+failure control passed. The diagnostic is running; neither those CPU controls
+nor its small smoke matrix replaces full4P4D performance/accuracy acceptance.

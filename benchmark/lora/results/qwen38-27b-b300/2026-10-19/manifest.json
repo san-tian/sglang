@@ -1,12 +1,12 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T20:42:38.513151+00:00",
+  "as_of_utc": "2026-10-19T20:56:02.585957+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
   "cache_runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
   "topology_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
-  "scope": "Dedicated eight-B300 host; controls ran alongside other GPU experiments. Four multigpu D/M/base topologies:7632 raw native payloads/36rank traces. R55 active cache main/GDN/mixed/prefix/lifecycle raw correctness passed; new D/M/base1908 native responses/3traces and48speed points/576latency statistics independently checked, still slower than merge in observed controls. Four actual two-process NIXL GPU controls found host PID plus shared GPU device visibility removes1157 source/target staging copies in favor of3direct PtoP copies; queued4P4D corrected accordingly. Full4P4D, all8/DCP/KV residency, candidate mixed speed and isolated speed remain pending. No model prompts, generated text, token IDs or weights included.",
+  "scope": "Dedicated eight-B300 host; controls ran alongside other GPU experiments. Four multigpu D/M/base topologies:7632 raw native payloads/36rank traces. R55 active cache main/GDN/mixed/prefix/lifecycle raw correctness passed; new D/M/base1908 native responses/3traces and48speed points/576latency statistics independently checked, still slower than merge in observed controls. Four actual two-process NIXL GPU controls found host PID plus shared GPU device visibility removes1157 source/target staging copies in favor of3direct PtoP copies; queued4P4D corrected accordingly. Full4P4D, all8/DCP/KV residency, candidate mixed speed and isolated speed remain pending. No model prompts, generated text, token IDs or weights included. Full1M fixed-input natural matrix now completed:18raw SSE payloads,6D/M ID pairs match,cold hits0/hot999424,three measured rounds; no full-prompt logprob/task-quality claim. R80 additional real2P2D diagnostic launched with shared four GPU visibility and host PID; full4P4D remains mandatory.",
   "files_sha256": {
     "cache-threeway-comparison-r49.json": "0b4b6bc5082b558673cdb486928183353d28f8e413f6d97ab7df1fb1df287f38",
     "cache-threeway-profile-audit-r49.json": "a149614e2886da7ba32f906bd05bf2780a70bc3dbf459c3ff0ddd9520651088f",
@@ -79,7 +79,16 @@
     "nixl-two-process-launch-r76.json": "250a28cce4d7ad0bf60290c58e1e4029f63b31e84b465fa119a5d041a4685d01",
     "preflight_nixl_process_r77.py": "54c22baea47f1173f5483ba478052ce65a16e972681d9419d7a621a593b2a34f",
     "launch_nixl_process_r77.py": "bec06d9442340b66659a31e08eb8a2a8c6f39a78738e85756aeaee9533cf89c8",
-    "nixl-two-process-launch-r77.json": "1bb1363ec5b98a8f0b5c3a3d972ca462d60c1b7a85d4c018f09b6916e4f289a6"
+    "nixl-two-process-launch-r77.json": "1bb1363ec5b98a8f0b5c3a3d972ca462d60c1b7a85d4c018f09b6916e4f289a6",
+    "million-measured-full-audit-r60.json": "897e3ac0483c91d3e63e9b01f4c28ab4cec397922729648bb2333af2b9df5d10",
+    "million-full-measured-audit-finished-r60.json": "6b0aec79788206dbcdf917dffb8ec451f730cdf8e44d1937d55403b98693c74b",
+    "long-yarn4-complete-r42.json": "03dd7f2542326646a6ba62da37351ef0a50021a377d1425bb941b71f2c48ba55",
+    "host_common_r80.py": "d4af1cbbe9fc750b01c60f98b95059f7500914508ddd714313b70465e7ca6a3c",
+    "run_pd2_diagnostic_r80.py": "db3940ed3896c6b910591f29721cba7ad00938d6c4c9ba1ab858e775e4a59299",
+    "check_pd2_launch_r80.py": "de15daac67ddfec796d455f2b74aa23e61430922dd0537452ba2faa0b8687d94",
+    "source-host-r80.json": "fa1bc39bc68b8d0819066540573c6010571d72a0e7c8a0310461ac31a251f61c",
+    "pd2-launch-construction-r80.json": "30e30e8d1329ea6d37989cb033e7449ed429c57c365dbe55aa392e8ea428ff3a",
+    "audit_pd2_raw_r80.py": "89519880af64a789eaf59e4c241ba406cc787d0072fdc876ddae02c8ccbb6247"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",

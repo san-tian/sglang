@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "scope": "Read-only CPU audit of existing measurements; no GPU worker or GPU barrier changed.",
+  "auditor_sha256": "64d57ad0a1e24880cb8050d84a616b218c352d81b761c6c7415b8bf32ae5f655",
+  "formal_native_payloads_audited": 18,
+  "native_D_M_pairs_equal": 6
+}

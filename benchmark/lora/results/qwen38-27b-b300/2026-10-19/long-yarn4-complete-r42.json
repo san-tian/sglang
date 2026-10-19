@@ -1,0 +1,8 @@
+{
+  "requests": 18,
+  "outputs_equal": true,
+  "actual_client": "run_perf_yarn4_r42.py",
+  "failed_attempt": "/opt/dlami/nvme/qwen38-mol-speed-20261019/perf-long-yarn4-r26-client-timeout-r42",
+  "original_read_timeout_s": 1800,
+  "retry_read_timeout_s": 7200
+}
