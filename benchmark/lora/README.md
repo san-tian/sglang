@@ -632,3 +632,13 @@ DCP still needs its own actual eight-GPU run. Legacy provenance contains an exac
 eight-character runtime commit and full immutable image digest; only diagnostic
 replays accept that format. New8GPU outputs must match the complete R85 source
 manifest. These are parser validation results and provide no new8GPU acceptance.
+
+The adjacent second active R84 cohort completed another192natural requests. Its
+cold/nominal-hot throughput was113.59/112.03tok/s with P95 end-to-end72.76/69.92s.
+Both active controls rehashed384original requests with identical payloads and
+natural output IDs at the same R55 image and fixed capacity. The second/first
+throughput ratios were0.9520/0.9390 (4.80%/6.10% lower), so repeat variation must
+be retained in policy conclusions. Actual KV hits stayed0. No kernel profile was
+collected for this repeated arm; the first active profile cannot represent it.
+The reverse LRU and no-cache arms and full1,152-request audit remain required.
+See active-repeat-comparison-r103.json and mixed-cohort-audit-3-active-r93.json.

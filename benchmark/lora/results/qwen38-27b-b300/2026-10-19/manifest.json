@@ -1,12 +1,12 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T21:59:58.201389+00:00",
+  "as_of_utc": "2026-10-19T22:06:13.112085+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
   "cache_runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
   "topology_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
-  "scope": "Partial results, not final acceptance. First3R84 mixed controls (no-cache/LRU/active) each192native requests now complete and rehashed:576natural payloads/output sequences identical. Active cold/hot119.31/119.30tok/s versusLRU92.52/104.99 andno-cache99.11/110.31; FP32 merge/store each7040->3780 inactualshortprofiles. Reverse3cohorts pending; not final isolated speed or policy acceptance. Original1M18SSE requests audited. R94/R95 sealed full4P4D original-score/native/kernel auditors waiting, earlier2P2D M-only parserreplay+8/10CPU checks are preparation. FullTP8/DCP2/attentionDP8 withactualequal-byteKV/full4P4D/cachedTP4-DP4/isolatedR91 andsix-arm cached million-contextR97 are required and queued. No prompts/generatedtext/tokenIDs/weights included. NewR99/R100/R101 original per-rank precision/native-percentile/kernel/mixed auditors are sealed and running read-only R102observer. ExistingTP4/DP4 original496pairs/229384scores/2480captures,3816naturalSSE/24traces/1152latency statistics andmixed320captures replayed;12CPUparsercontrols passed. This validates auditors, not pending8GPU results.",
+  "scope": "Partial results, not final acceptance. First3R84 mixed controls (no-cache/LRU/active) each192native requests now complete and rehashed:576natural payloads/output sequences identical. Active cold/hot119.31/119.30tok/s versusLRU92.52/104.99 andno-cache99.11/110.31; FP32 merge/store each7040->3780 inactualshortprofiles. Reverse3cohorts pending; not final isolated speed or policy acceptance. Original1M18SSE requests audited. R94/R95 sealed full4P4D original-score/native/kernel auditors waiting, earlier2P2D M-only parserreplay+8/10CPU checks are preparation. FullTP8/DCP2/attentionDP8 withactualequal-byteKV/full4P4D/cachedTP4-DP4/isolatedR91 andsix-arm cached million-contextR97 are required and queued. No prompts/generatedtext/tokenIDs/weights included. NewR99/R100/R101 original per-rank precision/native-percentile/kernel/mixed auditors are sealed and running read-only R102observer. ExistingTP4/DP4 original496pairs/229384scores/2480captures,3816naturalSSE/24traces/1152latency statistics andmixed320captures replayed;12CPUparsercontrols passed. This validates auditors, not pending8GPU results. Second active R84 cohort complete: 192additional natural requests, cold/hot113.59/112.03tok/s. Both active cohorts384 original payload/output records rehashed equal; second/first .9520/.9390. Remaining reverse LRU/no-cache required; no final policy benefit.",
   "files_sha256": {
     "cache-threeway-comparison-r49.json": "0b4b6bc5082b558673cdb486928183353d28f8e413f6d97ab7df1fb1df287f38",
     "cache-threeway-profile-audit-r49.json": "a149614e2886da7ba32f906bd05bf2780a70bc3dbf459c3ff0ddd9520651088f",
@@ -186,7 +186,10 @@
     "tp4-native-kernel-raw-audit-r100.json": "d5d685f87cf8f7f112f096f2b1282b1fb63d9fdb2713afa2608664d553b8b4ed",
     "dpa4-native-kernel-raw-audit-r100.json": "2fc6cd0cb45a1843743273eed838e574e1cd76461e2ed45b4757df1c2f282710",
     "tp4-mixed-parser-replay-r101.json": "a679d186450fb64645b5d8a1ddaec746ac5271de968e8e788ce4c0b5b532b72e",
-    "dpa4-mixed-parser-replay-r101.json": "db02272d9f4f4e74425211fe0781fdd9f73901deeeb1fddb45be8917c3b4c4d1"
+    "dpa4-mixed-parser-replay-r101.json": "db02272d9f4f4e74425211fe0781fdd9f73901deeeb1fddb45be8917c3b4c4d1",
+    "audit_active_repeat_r103.py": "676c76482e7e341ae228da993e0b5f6b10969b339fbef47ef9dd6e36bb5e377d",
+    "active-repeat-comparison-r103.json": "dac3892f5bd866f5f9ec84e235dd74cfa91256840c66e0c4c10731e153003855",
+    "mixed-cohort-audit-3-active-r93.json": "42528af0a002acaf5469befeb196f5c52b029bfd284875c06dcaf2b66d36dd65"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",

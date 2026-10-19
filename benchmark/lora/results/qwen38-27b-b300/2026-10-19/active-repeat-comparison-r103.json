@@ -1,0 +1,128 @@
+{
+  "passed": true,
+  "original_requests_rehashed": 384,
+  "identical_request_payloads": true,
+  "natural_outputs_identical": true,
+  "comparisons": [
+    {
+      "cache_label": "cold",
+      "controls": {
+        "2": {
+          "cache": "cold",
+          "requests": 96,
+          "throughput_tokens_s_mean": 119.31433429586252,
+          "ttft_s": {
+            "p50": 2.069284445999074,
+            "p95": 43.507029344997136,
+            "p99": 43.70874572900357
+          },
+          "tpot_s": {
+            "p50": 0.1602937418078392,
+            "p95": 0.16731305907057556,
+            "p99": 0.16842849948628938
+          },
+          "e2e_s": {
+            "p50": 43.09111070500512,
+            "p95": 71.4525829760023,
+            "p99": 73.60183354799665
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        },
+        "3": {
+          "cache": "cold",
+          "requests": 96,
+          "throughput_tokens_s_mean": 113.59262281857423,
+          "ttft_s": {
+            "p50": 2.0623677730036434,
+            "p95": 43.981315379998705,
+            "p99": 44.60927863399411
+          },
+          "tpot_s": {
+            "p50": 0.15916785234508365,
+            "p95": 0.17012764934508026,
+            "p99": 0.1717827890313678
+          },
+          "e2e_s": {
+            "p50": 43.423076699000376,
+            "p95": 72.76119242000277,
+            "p99": 75.80150638699706
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        }
+      },
+      "second_over_first_throughput": 0.9520450622211056
+    },
+    {
+      "cache_label": "hot",
+      "controls": {
+        "2": {
+          "cache": "hot",
+          "requests": 96,
+          "throughput_tokens_s_mean": 119.30356938371499,
+          "ttft_s": {
+            "p50": 2.138031716000114,
+            "p95": 43.677127185001154,
+            "p99": 44.05024130099628
+          },
+          "tpot_s": {
+            "p50": 0.1607374077019688,
+            "p95": 0.16791465338039915,
+            "p99": 0.16929732471765543
+          },
+          "e2e_s": {
+            "p50": 43.10841261300084,
+            "p95": 71.5472751749985,
+            "p99": 74.03173800800141
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        },
+        "3": {
+          "cache": "hot",
+          "requests": 96,
+          "throughput_tokens_s_mean": 112.02834082160244,
+          "ttft_s": {
+            "p50": 2.1406104560010135,
+            "p95": 43.7472375560028,
+            "p99": 45.051252290002594
+          },
+          "tpot_s": {
+            "p50": 0.16215620646276055,
+            "p95": 0.17157467811373542,
+            "p99": 0.17347937170981073
+          },
+          "e2e_s": {
+            "p50": 43.19110769800318,
+            "p95": 69.92182490700361,
+            "p99": 83.23391998000443
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        }
+      },
+      "second_over_first_throughput": 0.939019187777079
+    }
+  ],
+  "proofs": {
+    "2": {
+      "cohort_audit_sha256": "d2028cb2f41509baf67e48b6db9cf609903fedb291ba3d212882716d7e258aad",
+      "raw_requests_rehashed": 192
+    },
+    "3": {
+      "cohort_audit_sha256": "42528af0a002acaf5469befeb196f5c52b029bfd284875c06dcaf2b66d36dd65",
+      "raw_requests_rehashed": 192
+    }
+  },
+  "source_sha256": "676c76482e7e341ae228da993e0b5f6b10969b339fbef47ef9dd6e36bb5e377d",
+  "scope": "Two adjacent complete active-policy R84 controls, GPU2/R55/mem.52/KV65536/SSM256, actual KV cached_tokens reported. Reproducibility observation only: reverse LRU/no-cache and full1152 matrix remain required. No isolated policy speedup, larger topology, true prefix-hit, capacity or overall acceptance."
+}
