@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "auditor_sha256": "bee3e13bc44594f380227dbcf4b4a05669919a555f6e70a3e27c2b44c844fda8",
+  "scope": "Read-only raw payload/native output/kernel trace checks; no GPU workers started or interrupted.",
+  "topologies": [
+    "tp2",
+    "dpa2",
+    "tp4",
+    "dpa4"
+  ],
+  "native_requests_audited": 7632,
+  "actual_rank_traces": 36
+}

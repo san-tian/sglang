@@ -1,0 +1,13 @@
+test_green_summary_cannot_hide_changed_scores (test_active_raw_audit_r65.RawAuditControls.test_green_summary_cannot_hide_changed_scores) ... ok
+test_nonfinite_capture_rejected (test_active_raw_audit_r65.RawAuditControls.test_nonfinite_capture_rejected) ... ok
+test_nonfinite_prompt_rejected (test_active_raw_audit_r65.RawAuditControls.test_nonfinite_prompt_rejected) ... ok
+test_original_logits_source (test_active_raw_audit_r65.RawAuditControls.test_original_logits_source) ... ok
+test_repeated_step_rejected (test_active_raw_audit_r65.RawAuditControls.test_repeated_step_rejected) ... ok
+test_truncated_toplogprobs_rejected (test_active_raw_audit_r65.RawAuditControls.test_truncated_toplogprobs_rejected) ... ok
+test_wrong_capture_token_rejected (test_active_raw_audit_r65.RawAuditControls.test_wrong_capture_token_rejected) ... ok
+test_wrong_forced_path_rejected (test_active_raw_audit_r65.RawAuditControls.test_wrong_forced_path_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.003s
+
+OK

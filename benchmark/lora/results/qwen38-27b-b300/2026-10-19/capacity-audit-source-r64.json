@@ -1,0 +1,11 @@
+{
+  "source_files": {
+    "audit_capacity_residency_r64.py": "5522dad2d7e8ef2540f3083c4f5e67848551ab2142183793250f5c31104c2e2c",
+    "test_capacity_audit_r64.py": "7b8bf05ec4cc37cd7e78e179e4d87db86de347db489a8cf1180530737da98a3c",
+    "watch_capacity_audit_r64.py": "7cdc34aef5f0e460c36aa57057b5badfa6416ffe4b60b0fcae18ca5e24d3867a"
+  },
+  "cpu_negative_control_tests_passed": 7,
+  "cpu_test_log_sha256": "659664a3eba3386119c34191cbdf3f6a3de15a3dfac6138ca53fa5d81a74e79b",
+  "gpu_acceptance": false,
+  "scope": "CPU protocol checks reject TP duplicate inflation, asynchronously summed worker peaks, missing/ambiguous reporting workers, nonfinite metrics and duplicate series. Actual GPU allocation and residency are pending."
+}

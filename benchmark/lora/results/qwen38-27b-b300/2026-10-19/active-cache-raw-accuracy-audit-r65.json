@@ -1,0 +1,235 @@
+{
+  "passed": true,
+  "runtime_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "runtime_commit": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "accuracy": {
+    "full": {
+      "passed": true,
+      "case_pairs": 240,
+      "scores": {
+        "prefill": {
+          "count": 49744,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 49744,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "prefill_last": {
+          "count": 240,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 240,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "decode": {
+          "count": 61200,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 61200,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        }
+      },
+      "repeat_noise": {
+        "M": {
+          "prefill": {
+            "count": 43526,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 43526,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 210,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 210,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 53550,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 53550,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        },
+        "D": {
+          "prefill": {
+            "count": 43526,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 43526,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 210,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 210,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 53550,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 53550,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        }
+      },
+      "scored_native_responses_per_side": 240,
+      "rank_capture_files_reparsed": 480,
+      "raw_evidence_files_rehashed": {
+        "M": 264,
+        "D": 263
+      },
+      "reference_seal_sha256": "1ea1dce9a1f6664d15835c917a2f8cf5604c6bd634d93d1c50b7692773f34929",
+      "dynamic_evidence_manifest_sha256": "0484b4453101214939431b4fbed13a555c81d1c187679d140a2a108416aeaa94",
+      "cached_tokens_distribution": {
+        "M": {
+          "cold:0": 120,
+          "hot:0": 120
+        },
+        "D": {
+          "cold:0": 120,
+          "hot:0": 120
+        }
+      },
+      "inputs_stable_during_audit": true
+    },
+    "gdn": {
+      "passed": true,
+      "case_pairs": 8,
+      "scores": {
+        "prefill": {
+          "count": 3380,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 3380,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "prefill_last": {
+          "count": 8,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 8,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "decode": {
+          "count": 120,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 120,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        }
+      },
+      "repeat_noise": {
+        "M": {
+          "prefill": {
+            "count": 1690,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 1690,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 4,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 4,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 60,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 60,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        },
+        "D": {
+          "prefill": {
+            "count": 1690,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 1690,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 4,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 4,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 60,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 60,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        }
+      },
+      "scored_native_responses_per_side": 8,
+      "rank_capture_files_reparsed": 16,
+      "raw_evidence_files_rehashed": {
+        "M": 20,
+        "D": 19
+      },
+      "reference_seal_sha256": "295d37ea5b691268fd607301a9e65b94d5bbe65ec8282337e9f263e105801b92",
+      "dynamic_evidence_manifest_sha256": "97c94bfce78d716de2eccd08cd5e09141d6bc2cd2df4f06859defdfcde4ed02a",
+      "cached_tokens_distribution": {
+        "M": {
+          "cold:0": 4,
+          "hot:0": 4
+        },
+        "D": {
+          "cold:0": 4,
+          "hot:0": 4
+        }
+      },
+      "inputs_stable_during_audit": true
+    }
+  },
+  "case_pairs": 248,
+  "score_count": 114692,
+  "audit_source_sha256": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+  "scope": "R55 active-policy TP1 accuracy only. Raw pre-forcing captures and full prompt scores independently re-parsed; does not establish speed, lifecycle, actual hot-cache restoration, multigpu or PD acceptance."
+}

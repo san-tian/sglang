@@ -255,10 +255,11 @@ paged-KV path rejected seqused_q/seqused_k. Scheduler child failure preceded man
 cleanup of the remaining parent; OOMKilled was false. No FA4 accuracy or speed
 result is claimed.
 
-The pure-base controls for TP2, attention DP2 and TP4 have now completed. Each
+The pure-base controls for TP2, attention DP2, TP4 and attention DP4 have now
+completed. Each
 topology has D/M/base controls of636 natural requests at16 points; all1,908 raw
 payloads per topology were checked. TP2/attention DP2 each have six actual rank
-traces and TP4 has twelve, also rehashed and parsed. D/M output IDs match at every
+traces and TP4/attention DP4 each have twelve, also rehashed and parsed. D/M output IDs match at every
 request. For2,048 input/256 output tokens, concurrency32 and cold KV cache:
 
 | Topology | D / M / base tok/s | D / M / base P95 completion, seconds |
@@ -266,17 +267,24 @@ request. For2,048 input/256 output tokens, concurrency32 and cold KV cache:
 | TP2 | 245.19 / 376.59 / 367.65 | 33.45 / 21.87 / 22.27 |
 | Attention DP2 | 232.41 / 336.80 / 340.49 | 35.34 / 24.36 / 24.05 |
 | TP4 | 245.82 / 369.66 / 368.45 | 33.46 / 22.16 / 22.29 |
+| Attention DP4 | 231.83 / 337.15 / 334.82 | 35.35 / 24.38 / 24.46 |
 
 The three controls use the same physical GPUs within each topology. Automatic KV
 pools differ: TP2 D2,794,792 vs M/base2,918,376 rows; attention DP2 D1,244,477 vs
-M/base1,321,149; TP4 D7,067,195 vs M/base7,262,267. All exceed the73,728
+M/base1,321,149; TP4 D7,067,195 vs M/base7,262,267; attention DP4 D1,541,229
+vs M/base1,609,421. All exceed the73,728
 requested tokens of the largest batch.
 Concurrent experiments and different measurement times prevent an isolated
 causal speedup claim. Base and merged weights differ, so their output IDs need
 not match. TP2 M/base profiles each had19,466 CUDA kernels; attention DP2 each
 had14,980, all without FP32 merge or merge-round kernels. Their dynamic profiles
 had35,190 and40,994 events. The snapshot archives the raw-artifact hashes and
-the read-only auditor; TP4/attention DP4 pure-base controls are still running.
+the read-only auditor. Attention DP4 base has24,341 kernel events, matching the
+merge control, with zero FP32 merge/round kernels. Across all four topologies,
+7,632 native payloads and36 rank traces were audited. An additional independent
+pass recomputed all192 speed points and2,304 latency statistics; TTFT/TPOT come
+from original SSE timestamps, while E2E uses the retained client HTTP completion
+elapsed and is checked against the final-SSE lower bound.
 
 ## Compare sequential instances on the same GPUs
 
@@ -433,3 +441,25 @@ full-attention KV tensor bytes per rank. This is a CPU shape/provenance check,
 not a GPU allocation or residency result. SSM and allocator metadata are separate;
 actual runtime logs and same-time labeled metrics must still establish the
 allocation and residency claim.
+
+The R55 active-admission candidate has now passed an independent raw-score audit
+on TP1: 240 real-adapter pairs (111,184 scores) plus eight GDN pairs (3,508
+scores), with zero mean/P99/maximum error and 100% argmax agreement. The auditor
+reparsed 496 rank-capture files and 496 scored native responses across D/M,
+rehashing all 566 evidence files before and after reconstruction. It recomputed
+per-case statistics and both services' repeat noise instead of trusting saved
+score intermediates. Eight CPU negative controls reject changed continuations,
+invalid capture steps/tokens, nonfinite scores and falsely green summaries.
+Four-identity mixed routing also passed:48 requests /768 original scores were
+reconstructed from64 captures with zero error, against each identity's isolated
+reference. This mixed result is separate from D/M precision.
+The full-prefill runs recorded zero cached prompt tokens in both nominal cache
+modes; actual prefix restoration, lifecycle and speed are separate gates still
+running for this candidate. This does not establish an active-policy speedup.
+
+The queued KV audit retains complete labeled Prometheus scrapes, verifies actual
+allocation logs and device/image identities, and computes a resident-token peak
+from one common scrape within each request interval. Seven CPU controls reject
+replicated-rank inflation, missing/ambiguous series, nonfinite values and adding
+worker peaks from different times. These controls prepare the measurement;
+actual all-eight-GPU residency and capacity gains are not yet accepted.

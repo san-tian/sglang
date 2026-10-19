@@ -1,0 +1,12 @@
+test_distinct_worker_time_peaks_never_add (test_capacity_audit_r64.CapacityEvidenceTests.test_distinct_worker_time_peaks_never_add) ... ok
+test_dp_independent_workers_are_summed (test_capacity_audit_r64.CapacityEvidenceTests.test_dp_independent_workers_are_summed) ... ok
+test_duplicate_or_ambiguous_leaders_cannot_pass (test_capacity_audit_r64.CapacityEvidenceTests.test_duplicate_or_ambiguous_leaders_cannot_pass) ... ok
+test_missing_dp_workers_cannot_pass (test_capacity_audit_r64.CapacityEvidenceTests.test_missing_dp_workers_cannot_pass) ... ok
+test_nonfinite_metrics_cannot_pass (test_capacity_audit_r64.CapacityEvidenceTests.test_nonfinite_metrics_cannot_pass) ... ok
+test_priorities_excluded_and_escaped_labels_preserved (test_capacity_audit_r64.CapacityEvidenceTests.test_priorities_excluded_and_escaped_labels_preserved) ... ok
+test_tp_duplicates_are_not_summed (test_capacity_audit_r64.CapacityEvidenceTests.test_tp_duplicates_are_not_summed) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.001s
+
+OK

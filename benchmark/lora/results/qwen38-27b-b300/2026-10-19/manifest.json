@@ -1,12 +1,12 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T19:55:24.312643+00:00",
+  "as_of_utc": "2026-10-19T20:16:00.283230+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
   "cache_runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
   "topology_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
-  "scope": "Dedicated eight-B300 host; controls ran concurrently with other GPU experiments. TP2/attention DP2 D/M/base each636 native requests audited; TP4/attention DP4 D/M speed and independent accuracy complete. TP4 pure-base threeway also audited; only attention DP4 pure-base remains live. Auto-sized KV pools differ. Larger topologies, equal-byte KV residency, isolated speed and4P4D remain pending. No prompts, generated text, token IDs or weights included.",
+  "scope": "Dedicated eight-B300 host; controls ran concurrently with other GPU experiments. TP2/attention DP2/TP4/attention DP4 D/M/base each636 native requests audited:7632 raw payloads,36 actual rank traces. R55 active-cache TP1 main/GDN/mixed raw accuracy passed; candidate speed/lifecycle/real-prefix suite still live. Auto-sized KV pools differ. Larger topologies, equal-byte KV residency, isolated speed and4P4D remain pending. No prompts, generated text, token IDs or weights included.",
   "files_sha256": {
     "cache-threeway-comparison-r49.json": "0b4b6bc5082b558673cdb486928183353d28f8e413f6d97ab7df1fb1df287f38",
     "cache-threeway-profile-audit-r49.json": "a149614e2886da7ba32f906bd05bf2780a70bc3dbf459c3ff0ddd9520651088f",
@@ -23,7 +23,22 @@
     "million-first-measured-audit-r60.json": "6e175ce3eb5f16b80f2772e82986d267a58e7c591f1b43e31ee76217b5d0dae5",
     "audit_million_measured_r60.py": "64d57ad0a1e24880cb8050d84a616b218c352d81b761c6c7415b8bf32ae5f655",
     "tp4-threeway-audit-r58.json": "7cfdadf46f3e7420567a2d8fe7b0c7edab7f0227e7e3ebf6cf3fbafe10369f1a",
-    "capacity-allocation-geometry-r63.json": "ce6615b3d27bf2972afc52a16a94117770dac80a6cd2b1755be75c3082990d5f"
+    "capacity-allocation-geometry-r63.json": "ce6615b3d27bf2972afc52a16a94117770dac80a6cd2b1755be75c3082990d5f",
+    "active-cache-raw-accuracy-audit-r65.json": "ad1fe38de7e63ea1217c4d31ac94b2c6fab7371253df3b1a9f00eda423fc4fb1",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+    "test_active_raw_audit_r65.py": "1010e679f02708ff570e65851cf3b7a878414b22a984a9d0481c8f5244c1b10d",
+    "active-raw-audit-negative-controls-r65.log": "e56b794e892f7ac9203085057882a5fcb6c4a9cae17aadf39bd92537b58ab55d",
+    "audit_capacity_residency_r64.py": "5522dad2d7e8ef2540f3083c4f5e67848551ab2142183793250f5c31104c2e2c",
+    "test_capacity_audit_r64.py": "7b8bf05ec4cc37cd7e78e179e4d87db86de347db489a8cf1180530737da98a3c",
+    "watch_capacity_audit_r64.py": "7cdc34aef5f0e460c36aa57057b5badfa6416ffe4b60b0fcae18ca5e24d3867a",
+    "capacity-audit-source-r64.json": "302ac6f04c1143249733a21e399230923d1e7857654b654b9fa650c8ad29e864",
+    "capacity-audit-negative-controls-r64.log": "659664a3eba3386119c34191cbdf3f6a3de15a3dfac6138ca53fa5d81a74e79b",
+    "active-mixed-raw-audit-r66.json": "93c7006e73db7b63978455b9c86864371bc155db9dccf218accce32fa72d8449",
+    "audit_active_mixed_raw_r66.py": "ce99891fdec5e85f3bf9114da7a04ed27cd656d6d218640df808d18b010e30d3",
+    "dpa4-threeway-audit-r58.json": "7511d28beb7a57301f0162d945bdc62367299683664a800e223ac56523182fab",
+    "multigpu-threeway-audits-finished-r58.json": "5f9a994e2f887b3833394bbad413393e6a6179b0433c9abc6c4d6db6f7dee899",
+    "threeway-percentiles-audit-r67.json": "e5fec5b92fe99c9c653b5b02250c9486d4c9b8b358522993d964ab73081f0724",
+    "audit_threeway_percentiles_r67.py": "14594e40ed89eaa6b3905a3b23289cf842478f841e41de31298afcebf56b85f7"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -42,9 +57,30 @@
     "image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
     "cpu_unit_tests": 18,
     "cpu_launch_construction_cases": 5,
-    "gpu_acceptance": "pending; actual GPU2 suite started",
+    "gpu_acceptance": "Partial: TP1 full240/GDN8 independent D/M raw-score audit passed; speed, prefix and lifecycle candidate suite still running.",
     "source_manifest_sha256": "8cfd3efe64d9b1470b37a969836494aea4b9c11dab4fdba5bfefcbae197959f9",
-    "cpu_test_log_sha256": "1d06a74d12a48a8ab4ecc76876610dcfcde3317ab1e392fe8fdb9bb3b46ccdfb"
+    "cpu_test_log_sha256": "1d06a74d12a48a8ab4ecc76876610dcfcde3317ab1e392fe8fdb9bb3b46ccdfb",
+    "raw_accuracy_audit": {
+      "case_pairs": 248,
+      "score_count": 114692,
+      "mean_p99_max_abs_nat": 0,
+      "argmax_agreement": 1,
+      "rank_capture_files_reparsed": 496,
+      "native_scored_responses_per_side": 248,
+      "raw_evidence_files_rehashed": 566,
+      "main_and_gdn_hot_cached_tokens": 0,
+      "cpu_auditor_controls": 8,
+      "scope": "Accuracy only, full prompt/pre-forcing scores reconstructed from original responses and rank captures. No speed or actual prefix-restore claim.",
+      "mixed_routing": {
+        "requests": 48,
+        "score_count": 768,
+        "max_abs_nat": 0,
+        "argmax_agreement": 1,
+        "rank_capture_files_reparsed": 64,
+        "raw_evidence_files_rehashed": 102,
+        "scope": "Mixed versus per-identity isolated references; no independent D/M or full-prefill claim."
+      }
+    }
   },
   "fa4_candidate": {
     "accepted": false,
@@ -53,7 +89,7 @@
     "exit137": "Manual cleanup after scheduler child had exited; not an OOM diagnosis",
     "failure_log_sha256": "86b8c7349fac497b5f305e94e0daf1ad344764544f7c3d5862ecc6483b99fb89"
   },
-  "multigpu_threeway_scope": "TP2,attention DP2 andTP4 each D/M/base636 native requests:5724 actual payloads and24 ranktraces checked across3topologies. TP4 autoKV D7067195 vsM/base7262267; all pools exceed73728requested batchtokens. Attention DP4 purebase still live. Background experiments concurrent, not isolated/equalKV evidence. Place archived auditor alongside private evidence directories for replay; raw prompts/IDs remain private.",
+  "multigpu_threeway_scope": "TP2,attention DP2,TP4 andattention DP4 each D/M/base636 native requests:7632 actual payloads and36 ranktraces checked. All192 speed points and2304 latency statistics independently recomputed; TTFT/TPOT from raw SSE, E2E from client completion records with last-event lower-bound checks. DP4 autoKV D1541229 vsM/base1609421; all pools exceed73728requested batchtokens. Background experiments concurrent and controls at different times, not isolated/equalKV evidence.",
   "long_measured_scope": "First formal cold/hot round only:6of18 measured requests, excluding all warmups. Identical999744-token input and256 natural output tokens, twoD/M native-ID pairs equal, actual hot cached_tokens999424 all3sides. Other two rounds live. No full-prompt logprob or multi-input/task-quality acceptance.",
   "kv_measurement_protocol": {
     "coordinator_source_manifest_sha256": "e3e4720bb4053c283984bb25c798807f6103f089e8a6a44ab5e575c84ffe4508",
@@ -65,6 +101,12 @@
       "dcp8x2": 32767,
       "dpa8": 8191
     },
-    "scope": "CPU buffer-shape proof from actual R28 source, hash-verified inside the running immutable-image container; runtime allocations and same-time residency not yet accepted. Auxiliary allocator metadata and SSM separate. Future rawPrometheus labels/time windows/SSM/memory gauges retained. No live GPU workers interrupted by waiting-coordinator migration."
+    "scope": "CPU buffer-shape proof from actual R28 source, hash-verified inside the running immutable-image container; runtime allocations and same-time residency not yet accepted. Auxiliary allocator metadata and SSM separate. Future rawPrometheus labels/time windows/SSM/memory gauges retained. No live GPU workers interrupted by waiting-coordinator migration.",
+    "independent_raw_auditor": {
+      "source_manifest_sha256": "302ac6f04c1143249733a21e399230923d1e7857654b654b9fa650c8ad29e864",
+      "cpu_negative_controls_passed": 7,
+      "gpu_results": "pending",
+      "scope": "Full raw Prometheus label/rank normalization and common-scrape peaks, actual allocation logs and native completions required; never adds replicated TP constants or asynchronous per-worker peaks."
+    }
   }
 }

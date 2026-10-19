@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "mixed_requests": 48,
+  "isolated_scored_requests": 16,
+  "natural_reference_requests": 16,
+  "raw_rank_capture_files_reparsed": 64,
+  "scores": {
+    "prefill_last": {
+      "count": 48,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 48,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "decode": {
+      "count": 720,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 720,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    }
+  },
+  "raw_evidence_files_rehashed": 102,
+  "summary_sha256": "cdf1a3be5280582de8f0911ffc7e0e5f34977bb8d3b3c6043494481bada618a1",
+  "audit_source_sha256": "ce99891fdec5e85f3bf9114da7a04ed27cd656d6d218640df808d18b010e30d3",
+  "score_auditor_dependency_sha256": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+  "scope": "R55 TP1 active-cache mixed routing versus per-identity isolated references. Four identities (base/real/zero/GDN), three shuffled batches. Original pre-forcing scores only; not independent D/M precision, full-prefill or real prefix-restore acceptance."
+}
