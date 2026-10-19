@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T19:26:50.009605+00:00",
+  "as_of_utc": "2026-10-19T19:37:57.712911+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -16,7 +16,10 @@
     "cache-extra-independent-audit-r56.json": "a2f09ee60efe84b5d5db76dbc4a30fd8bd45569f1c3a57aed089ebc84c233eb5",
     "dpa4-native-kernel-audit-r56.json": "883249c1daa7063268dcf6ebd49c974eefa9b76155a5a21e797e9a68ec5e6056",
     "dpa4-independent-audit-r40.json": "15c73c0ded3ee667da4f970a0f65fb5f705e526a09baddbbd855415585d16fad",
-    "cache-mixed-performance-audit-r54.json": "401c569073ef75ef8226d73f3334b34240d71f3abcdf19d1575eae160d85a271"
+    "cache-mixed-performance-audit-r54.json": "401c569073ef75ef8226d73f3334b34240d71f3abcdf19d1575eae160d85a271",
+    "tp2-threeway-audit-r58.json": "59d104825d9a7204fc99f7f4658225f7bef225daf03c503851490987e022afe8",
+    "dpa2-threeway-audit-r58.json": "972d3a19d795d0098e1217816e45af2a2f789bbd4bf1961a8de9ecc62e329bb9",
+    "audit_multigpu_threeway_r58.py": "bee3e13bc44594f380227dbcf4b4a05669919a555f6e70a3e27c2b44c844fda8"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -45,5 +48,6 @@
     "OOMKilled": false,
     "exit137": "Manual cleanup after scheduler child had exited; not an OOM diagnosis",
     "failure_log_sha256": "86b8c7349fac497b5f305e94e0daf1ad344764544f7c3d5862ecc6483b99fb89"
-  }
+  },
+  "multigpu_threeway_scope": "TP2 and attention DP2 each D/M/base636 native requests, all1908 payloads and6ranktraces pertopology checked. TP2/DPA2 purebase complete; TP4/DPA4 purebase still live. Auto-sized KV differs, background experiments concurrent; not isolated causal speedup. Archived auditor must be placed alongside the private raw-evidence directories to reproduce checks; raw prompts/IDs remain private."
 }

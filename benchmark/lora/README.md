@@ -241,6 +241,26 @@ paged-KV path rejected seqused_q/seqused_k. Scheduler child failure preceded man
 cleanup of the remaining parent; OOMKilled was false. No FA4 accuracy or speed
 result is claimed.
 
+The pure-base controls for TP2 and attention DP2 have now completed. Each topology
+has D/M/base controls of636 natural requests at16 points; all1,908 raw payloads
+and six rank traces per topology were checked. D/M output IDs match at every
+request. For2,048 input/256 output tokens, concurrency32 and cold KV cache:
+
+| Topology | D / M / base tok/s | D / M / base P95 completion, seconds |
+| --- | ---: | ---: |
+| TP2 | 245.19 / 376.59 / 367.65 | 33.45 / 21.87 / 22.27 |
+| Attention DP2 | 232.41 / 336.80 / 340.49 | 35.34 / 24.36 / 24.05 |
+
+The three controls use the same physical GPUs within each topology. Automatic KV
+pools differ: TP2 D2,794,792 vs M/base2,918,376 rows; attention DP2 D1,244,477 vs
+M/base1,321,149. All exceed the73,728 requested tokens of the largest batch.
+Concurrent experiments and different measurement times prevent an isolated
+causal speedup claim. Base and merged weights differ, so their output IDs need
+not match. TP2 M/base profiles each had19,466 CUDA kernels; attention DP2 each
+had14,980, all without FP32 merge or merge-round kernels. Their dynamic profiles
+had35,190 and40,994 events. The snapshot archives the raw-artifact hashes and
+the read-only auditor; TP4/attention DP4 pure-base controls are still running.
+
 ## Compare sequential instances on the same GPUs
 
 When D and M cannot coexist, export and seal M's original scores, stop M, then
