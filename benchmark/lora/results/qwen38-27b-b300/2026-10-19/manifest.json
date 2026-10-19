@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T21:18:00.296012+00:00",
+  "as_of_utc": "2026-10-19T21:23:36.196064+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -137,7 +137,14 @@
     "pd2-diagnostic-failed-r80.json": "3996e6aece037a6fedcf10c0d9f043a55d69861da84c01f5b0329a0cc62f5f74",
     "run_cached_topologies_r90.py": "b5b7aba041ffd19a3c1b39b9b5e142b98384314146fa0c8ba181947e6dd0f2be",
     "check_queued_launch_r90.py": "6791ec57605a864e98fd986bf8ae04b75549d50c7e26339d58ead3454a922a8e",
-    "pd4-queue-migration-r86.json": "fa98b541b5e91032e408ded3ec5afd2dea6d28fe31b34776bd0b6366a2651cdc"
+    "pd4-queue-migration-r86.json": "fa98b541b5e91032e408ded3ec5afd2dea6d28fe31b34776bd0b6366a2651cdc",
+    "watch_actual_placement_r92.py": "da058bfbcc1ec404dbac8077a675c1ae0c4335951ae15c716d4842547304d706",
+    "actual-placement-source-r92.json": "08744f7a5ef6d0b87db348ccf55c5b454eddd70f618141badf27afeecd42e2f0",
+    "actual-placement-process-r92.json": "d738127eb81290e7633566922c07382a43bd2de947b9c83ef4dafaa464936ef4",
+    "actual-placement-parser-check-r92.json": "822be2b58ad50f6863feaa848fa6c5cf72a27d3e1546e6806f070a9514fb3dd4",
+    "audit_mixed_cohort_r93.py": "231fa30f51284cae90b17b142f4a3e000a244e91910ab0ecb1d06616cb891f32",
+    "mixed-cohort-audit-0-nocache-r93.json": "1699390e0e626ddb775425b67ee064b0be1a06afef8ce4176a42d2331743d504",
+    "mixed-profile-audit-0-nocache-r93.json": "e9d3f8b5f7236180c25bed71db628b604a4905afe05288d23e29326fa6d4ec5c"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",

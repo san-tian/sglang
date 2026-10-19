@@ -1,0 +1,6 @@
+{
+  "pid": 961330,
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_actual_placement_r92.py ",
+  "unix_s": 1792444804.269364,
+  "read_only": true
+}

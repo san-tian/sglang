@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "profiles": [
+    {
+      "trace": "1792444937.6729863-TP-0.trace.json.gz",
+      "sha256": "0a0b106fa13e79d8c0b3ff4990c95e0630f487f3b250a25447e5f2724ec855af",
+      "gzip_bytes": 11040270,
+      "CUDA_kernel_events": 52753
+    }
+  ],
+  "scope": "First R84 no-cache mixed profile completed and fully parsed after disabling stack/shape recording. No active-policy, multiGPU or PD performance acceptance.",
+  "source_manifest_sha256": "71da294e88f42cb1ef0ee22b41cc761402245667cddce1411a50cf29bf34a45c"
+}

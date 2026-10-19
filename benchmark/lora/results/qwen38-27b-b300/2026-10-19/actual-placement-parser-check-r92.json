@@ -1,0 +1,5 @@
+{
+  "passed": true,
+  "cases": 7,
+  "scope": "CPU parser controls; not actual multiGPU placement"
+}

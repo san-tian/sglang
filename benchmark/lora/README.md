@@ -565,3 +565,20 @@ childless coordinators and interrupted no GPU worker. Frozen original failures,
 source dependencies and migration/archive proofs are in the dated snapshot.
 Full4P4D, equal-byte actual KV residency, candidate mixed speed and isolated
 performance remain required and pending.
+
+A read-only live placement observer now waits alongside the queued all8 and
+4P4D jobs. It matches Docker cgroup host scheduler PIDs to actual nvidia-smi
+GPU UUIDs, saving the immutable image and full command with each matched
+container. Seven CPU parser controls reject incomplete, wrong-role and
+wrong-image placement. Actual placement evidence remains pending until those
+GPU workers launch; visibility and base-gpu-id flags alone do not pass it.
+
+The first fresh R84 no-cache cohort has completed192 measured requests. An
+independent raw SSE audit recomputed all TTFT/TPOT values, six group throughputs
+and18 latency percentiles: cold/nominal-hot means99.11/110.31 tok/s, P95 client
+end-to-end80.89/72.68s at2048-in/256-out/concurrency32. Both labels had actual
+KV hits0; nominal hot is not evidence of a warm prefix. The following LRU and
+active/reverse-order controls remain pending, so no policy speedup is claimed.
+The first mixed profile also finalized successfully: one fully parsed11,040,270
+byte gzip trace with52,753 actual CUDA kernel events. It is a single-GPU no-cache
+profile, not validation of the pending all8 or4P4D profiles.
