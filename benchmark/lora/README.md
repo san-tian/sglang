@@ -683,34 +683,41 @@ evidence replay then passed, preserving the original failed marker/log/source
 hashes. See active-cache-suite-recheck-r105.json and mixed-six-comparison-r104.json.
 No failed artifact was relabeled and no GPU rerun was needed for this audit fix.
 
-The first TP8 merged reference container is now actually running. The R92
-observer matched eight distinct scheduler host PIDs to all eight GPU UUIDs;
-tp8-first-actual-placement-r105.json preserves that placement snapshot only.
-TP8 numerical/native/kernel/equal-byte-capacity acceptance, DCP2, attentionDP8,
-full4P4D, cached multigpu, isolated speed and million-context cache controls
-remain pending and required for the overall goal.
+Actual uncached TP8 baseline has now passed the complete original R102 gates:
+248 main/GDN independent D/M pairs /114,692scores,48mixed requests /768scores,
+1,908natural SSE payloads across D/M/base,576recomputed latency statistics,
+24rank traces,13equal-byte KV requests and five actual8GPU container placements.
+The precision mean/P99/maximum errors are0 with100%argmax agreement; all636
+natural D/M sequences match. These are baseline measurements, not cached
+multi-GPU optimization acceptance.
 
+At concurrency32, rates below are mean batch output tokens/s over three rounds;
+E2E P95 is recomputed from the96 original request latencies per point.
 
-The actual TP8 independent-merged baseline has completed636natural requests,
-48cold/nominal-hot groups and16speed points. R107 reuses the unchanged R100
-per-side audit to reparse every original SSE, recompute192latency statistics,
-and hash/check all8rank traces and actual scheduler/GPU placement. With2048
-input/256output tokens,c32 throughput is356.0149/356.1626tok/s cold/nominal-hot;
-pooled original E2E P95 is23.0106/22.9822s. Actual cached prompt tokens are0
-in both modes. Every rank's10-step sample has9729kernel events, including1290
-NCCL AllReduce and10all-gather events; these counts do not attribute E2E time.
-This baseline alone cannot accept dynamic/base speed ratios or capacity. The
-subsequent actual TP8 precision stage is recorded below; remaining queue is intact.
+| Input/output | Cache label | D tok/s | M tok/s | Base tok/s | D/M | D E2E P95(s) | M E2E P95(s) | Base E2E P95(s) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 128/128 | cold | 274.378 | 411.523 | 412.020 | 0.6667 | 14.927 | 9.948 | 9.956 |
+| 128/128 | hot | 274.422 | 411.635 | 412.683 | 0.6667 | 14.938 | 9.937 | 9.928 |
+| 2048/256 | cold | 241.559 | 356.015 | 351.545 | 0.6785 | 33.910 | 23.011 | 23.348 |
+| 2048/256 | hot | 241.288 | 356.163 | 351.859 | 0.6775 | 33.934 | 22.982 | 23.358 |
 
+Cold/nominal-hot labels do not prove actual prefix hits. Original natural
+responses retain the actual cached-token evidence. Separate-time controls and
+automatic KV allocations prevent treating these ratios as isolated causal
+speedups or equal-budget capacity comparisons.
 
-TP8 precision has now passed on actual8GPUs:240main+8GDN independent D/M
-pairs/114,692original scores have zero mean/P99/maximum error and100%argmax
-agreement. The unchanged R99 auditor reparsed3,968per-rank captures, full-prompt
-responses, both reference seals and repeated-prefix noise. The unchanged R101
-mixed auditor also passed48requests/768scores/512captures with zero error across
-base/real/zero/GDN routing. Actual R92 records place all three precision
-containers'8distinct schedulerPIDs on8physical GPUUUIDs each. Stage reports use
-separate output names, preserving the R102 observer's later full-topology audit.
-These are precision/mixed-routing results only; all scored cold/hot requests had
-zero KV hits. Dynamic/base natural speed, equal-byte real KV residency, DCP2,
-attentionDP8,4P4D and remaining isolated/long-context controls are still pending.
+d: per-rank kernel events=[17591]; weight-round events=[2560].
+m: per-rank kernel events=[9729]; weight-round events=[0].
+base: per-rank kernel events=[9729]; weight-round events=[0].
+Kernel names/counts and summed GPU durations do not attribute end-to-end time.
+
+At512MiB full-attention KV tensors per rank including the dummy row, the
+TP8 capacity run completed13natural requests with6000input/512output tokens.
+Concurrency1: observed same-scrape peakKV=6509.0, running-at-that-peak=1.0, maximum-running=1.0, sustained-full-batch=True.
+Concurrency4: observed same-scrape peakKV=26036.0, running-at-that-peak=4.0, maximum-running=4.0, sustained-full-batch=True.
+Concurrency8: observed same-scrape peakKV=32545.0, running-at-that-peak=5.0, maximum-running=5.0, sustained-full-batch=False.
+SSM/auxiliary state is separate; these are observed lower bounds, not maximum
+whole-GPU capacity. See the R64 report for timestamped scrape hashes, per-worker
+normalization and all8rank allocation logs. DCP2,attentionDP8,full4P4D,
+cached multiGPU,isolated speed and million-context cache/quality controls remain
+required and pending. The overall goal remains incomplete.

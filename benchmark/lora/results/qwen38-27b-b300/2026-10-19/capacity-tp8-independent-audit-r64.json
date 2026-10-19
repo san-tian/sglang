@@ -1,0 +1,195 @@
+{
+  "passed": true,
+  "topology": "tp8",
+  "native_requests_audited": 13,
+  "full_attention_KV_bytes_per_rank": 536870912,
+  "actual_container_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "actual_physical_devices": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7"
+  ],
+  "all_eight_rank_allocation_logs": {
+    "5": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    },
+    "6": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    },
+    "0": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    },
+    "2": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    },
+    "3": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    },
+    "1": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    },
+    "7": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    },
+    "4": {
+      "physical_rows": 32767,
+      "K_GiB_rounded": 0.25,
+      "V_GiB_rounded": 0.25
+    }
+  },
+  "memory_gauge_snapshots_verified": 931,
+  "physical_rows_per_rank": 32767,
+  "logical_capacity_per_attention_worker": 32767,
+  "attention_workers": 1,
+  "cases": [
+    {
+      "http_concurrency": 1,
+      "completed_native_requests": 1,
+      "eligible_same_scrape_samples": 272,
+      "incomplete_samples": 0,
+      "peak_observed_logical_KV_tokens": 6509.0,
+      "running_requests_at_that_same_peak": 1.0,
+      "peak_same_scrape_proof": {
+        "monotonic": 61195.948941962,
+        "normalized": {
+          "leaders": [
+            0
+          ],
+          "per_worker": {
+            "kv_used_tokens": {
+              "0": 6509.0
+            },
+            "num_running_reqs": {
+              "0": 1.0
+            },
+            "decode_sum_seq_lens": {
+              "0": 6508.0
+            }
+          },
+          "totals": {
+            "kv_used_tokens": 6509.0,
+            "num_running_reqs": 1.0,
+            "decode_sum_seq_lens": 6508.0
+          }
+        },
+        "raw_sha256": "e1e4ad712e8c1dd500ecab3a4ea28d8db0449cfafba87ee9779810458bad6f54"
+      },
+      "max_running_requests_one_scrape": 1.0,
+      "full_requested_unique_prompt_batch_observed": true,
+      "full_requested_batch_observed_in_multiple_scrapes": true
+    },
+    {
+      "http_concurrency": 4,
+      "completed_native_requests": 4,
+      "eligible_same_scrape_samples": 228,
+      "incomplete_samples": 0,
+      "peak_observed_logical_KV_tokens": 26036.0,
+      "running_requests_at_that_same_peak": 4.0,
+      "peak_same_scrape_proof": {
+        "monotonic": 61261.009588171,
+        "normalized": {
+          "leaders": [
+            0
+          ],
+          "per_worker": {
+            "kv_used_tokens": {
+              "0": 26036.0
+            },
+            "num_running_reqs": {
+              "0": 4.0
+            },
+            "decode_sum_seq_lens": {
+              "0": 26032.0
+            }
+          },
+          "totals": {
+            "kv_used_tokens": 26036.0,
+            "num_running_reqs": 4.0,
+            "decode_sum_seq_lens": 26032.0
+          }
+        },
+        "raw_sha256": "bc47fb12f93638e86982e5c5122653c2989279986e729b0115189d6846a2ed53"
+      },
+      "max_running_requests_one_scrape": 4.0,
+      "full_requested_unique_prompt_batch_observed": true,
+      "full_requested_batch_observed_in_multiple_scrapes": true
+    },
+    {
+      "http_concurrency": 8,
+      "completed_native_requests": 8,
+      "eligible_same_scrape_samples": 430,
+      "incomplete_samples": 0,
+      "peak_observed_logical_KV_tokens": 32545.0,
+      "running_requests_at_that_same_peak": 5.0,
+      "peak_same_scrape_proof": {
+        "monotonic": 61325.167693844,
+        "normalized": {
+          "leaders": [
+            0
+          ],
+          "per_worker": {
+            "kv_used_tokens": {
+              "0": 32545.0
+            },
+            "num_running_reqs": {
+              "0": 5.0
+            },
+            "decode_sum_seq_lens": {
+              "0": 32540.0
+            }
+          },
+          "totals": {
+            "kv_used_tokens": 32545.0,
+            "num_running_reqs": 5.0,
+            "decode_sum_seq_lens": 32540.0
+          }
+        },
+        "raw_sha256": "f72fad67b89fc7b27bb5de62a3357b37e394311098c3e1c139376b2b8d8445f9"
+      },
+      "max_running_requests_one_scrape": 5.0,
+      "full_requested_unique_prompt_batch_observed": false,
+      "full_requested_batch_observed_in_multiple_scrapes": false
+    }
+  ],
+  "raw_payload_hashes": {
+    "1": {
+      "payload_sha256": "300c4a9f2c4932ef840ed132859b4598caf7ccc3817e4d7acb57ca69586b267f",
+      "responses_sha256": "3468baa1d4fd76f2a9dfb1ae0a20400f48d35528eddcc71601d4df26a1fb3d23"
+    },
+    "4": {
+      "payload_sha256": "1f12da490db11c5df8a39d0d58b51203c2581099df09d10221b5c287ad4c1b93",
+      "responses_sha256": "6a296aeeff9bfa6cc8a894ef929dcb0eea2f58b88bb37a6302647e3da6c44c90"
+    },
+    "8": {
+      "payload_sha256": "7b17c0bede035329c16c35a98aae74678e0773c31541330bfa3a72501a467a68",
+      "responses_sha256": "8b17190d9d178b13384b13e7f2e73419c43d9ef2e3b75971f4838d87e35303b3"
+    }
+  },
+  "files_sha256": {
+    "summary.json": "459bb1a589e9d9d12a05d50cda38bce7edad0dfaea81fa569e268c7e29b79e44",
+    "server-info.json": "5cb93f32dbb85a9f866e2ca8e77eb82b03e1dd674a490a3b83187cb4c7b26323",
+    "raw-metrics.jsonl.gz": "a293c212139939a484ccf16df900ed0bfe6536c49fe43f67a2fc0c35e8c865c3",
+    "metrics.jsonl": "e755e1a30526b54ff14bd4c2fe817be089f16f1597ded7a3f5798ee5af6a0f21"
+  },
+  "allocation_log_sha256": "b7e80e02dfd112b42afee1a494f2a725256548213e3e368a70cca17f8473f426",
+  "scope": "Observed lower bounds at a fixed full-attention KV tensor budget, not maximum whole-GPU capacity or long-context quality. R28 leader-rank series only; TP duplicate constants are never summed. Each reported peak is from one labeled scrape wholly inside the request window. Prometheus gauges update asynchronously; multiple full-batch observations are separately reported. Native output completion is checked; independent D/M accuracy is separate. SSM and auxiliary metadata are separate from the 512MiB full-attention tensor budget."
+}
