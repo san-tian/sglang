@@ -689,3 +689,15 @@ tp8-first-actual-placement-r105.json preserves that placement snapshot only.
 TP8 numerical/native/kernel/equal-byte-capacity acceptance, DCP2, attentionDP8,
 full4P4D, cached multigpu, isolated speed and million-context cache controls
 remain pending and required for the overall goal.
+
+
+The actual TP8 independent-merged baseline has completed636natural requests,
+48cold/nominal-hot groups and16speed points. R107 reuses the unchanged R100
+per-side audit to reparse every original SSE, recompute192latency statistics,
+and hash/check all8rank traces and actual scheduler/GPU placement. With2048
+input/256output tokens,c32 throughput is356.0149/356.1626tok/s cold/nominal-hot;
+pooled original E2E P95 is23.0106/22.9822s. Actual cached prompt tokens are0
+in both modes. Every rank's10-step sample has9729kernel events, including1290
+NCCL AllReduce and10all-gather events; these counts do not attribute E2E time.
+This is only the completed M baseline. Dynamic/base controls, full TP8 precision,
+capacity, DCP/attentionDP8 and4P4D remain pending, with the original queue intact.
