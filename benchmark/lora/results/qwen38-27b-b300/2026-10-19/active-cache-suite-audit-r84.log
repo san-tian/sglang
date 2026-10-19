@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/audit_active_cache_suite_r84.py", line 55, in <module>
+    assert config(R/name/'server-info.json')['enable_lora']==(side=='d')
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
