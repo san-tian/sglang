@@ -8,7 +8,7 @@ def lines(p):return [json.loads(s) for s in p.read_text().splitlines()]
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def cfg(p):
  x=read(p);return x.get('server_args',x)
-expected_gpus='"device=2"' 
+expected_gpus='"device=2"'
 configurations={};rows_by_side={};proofs={};traces_by_side={};summaries={};launches={}
 for side in ['d','m','base']:
  directory=R/f'perf-{top}-{side}-r30'
