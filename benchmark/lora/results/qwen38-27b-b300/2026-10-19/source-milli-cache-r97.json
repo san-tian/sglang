@@ -1,0 +1,55 @@
+{
+  "runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
+  "runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
+  "corpus_sha256": "0ed759c5251e6664e9fc144249a96ad865aa23d8d88257bbf195cd1b2780c465",
+  "source_files": {
+    "run_million_cache_r97.py": "84d3f900c055b96aa032da6bf43d1d19986250382f966ff6e3c0089f1cce0d22",
+    "perf_million_cache_r97.py": "1044c07600d12044d77a2c6125920c131287197bd64f232ce09d40975f92547b",
+    "audit_million_cache_r97.py": "97c6bc1b3642e30822461ed490ef931f658f93e172a084599a674fb8cfb2c440",
+    "check_million_cache_r97.py": "4f15bdba7e173f4a7f55872627ba51c625180e1dc83fb0b0a48429ecb72b1238",
+    "host_common_r90.py": "1b5415cfdbf833cae974542c1fe18d8aaa4292f3bd474a499dac3f6ce4cb4328",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b"
+  },
+  "rope_override": {
+    "text_config": {
+      "rope_parameters": {
+        "mrope_interleaved": true,
+        "mrope_section": [
+          11,
+          11,
+          10
+        ],
+        "rope_type": "yarn",
+        "rope_theta": 10000000,
+        "partial_rotary_factor": 0.25,
+        "factor": 4.0,
+        "original_max_position_embeddings": 262144
+      }
+    }
+  },
+  "CPU_checks": {
+    "passed": true,
+    "CPU_cases": 16,
+    "cases": {
+      "valid": true,
+      "forced_processor": true,
+      "wrong_input_length": true,
+      "wrong_sampling": true,
+      "rewrite_SSE_prefix": true,
+      "truncated_output": true,
+      "nonfinite_time": true,
+      "backward_time": true,
+      "false_HTTP_elapsed": true,
+      "early_finish": true,
+      "launch-0-nocache": true,
+      "launch-1-cached": true,
+      "launch-2-m": true,
+      "launch-3-base": true,
+      "launch-4-cached": true,
+      "launch-5-nocache": true
+    },
+    "scope": "Parser/launch preparation only; no GPU execution, million-context performance or precision acceptance."
+  },
+  "scope": "Pending dedicated GPU2/TP1 R34 six-arm no-cache/cached/M/base/cached/no-cache, one fixed999744-token input+256 natural output,3cold/hot repeats+2cold-KV warmups each (36measured+12warmups). YaRN4/original262144/context1000000, identical maxKV1001024/SSM16/mem.8/chunk8192/requestlimit1. Cached projection budget36GiB, same immutable BF16 model/runtime, all other7GPUs sampled idle and clocks/power/temperature retained. No profiler or forced scoring during timing; originalrawSSE rehashed/recomputed and D/M outputs checked. This tests projection-warmed speed, not long-input full-prefill precision or task quality; short isolated/multiGPU/4P4D acceptance remain separate."
+}

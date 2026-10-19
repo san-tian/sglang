@@ -595,3 +595,17 @@ precision and ten native parser checks passed. These validate the auditors and
 do not provide D/M or full4P4D GPU acceptance. The future full audit still requires
 240main+8GDN pairs, D/M/base636natural requests each, and24actual rank traces;
 placement, KV/SSM integrity and transport evidence remain separate gates.
+
+The R97 long-context cache follow-up is sealed and queued after the complete
+isolated R91 lease. It retains the original fixed999,744-token input and256
+natural outputs, YaRN4/original262144, common1,001,024 KV rows/16SSM slots,
+mem.8/chunk8192/c1 and the immutable R34 runtime. The same GPU2 runs uncached,
+cached, merged, base, cached, uncached:36 measured requests plus12 cold-KV
+warmups, with other seven GPUs sampled idle and clocks/power/temperature saved.
+Projection caching is36GiB; projection warmup is distinct from cold KV requests.
+Raw SSE, natural D/M output identity and all summary statistics are rechecked.
+Six launch constructions and ten parser controls passed; replay of the actual
+previous18million-context records also passed. These are preparation only;
+new cached long-context GPU measurements and full-prefill/task-quality acceptance
+remain pending. Capacity clamps fail the fixed protocol instead of reducing
+context length or silently changing the comparison.

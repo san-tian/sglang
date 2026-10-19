@@ -1,0 +1,6 @@
+{
+  "pid": 996223,
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_million_cache_r97.py ",
+  "source_manifest_sha256": "538208dc1c17f4cf6fe9f1574a573c48d31197242c72c590a5b9fb77ff1aa001",
+  "scope": "Queued behind existing isolated R91; no GPU worker replaced/interrupted."
+}

@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "actual_original_requests_replayed": 18,
+  "original_raw_files_sha256": {
+    "in999744-out256-c1-r0-cold-i0-base.json": "7bf8b2d47c2c77e4eb165ba7d5db6f6c741b81595cffa062c135417199636775",
+    "in999744-out256-c1-r0-cold-i0-M.json": "e16eb87e496054b3d76eb9fea153788ecc7fab3429c14ec68b20a2f0fb677286",
+    "in999744-out256-c1-r0-hot-i0-base.json": "3bed43691a60f58396314325460d3d9e8d5c1a878db2a6efeae5ce6a17f66d1c",
+    "in999744-out256-c1-r0-hot-i0-M.json": "590b33721be670d9a1ffe1a65b12fcf0329c64e20021efc76c3eeef1ada69ca6",
+    "in999744-out256-c1-r0-cold-i0-new.json": "e80e063df2d47219952bec3a3fd0351e04b3088bb96f2d74bdd273f2079a3f55",
+    "in999744-out256-c1-r0-hot-i0-new.json": "69f8501ca9606945a8a05ce519be38107a493f6a0a576a50ace680796cc4c913",
+    "in999744-out256-c1-r1-cold-i0-base.json": "2fa08c50a70861173a2dc32b2dd5e9c512c0f602d30818768301f7833a4e805a",
+    "in999744-out256-c1-r1-cold-i0-M.json": "d97f39b8af658bfd536c5c2db585c5500f5ec31360c99cd856599b7362f69a12",
+    "in999744-out256-c1-r1-hot-i0-base.json": "c38ee5093b040175263abeb46b0626fb3037e3cd9b2eb3af88edac47bd9fa98c",
+    "in999744-out256-c1-r1-hot-i0-M.json": "dcf97761117d9a31bc394d808c3e81fc60a28ac91b1cc89b9d9a04964ac2a388",
+    "in999744-out256-c1-r1-cold-i0-new.json": "19b1880071d2f4b4aee9b2777d1835f7543c446d9c899563f53767782139fb55",
+    "in999744-out256-c1-r1-hot-i0-new.json": "f4bd66ab1b1e7c43535cba4a1339d0ed37d1c605760ea32722db9fff5344f9af",
+    "in999744-out256-c1-r2-cold-i0-base.json": "28e0d4284fecb2bf494b6e3e862349df9268dcd15eded80b9e47fd5ad0234e44",
+    "in999744-out256-c1-r2-cold-i0-M.json": "f50bed46978698c4be9e17939bf5f2650883f453a3e0a3b3515b137e7f569c27",
+    "in999744-out256-c1-r2-hot-i0-base.json": "7ca6aef831de37926b75f75c7834c78abfc57ae35b65595abea6aff24ae704e4",
+    "in999744-out256-c1-r2-hot-i0-M.json": "6d6faf9196752beb8a7ce44d9f8da59d08a1d371b4ecb7e33c83e0841e1c9b9c",
+    "in999744-out256-c1-r2-cold-i0-new.json": "8d109a730378ba7aca67284a10bf58ee652f38c888c5a54bfad38a7fe04ed00a",
+    "in999744-out256-c1-r2-hot-i0-new.json": "57f4f25436d8ba786a255acd27bdbbdde4897a75285d3f40dc4d166873963d39"
+  },
+  "scope": "Existing R26 three-control million-context SSE parsing only. No new R34 cached/isolated performance or precision acceptance.",
+  "parser_sha256": "1044c07600d12044d77a2c6125920c131287197bd64f232ce09d40975f92547b"
+}
