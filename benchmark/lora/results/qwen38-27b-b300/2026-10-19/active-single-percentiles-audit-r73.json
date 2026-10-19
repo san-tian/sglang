@@ -1,0 +1,113 @@
+{
+  "passed": true,
+  "native_requests_reparsed": 1908,
+  "speed_points_recomputed": 48,
+  "latency_statistics_recomputed": 576,
+  "c32_cold_2048_256": [
+    {
+      "topology": "active-cache-r56",
+      "control": "d",
+      "input_tokens": 2048,
+      "concurrency": 32,
+      "cache": "cold",
+      "requests": 96,
+      "throughput_tokens_s_mean": 259.6377699151628,
+      "e2e_s": {
+        "mean": 18.96399027490641,
+        "p50": 17.181924409000203,
+        "p95": 31.549313697003527,
+        "p99": 31.582997902994975
+      },
+      "ttft_s": {
+        "mean": 3.6077943733232587,
+        "p50": 1.7851854449982056,
+        "p95": 17.547428268997464,
+        "p99": 17.629017071994895
+      },
+      "tpot_s": {
+        "mean": 0.06015872249906019,
+        "p50": 0.05990917110979995,
+        "p95": 0.06604898752548787,
+        "p99": 0.066461759415688
+      }
+    },
+    {
+      "topology": "active-cache-r56",
+      "control": "m",
+      "input_tokens": 2048,
+      "concurrency": 32,
+      "cache": "cold",
+      "requests": 96,
+      "throughput_tokens_s_mean": 276.6690254269719,
+      "e2e_s": {
+        "mean": 17.844465546114254,
+        "p50": 16.17145027800143,
+        "p95": 29.601808455998253,
+        "p99": 29.607522551996226
+      },
+      "ttft_s": {
+        "mean": 3.467154283801771,
+        "p50": 1.769963942002505,
+        "p95": 16.531808813997486,
+        "p99": 16.5972074589954
+      },
+      "tpot_s": {
+        "mean": 0.05631226828472166,
+        "p50": 0.05619240539215788,
+        "p95": 0.0620551576666413,
+        "p99": 0.06247202551763336
+      }
+    },
+    {
+      "topology": "active-cache-r56",
+      "control": "base",
+      "input_tokens": 2048,
+      "concurrency": 32,
+      "cache": "cold",
+      "requests": 96,
+      "throughput_tokens_s_mean": 270.87706242420165,
+      "e2e_s": {
+        "mean": 18.220619954145906,
+        "p50": 16.68886845400266,
+        "p95": 30.597775433001516,
+        "p99": 30.63658503499755
+      },
+      "ttft_s": {
+        "mean": 3.5124647203748887,
+        "p50": 1.7762190349967568,
+        "p95": 16.969232490999275,
+        "p99": 17.133885310999176
+      },
+      "tpot_s": {
+        "mean": 0.057608303587254585,
+        "p50": 0.05737402056076783,
+        "p95": 0.0637743254510033,
+        "p99": 0.06455949561567133
+      }
+    }
+  ],
+  "input_proofs": {
+    "active-cache-r56": {
+      "threeway_audit_sha256": "0437dadd56b4709a0741e9180b439b34e4e5dee644951e3cb76f00ef688986b5",
+      "controls": {
+        "d": {
+          "requests_sha256": "972c577934c1a605215ed2b5f67ff508369f2489da4f426f2553d0b8127cf81e",
+          "groups_sha256": "dcb56ec23f3d4a76db536189858e6cafea78740fcd1c0741f74af3c785db0ec0",
+          "summary_sha256": "7a41d156d943c4a8d86186ababe72f9436eeb36517fe64250b63e7d82151574a"
+        },
+        "m": {
+          "requests_sha256": "67908524d53ee5b101b3562c7b0e77728c4353fc0943fd56e203952e1e2d4ba7",
+          "groups_sha256": "62933c4fe5c1fb93cc8e1c1370a656a4719c6f90b8e29b655303db966c361826",
+          "summary_sha256": "993a678f54d56e8a90850ed5ddc345186dc6b5e0a71ddf3924539ad8a799eba3"
+        },
+        "base": {
+          "requests_sha256": "2238ae563c4f29cecb7c261a33dcbb5676859cda6046ab75a1a7baea86ad1288",
+          "groups_sha256": "a47c829f3da56770fa6b5adf33fa3bc05a30779ca12b6f6cb958e7f7fb90262f",
+          "summary_sha256": "70c9d76e0771d59e7d3393b897dd1b642813eb3ded5c6d8cfc1e5f7924119663"
+        }
+      }
+    }
+  },
+  "audit_source_sha256": "c029858c93fc13d6520a881885e0795c0d5625b455acc9e4b93516c7af629e81",
+  "scope": "Recomputed R55 active-cache TP1 D/M/base points from 1908 raw SSE payloads and client timing records. TTFT/TPOT independently reconstructed from SSE event timestamps; E2E uses retained client HTTP completion elapsed, checked against last-SSE lower bound. Percentiles use nearest rank and throughput is the mean of three completed batch rates. Concurrent background and separate-time controls remain; all use65536KV/256SSM and mem.52. Largest c32 batch exceeds that KV pool. This is not isolated speedup or capacity evidence."
+}

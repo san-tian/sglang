@@ -1,0 +1,271 @@
+{
+  "passed": true,
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "physical_gpus": [
+    0,
+    5
+  ],
+  "controls": {
+    "74": {
+      "passed": true,
+      "shared_host_pid_namespace": false,
+      "both_devices_visible_to_both_roles": false,
+      "direct_PtoP_observed": false,
+      "actual_containers": {
+        "source": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "0"
+          ],
+          "pid_mode": "",
+          "exit_code": 0,
+          "OOMKilled": false
+        },
+        "destination": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "5"
+          ],
+          "pid_mode": "",
+          "exit_code": 0,
+          "OOMKilled": false
+        }
+      },
+      "traces": {
+        "source": {
+          "gpu_memcpy_counts": {
+            "Memcpy HtoD (Pageable -> Device)": 3,
+            "Memcpy DtoH (Device -> Pageable)": 1157
+          },
+          "sha256": "cebd79d447a5a1ec38da35b58f90009507d433aa2fd3b815d6af20d12dd924f4"
+        },
+        "destination": {
+          "gpu_memcpy_counts": {
+            "Memcpy HtoD (Pageable -> Device)": 1157,
+            "Memcpy DtoH (Device -> Pageable)": 3
+          },
+          "sha256": "8cb540e0d72e077b733973eddc2d92e70b021a105fcbc8a707de0f1fd3238a40"
+        }
+      },
+      "logs": {
+        "source": {
+          "sha256": "c41755d753ea778d4b620bfd09a600206e3f4f6a95fdf9d62a2c0214c9e5dce5",
+          "selected_device_cuda_ipc_logged": false
+        },
+        "destination": {
+          "sha256": "be90db79f69e9bcbad77372bb663f545369c818e6cdf5a0f1cbd7a3a68894ad3",
+          "selected_device_cuda_ipc_logged": false
+        }
+      },
+      "target_hashes": {
+        "4096": "c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193",
+        "1048576": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+        "8388608": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f"
+      },
+      "raw_files_sha256": {
+        "source-summary.json": "280a5fb7292bbc84271e8c3959fe20a32dd6d555971a143f9fc1de82121477b2",
+        "source-trace.json": "cebd79d447a5a1ec38da35b58f90009507d433aa2fd3b815d6af20d12dd924f4",
+        "destination-summary.json": "0e243325e68434d2981afa2a41d54efe8525a6d598b5ab935cfe9a46a55c63d1",
+        "destination-trace.json": "8cb540e0d72e077b733973eddc2d92e70b021a105fcbc8a707de0f1fd3238a40"
+      },
+      "launch_proof_sha256": "4796b52aa44124bd86d03c523d3486756b4c284fa3b01b4ccb6b3813c9276411"
+    },
+    "75": {
+      "passed": true,
+      "shared_host_pid_namespace": true,
+      "both_devices_visible_to_both_roles": false,
+      "direct_PtoP_observed": false,
+      "actual_containers": {
+        "source": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "0"
+          ],
+          "pid_mode": "host",
+          "exit_code": 0,
+          "OOMKilled": false
+        },
+        "destination": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "5"
+          ],
+          "pid_mode": "host",
+          "exit_code": 0,
+          "OOMKilled": false
+        }
+      },
+      "traces": {
+        "source": {
+          "gpu_memcpy_counts": {
+            "Memcpy DtoH (Device -> Pageable)": 1157,
+            "Memcpy HtoD (Pageable -> Device)": 3
+          },
+          "sha256": "0473dd2876989e506bc4f2ff0cc68542fa52dd9657b528c40fd7d66b9c4dd7e5"
+        },
+        "destination": {
+          "gpu_memcpy_counts": {
+            "Memcpy HtoD (Pageable -> Device)": 1157,
+            "Memcpy DtoH (Device -> Pageable)": 3
+          },
+          "sha256": "e2f0c46754e18ba5c721a7a1fbabb2e551f58c85587b655c21bf7f98001550c2"
+        }
+      },
+      "logs": {
+        "source": {
+          "sha256": "ef6f7d399f0f56d39f9fda4ebbf8b8dd9125ac6cbb13633169faee1d14c129d8",
+          "selected_device_cuda_ipc_logged": true
+        },
+        "destination": {
+          "sha256": "260b41582c8eb291924ca37471f10a5d939ff7f6b67587b183a892a7d23a7049",
+          "selected_device_cuda_ipc_logged": true
+        }
+      },
+      "target_hashes": {
+        "4096": "c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193",
+        "1048576": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+        "8388608": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f"
+      },
+      "raw_files_sha256": {
+        "source-summary.json": "6b3d2bb00df0785a02d8a36a6af896b5eceaa04bc1a9e9bd79b45fc70dea4eb1",
+        "source-trace.json": "0473dd2876989e506bc4f2ff0cc68542fa52dd9657b528c40fd7d66b9c4dd7e5",
+        "destination-summary.json": "09298cf72812f96f7ade255cadbd02b9f50c1a9b11fb4b1e0749c03dd80f02f4",
+        "destination-trace.json": "e2f0c46754e18ba5c721a7a1fbabb2e551f58c85587b655c21bf7f98001550c2"
+      },
+      "launch_proof_sha256": "668dd6cbfbad6f87b5df8d18900c42415c9af034a4f978b774da01f601ea523c"
+    },
+    "76": {
+      "passed": true,
+      "shared_host_pid_namespace": true,
+      "both_devices_visible_to_both_roles": true,
+      "direct_PtoP_observed": true,
+      "actual_containers": {
+        "source": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "0",
+            "5"
+          ],
+          "pid_mode": "host",
+          "exit_code": 0,
+          "OOMKilled": false
+        },
+        "destination": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "0",
+            "5"
+          ],
+          "pid_mode": "host",
+          "exit_code": 0,
+          "OOMKilled": false
+        }
+      },
+      "traces": {
+        "source": {
+          "gpu_memcpy_counts": {
+            "Memcpy HtoD (Pageable -> Device)": 3,
+            "Memcpy PtoP (Device -> Device)": 3
+          },
+          "sha256": "2815394bd2d9a2defb30fd17baf05e975c5c748d3be11df4dad5a4e5f1a339ed"
+        },
+        "destination": {
+          "gpu_memcpy_counts": {
+            "Memcpy DtoH (Device -> Pageable)": 3
+          },
+          "sha256": "236c76b79f720e0525f0d091650fc4af05d288e448d83652e3d9a0ff1fd336e8"
+        }
+      },
+      "logs": {
+        "source": {
+          "sha256": "8829ecd7c1121231621e045d229c1adfbf75ae03ce3f231a827da67d49b34bdc",
+          "selected_device_cuda_ipc_logged": true
+        },
+        "destination": {
+          "sha256": "f009b38d70e38a349a8033b14fda536e252f633fbd416402c7162eb857a7a3c9",
+          "selected_device_cuda_ipc_logged": true
+        }
+      },
+      "target_hashes": {
+        "4096": "c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193",
+        "1048576": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+        "8388608": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f"
+      },
+      "raw_files_sha256": {
+        "source-summary.json": "1f33ab8f8aaa53609a65e5c0952691da9cbbf971395d81cf738592978f51ffff",
+        "source-trace.json": "2815394bd2d9a2defb30fd17baf05e975c5c748d3be11df4dad5a4e5f1a339ed",
+        "destination-summary.json": "06d89ed1db5060a981bbfb1dd6a6a0022f96273341cb18e02886ddc2bd23608a",
+        "destination-trace.json": "236c76b79f720e0525f0d091650fc4af05d288e448d83652e3d9a0ff1fd336e8"
+      },
+      "launch_proof_sha256": "250a28cce4d7ad0bf60290c58e1e4029f63b31e84b465fa119a5d041a4685d01"
+    },
+    "77": {
+      "passed": true,
+      "shared_host_pid_namespace": false,
+      "both_devices_visible_to_both_roles": true,
+      "direct_PtoP_observed": false,
+      "actual_containers": {
+        "source": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "0",
+            "5"
+          ],
+          "pid_mode": "",
+          "exit_code": 0,
+          "OOMKilled": false
+        },
+        "destination": {
+          "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+          "devices": [
+            "0",
+            "5"
+          ],
+          "pid_mode": "",
+          "exit_code": 0,
+          "OOMKilled": false
+        }
+      },
+      "traces": {
+        "source": {
+          "gpu_memcpy_counts": {
+            "Memcpy HtoD (Pageable -> Device)": 3,
+            "Memcpy DtoH (Device -> Pageable)": 1157
+          },
+          "sha256": "a569c6e0cc05ff58a4377d82743267cee91f409da1c548fca0cd04086c4eddce"
+        },
+        "destination": {
+          "gpu_memcpy_counts": {
+            "Memcpy HtoD (Pageable -> Device)": 1157,
+            "Memcpy DtoH (Device -> Pageable)": 3
+          },
+          "sha256": "7d206347df3572ecb2deb7165f99088a43929f01ac22c335a409263946454b52"
+        }
+      },
+      "logs": {
+        "source": {
+          "sha256": "a6275bee36a3245608222c6f9ea6efa803670d767c5b5e2c80c138f968c7c573",
+          "selected_device_cuda_ipc_logged": false
+        },
+        "destination": {
+          "sha256": "ac05dbbe27e519f25b6c11b7b003eba14d54dc1d357d2f571d4f2fcf500bb476",
+          "selected_device_cuda_ipc_logged": false
+        }
+      },
+      "target_hashes": {
+        "4096": "c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193",
+        "1048576": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+        "8388608": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f"
+      },
+      "raw_files_sha256": {
+        "source-summary.json": "27103686b5b7fb679c1d1c5045050fcfedd55410775feeb8c399fcf0f9ccf2a1",
+        "source-trace.json": "a569c6e0cc05ff58a4377d82743267cee91f409da1c548fca0cd04086c4eddce",
+        "destination-summary.json": "66777e3ad64e6712a80dc11f5f3242ab760362df319552441612057061f72b35",
+        "destination-trace.json": "7d206347df3572ecb2deb7165f99088a43929f01ac22c335a409263946454b52"
+      },
+      "launch_proof_sha256": "1bb1363ec5b98a8f0b5c3a3d972ca462d60c1b7a85d4c018f09b6916e4f289a6"
+    }
+  },
+  "audit_source_sha256": "efc970954ee54b79a6a822473f5ddf52b5600dc02b090c7475a6391147a5455e",
+  "scope": "Four actual separate-process NIXL/UCX controls on GPU0/5 with4KiB/1MiB/8MiB exact-byte writes. Only shared host PID plus both GPU devices visible yielded3 direct PtoP copies and zero staging copies; other three controls each show1157 source DtoH and1157 target HtoD copies. CUDA IPC device-lane logging alone was insufficient in R75. Initial HtoD and final DtoH are input setup/verification. Tiny profiled one-shot transfers are not bandwidth or model PD benchmarks; actual4P4D KV/SSM, precision and performance remain pending."
+}

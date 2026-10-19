@@ -1,0 +1,154 @@
+{
+  "before_gpu_usage": {
+    "0": [
+      0,
+      0
+    ],
+    "1": [
+      121627,
+      100
+    ],
+    "2": [
+      102479,
+      66
+    ],
+    "3": [
+      0,
+      0
+    ],
+    "4": [
+      0,
+      0
+    ],
+    "5": [
+      0,
+      0
+    ],
+    "6": [
+      127683,
+      100
+    ],
+    "7": [
+      121627,
+      100
+    ]
+  },
+  "commands": {
+    "destination": [
+      "docker",
+      "run",
+      "--name",
+      "qwen38-nixl-destination-r77",
+      "--gpus",
+      "\"device=0,5\"",
+      "--ipc",
+      "host",
+      "--network",
+      "host",
+      "--entrypoint",
+      "python3",
+      "-e",
+      "UCX_TLS=cuda_copy,cuda_ipc,posix,sysv,tcp",
+      "-e",
+      "UCX_LOG_LEVEL=info",
+      "-v",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019:/evidence",
+      "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+      "/evidence/preflight_nixl_process_r77.py",
+      "destination"
+    ],
+    "source": [
+      "docker",
+      "run",
+      "--name",
+      "qwen38-nixl-source-r77",
+      "--gpus",
+      "\"device=0,5\"",
+      "--ipc",
+      "host",
+      "--network",
+      "host",
+      "--entrypoint",
+      "python3",
+      "-e",
+      "UCX_TLS=cuda_copy,cuda_ipc,posix,sysv,tcp",
+      "-e",
+      "UCX_LOG_LEVEL=info",
+      "-v",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019:/evidence",
+      "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+      "/evidence/preflight_nixl_process_r77.py",
+      "source"
+    ]
+  },
+  "containers": {
+    "qwen38-nixl-destination-r77": {
+      "actual_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+      "actual_devices": [
+        {
+          "Driver": "",
+          "Count": 0,
+          "DeviceIDs": [
+            "0",
+            "5"
+          ],
+          "Capabilities": [
+            [
+              "gpu"
+            ]
+          ],
+          "Options": {}
+        }
+      ],
+      "pid_mode": "",
+      "ipc_mode": "host",
+      "state": {
+        "Status": "exited",
+        "Running": false,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 0,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-10-19T20:38:48.542667753Z",
+        "FinishedAt": "2026-10-19T20:38:59.64291863Z"
+      }
+    },
+    "qwen38-nixl-source-r77": {
+      "actual_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+      "actual_devices": [
+        {
+          "Driver": "",
+          "Count": 0,
+          "DeviceIDs": [
+            "0",
+            "5"
+          ],
+          "Capabilities": [
+            [
+              "gpu"
+            ]
+          ],
+          "Options": {}
+        }
+      ],
+      "pid_mode": "",
+      "ipc_mode": "host",
+      "state": {
+        "Status": "exited",
+        "Running": false,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 0,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-10-19T20:38:48.54360216Z",
+        "FinishedAt": "2026-10-19T20:38:59.877033577Z"
+      }
+    }
+  }
+}

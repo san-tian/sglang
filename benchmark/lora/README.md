@@ -96,9 +96,9 @@ separate. Unloaded or reused slots still invalidate their projections. CPU
 counters for hits, misses, materialized BF16 bytes, bypasses and evictions are
 logged as `projection_cache_stats` at slot updates. Byte counters describe tensor
 extents, not measured memory bandwidth. Eight admission-policy unit tests plus
-ten existing configuration/TP checks passed in the matching image; GPU accuracy,
-mixed-adapter throughput and peak-memory comparisons remain pending. Keep the
-policy opt-in until those comparisons complete.
+ten existing configuration/TP checks passed in the matching image; GPU main/GDN/mixed/prefix accuracy and full lifecycle now pass the raw audits
+below. Mixed-adapter throughput, peak-memory and final isolated comparisons
+remain pending. Keep the policy opt-in until those comparisons complete.
 
 Choose this budget from the adapted projection shapes, then check the resolved
 KV and request limits after startup. On the dedicated B300 TP1 experiment,
@@ -459,9 +459,11 @@ The full-prefill runs recorded zero cached prompt tokens in both nominal cache
 modes. A separate actual-prefix raw audit subsequently passed ten pairs /160
 original scores across five identities: cold hits0, hot hits1,600 tokens and zero
 score drift against sealed independent merge/base references. Both endpoints'
-payloads, responses and original capture scores were checked. Lifecycle and speed
-remain separate gates still running. This does not establish an active-policy
-speedup.
+payloads, responses and original capture scores were checked. A subsequent raw
+lifecycle replay passed all765 API records:100 alias replacements,100 failed
+loads,108 LRU recoveries and a256-token in-flight unload, with309 comparisons /
+5,184 exact logprob scores. These are same-service references, separate from D/M
+precision. The candidate's six mixed-policy performance runs are still active.
 
 The queued KV audit retains complete labeled Prometheus scrapes, verifies actual
 allocation logs and device/image identities, and computes a resident-token peak
@@ -482,3 +484,37 @@ records are retained. This is protocol preparation; isolated GPU results remain
 pending. The snapshot includes all eight sealed source dependencies and the
 construction checker; the full experiment still requires the private model,
 corpus and existing experiment-host layout.
+
+The R55 single-adapter native controls are also audited: D/M/base each636
+responses on GPU2 with memory fraction0.52, KV65,536 and SSM256; D/M natural
+outputs all match. Independent reconstruction checked48 speed points and576
+latency statistics. At2,048 input /256 output /concurrency32 cold, D/M/base
+throughput was259.64/276.67/270.88 tok/s with P95 end-to-end31.55/29.60/30.60s;
+D reached93.84% of M throughput. At concurrency1 it reached93.11%. Warm traces
+contained8,719/8,537/8,537 CUDA events, with no FP32 merge or BF16 merge-store
+kernels on any side. Other GPUs ran concurrent experiments, and the largest
+batch exceeds the fixed KV pool. Eliminating merge kernels has not established
+an isolated speedup or candidate acceptance.
+
+Actual two-process NIXL/UCX GPU transfers exposed a separate PD performance
+problem before the full4P4D run. Four controls transferred4KiB,1MiB and8MiB
+between physical GPUs0/5; all12 payloads matched their original bytes. Only
+sharing the host PID namespace AND exposing both GPU device nodes to both
+containers produced3 direct PtoP copies with zero transfer staging. Private PID
+with private devices, host PID alone, and shared devices alone each produced
+1,157 source DtoH and1,157 destination HtoD copies. The host-PID-only control
+even logged a CUDA IPC device lane while still staging data, so TLS flags and
+lane logs alone are insufficient. Initial HtoD and final DtoH copies are input
+setup and verification. These tiny profiled transfers are not bandwidth or model
+PD benchmarks.
+
+The waiting4P4D protocol now uses host PID mode and exposes all8 device nodes to
+both roles. SGLang's base-gpu-id0/4 preserves disjoint four-GPU prefill/decode
+compute placement. R78 pins the same immutable R28 image and retains KV+SSM
+checksums, independent real240/GDN8 pairs, D/M/base each636 native requests,
+both-role metrics/traces and paired shutdown. Eight CPU launch cases passed.
+Migration verified the old coordinator was waiting without children or any PD4
+containers before replacing it; no runtime worker was interrupted. Actual4P4D
+KV/SSM layouts, device placement, numerical equivalence and performance still
+require the full run. Reports and runnable preflight sources are in the dated
+partial-results snapshot, including nixl-transport-controls-audit-r78.json.

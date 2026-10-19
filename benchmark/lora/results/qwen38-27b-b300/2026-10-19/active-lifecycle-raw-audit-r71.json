@@ -1,0 +1,68 @@
+{
+  "passed": true,
+  "api_records_reparsed": 765,
+  "api_counts": [
+    {
+      "path": "/flush_cache",
+      "status": 200,
+      "count": 5
+    },
+    {
+      "path": "/generate",
+      "status": 200,
+      "count": 313
+    },
+    {
+      "path": "/generate",
+      "status": 400,
+      "count": 113
+    },
+    {
+      "path": "/get_server_info",
+      "status": 200,
+      "count": 1
+    },
+    {
+      "path": "/health",
+      "status": 200,
+      "count": 1
+    },
+    {
+      "path": "/load_lora_adapter",
+      "status": 200,
+      "count": 116
+    },
+    {
+      "path": "/load_lora_adapter",
+      "status": 400,
+      "count": 100
+    },
+    {
+      "path": "/unload_lora_adapter",
+      "status": 200,
+      "count": 116
+    }
+  ],
+  "reference_comparisons": 309,
+  "exact_logprob_scores_compared": 5184,
+  "max_abs_nat": 0,
+  "natural_output_ids_equal": true,
+  "race_requests_admitted_before_draining": 1,
+  "race_admitted_tokens_checked_against_reference": 1,
+  "stream_events_reparsed": 256,
+  "stream_output_tokens": 256,
+  "unload_elapsed_s": 15.030049706998398,
+  "generation_after_unload_started_s": 14.991383039996435,
+  "raw_files_sha256": {
+    "config.json": "7c1deb2ee9fd45bda53f490efa67aaec9d142bdfc8577bbea2ff0681c151f692",
+    "inflight-events.json": "78fcd47241087de784c4fdc8752ebcb0805f8053fe4ad42f6c15ea796bd19631",
+    "inflight-events.jsonl": "48e62fed5cbc80ab0b53162540c2bfad1f8d49debe35da95effd239c1637a259",
+    "inflight-reference.json": "23c340de3bfd7c2466d1fd78febc267e7439532b91bbcaac33b575018602d5bf",
+    "server-info.json": "3ad01bb3150265d7be7fa485d87020d92fbc10666e2690b8f7c7e74a65018e9a",
+    "api.jsonl": "941d1ba0bd3272a245fb5a9aec8e68bb91955a053f563e4999a3b530c1a1108b",
+    "baseline.json": "e426c0a5569bfc91fd82af9a9a23be6272b6f2f61d26c2689337e86e0a93a411",
+    "summary.json": "7feb29c76dec70da3901fc78738642bbaf5d3caedb02bc2cc9b7643aecfb6468"
+  },
+  "audit_source_sha256": "40bae526f1c893512193768551a1014e76ef36140cd2ce87aa76f04ab58777a4",
+  "scope": "R55 active cache TP1, 100 same-alias replacements, 100 failed loads, 108 LRU recoveries, 256-token in-flight unload. Every API response replayed in operation order; natural IDs and original unforced API logprobs checked against same-service references. Drain timing is the retained client monotonic timing, cross-checked with API unload elapsed; raw API rows do not independently timestamp rejection. This is correctness evidence, not independent D/M precision, speedup or multi-GPU acceptance."
+}

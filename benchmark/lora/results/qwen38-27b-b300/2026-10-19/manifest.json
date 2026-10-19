@@ -1,12 +1,12 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T20:24:59.012586+00:00",
+  "as_of_utc": "2026-10-19T20:42:38.513151+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
   "cache_runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
   "topology_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
-  "scope": "Dedicated eight-B300 host; controls ran concurrently with other GPU experiments. TP2/attention DP2/TP4/attention DP4 D/M/base each636 native requests audited:7632 raw payloads,36 actual rank traces. R55 active-cache TP1 main/GDN/mixed raw accuracy passed; candidate speed/lifecycle/real-prefix suite still live. Auto-sized KV pools differ. Larger topologies, equal-byte KV residency, isolated speed and4P4D remain pending. No prompts, generated text, token IDs or weights included.",
+  "scope": "Dedicated eight-B300 host; controls ran alongside other GPU experiments. Four multigpu D/M/base topologies:7632 raw native payloads/36rank traces. R55 active cache main/GDN/mixed/prefix/lifecycle raw correctness passed; new D/M/base1908 native responses/3traces and48speed points/576latency statistics independently checked, still slower than merge in observed controls. Four actual two-process NIXL GPU controls found host PID plus shared GPU device visibility removes1157 source/target staging copies in favor of3direct PtoP copies; queued4P4D corrected accordingly. Full4P4D, all8/DCP/KV residency, candidate mixed speed and isolated speed remain pending. No model prompts, generated text, token IDs or weights included.",
   "files_sha256": {
     "cache-threeway-comparison-r49.json": "0b4b6bc5082b558673cdb486928183353d28f8e413f6d97ab7df1fb1df287f38",
     "cache-threeway-profile-audit-r49.json": "a149614e2886da7ba32f906bd05bf2780a70bc3dbf459c3ff0ddd9520651088f",
@@ -53,7 +53,33 @@
     "isolated-queue-migration-r69.json": "29bf04488267da2c053fd55c98e7b9a790f3e26075fd95a8d0751c9519f00d65",
     "isolated-launch-construction-r69.log": "e9aa482afb8f83e19e403acc2f8bcb84373610e567faf3df0566cfcd4a9ea229",
     "audit_active_prefix_raw_r70.py": "42320852d197cf973782c5004b99cd314949eb110028f54099c73c16358ce252",
-    "active-prefix-raw-audit-r70.json": "0e046072c79fe17f563c3297dcfde459b232166fdbb5b3f2c5de714ce2c49982"
+    "active-prefix-raw-audit-r70.json": "0e046072c79fe17f563c3297dcfde459b232166fdbb5b3f2c5de714ce2c49982",
+    "audit_active_lifecycle_r71.py": "40bae526f1c893512193768551a1014e76ef36140cd2ce87aa76f04ab58777a4",
+    "active-lifecycle-raw-audit-r71.json": "2b1cf0f911adf938391e6ee131c05fd977a0a55442417d9670b1f153a61fe378",
+    "audit_active_single_r71.py": "fff9ccd08e652cdf649586dc5ac57754aa99e661a5791a40e9a26cb13f97a2fd",
+    "active-single-threeway-audit-r71.json": "0437dadd56b4709a0741e9180b439b34e4e5dee644951e3cb76f00ef688986b5",
+    "audit_active_percentiles_r73.py": "c029858c93fc13d6520a881885e0795c0d5625b455acc9e4b93516c7af629e81",
+    "active-single-percentiles-audit-r73.json": "c0ae90b863082a5782e2c8bc671c58f3f34e5e883512cf0b4b578c10d2e8f1dc",
+    "audit_nixl_transport_r78.py": "efc970954ee54b79a6a822473f5ddf52b5600dc02b090c7475a6391147a5455e",
+    "nixl-transport-controls-audit-r78.json": "6c92669f4cc1cb7c85c703d036db8052f525f7381906ada3dada97e749ba97d1",
+    "host_common_r78.py": "552486646a69c1c9f8c0a3fe1bc0f308911997c6419af1733c3606fe2c61b5fe",
+    "run_pd4_suite_r78.py": "99a04f264d8a2483be16169ae393b838d3835e899763d8ca09f5dec8a179d9db",
+    "check_pd4_launch_r78.py": "36b7c22395721f8f345817699a63087166f1d8ecbdae82f2b37cdde4ec63ba40",
+    "source-host-r78.json": "be6bf331ff0903c249e3bf3d9a57a677b08cbeda2635cc7af25c1af0fc469d74",
+    "pd4-queue-migration-r78.json": "e58ab04ca7b2137679bcdc45ed919b45a3e6b0054d49bf8afd3abe0b3b42e360",
+    "pd4-launch-construction-r78.log": "9efbd03867d28c5bb4a1091778b3085a9a77bf0dd7263f3a58aa152d1ac30d2a",
+    "preflight_nixl_process_r74.py": "b0d2767a5fd5c3071f7a3b491c7bef53cad6ba75bb890c7089ca3ab3ed07e78c",
+    "launch_nixl_process_r74.py": "651fe5f63b7594e7b2bbb642380089a148a0c448638b8bbe723465560f4fa015",
+    "nixl-two-process-launch-r74.json": "4796b52aa44124bd86d03c523d3486756b4c284fa3b01b4ccb6b3813c9276411",
+    "preflight_nixl_process_r75.py": "c3f9becab98c234266f34244357f339b5cb9a46716a2c10fcd43f6997c1f01de",
+    "launch_nixl_process_r75.py": "17f556bd3359e20d57cc1e54bb58c7e0aefe75245510bb5538a3ed8496ad2518",
+    "nixl-two-process-launch-r75.json": "668dd6cbfbad6f87b5df8d18900c42415c9af034a4f978b774da01f601ea523c",
+    "preflight_nixl_process_r76.py": "1e76e1510e5cdee95589c95838243e0a993c76317b1885ce81c612771e1812f0",
+    "launch_nixl_process_r76.py": "954a32ff2a2678d6fd62a97e371eec0a0ff38437e7d96ea3bfc52f843ea93937",
+    "nixl-two-process-launch-r76.json": "250a28cce4d7ad0bf60290c58e1e4029f63b31e84b465fa119a5d041a4685d01",
+    "preflight_nixl_process_r77.py": "54c22baea47f1173f5483ba478052ce65a16e972681d9419d7a621a593b2a34f",
+    "launch_nixl_process_r77.py": "bec06d9442340b66659a31e08eb8a2a8c6f39a78738e85756aeaee9533cf89c8",
+    "nixl-two-process-launch-r77.json": "1bb1363ec5b98a8f0b5c3a3d972ca462d60c1b7a85d4c018f09b6916e4f289a6"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -144,5 +170,7 @@
     "state": "Queued after all8/PD4/cached-topology leases; no new isolated GPU results",
     "reason": "R39 same-image mem.50 actually clamped65536requested KV rows to65501; R54 all-arm mem.52 retained65536 and passed. Only proven-waiting R51 coordinator replaced; no running GPU engine interrupted. R39 failure and R51 source preserved.",
     "migration_proof": "isolated-queue-migration-r69.json"
-  }
+  },
+  "active_runtime_commit": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "active_runtime_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934"
 }
