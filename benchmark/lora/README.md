@@ -573,18 +573,22 @@ container. Seven CPU parser controls reject incomplete, wrong-role and
 wrong-image placement. Actual placement evidence remains pending until those
 GPU workers launch; visibility and base-gpu-id flags alone do not pass it.
 
-The first two fresh R84 mixed controls have each completed192 measured
-natural requests and an actual kernel profile. Independent raw SSE replay and
-rehashing confirm identical request payloads and natural output IDs across all384.
+The first three fresh R84 mixed controls (no-cache/LRU/active) each completed192
+measured natural requests and an actual kernel profile. Original SSE replay and
+rehashing confirm identical request payloads and natural output IDs across all576.
 At2048-in/256-out/concurrency32, cold/nominal-hot means were99.11/110.31tok/s
-without projection caching and92.52/104.99tok/s with36GiB LRU; P95 end-to-end
-was80.89/72.68s versus89.82/81.07s. Both cache labels had actual KV hits0.
-The entire LRU client stage, including two warmup batches, recorded1,370,568
-projection evictions and48,179 hits. Each short profile contained52,753 CUDA
-kernels, including7,040 FP32 merges and7,040 BF16 merge stores. This is evidence
-of cyclic working-set churn in these first sequential controls, not a final
-policy comparison or isolated speed claim. Active and reverse-order controls
-remain live; the complete1,152-request matrix is still required.
+without projection caching,92.52/104.99 with36GiB LRU, and119.31/119.30 with
+36GiB active. P95 end-to-end was80.89/72.68s,89.82/81.07s and71.45/71.55s
+respectively. All labels had actual KV hits0; the73,728-token requested batch
+exceeds the65,536-row pool. Active/LRU observed throughput ratios were1.290/1.136.
+The entire stages, including two warmups and load/unload, counted48,179/677,890
+LRU/active projection hits and1,370,568/16,403 evictions. The fully reparsed short
+profiles had52,753/52,753/42,973 CUDA kernels; FP32 merge and BF16 merge-store
+counts each fell from7,040 to3,780 with active. Peak retained active BF16 bytes
+38,293,995,520 plus356,515,840 reserved transient bytes stayed within36GiB.
+Counter bytes are tensor extents, not measured bandwidth. Reverse-order controls
+remain live; the full1,152-request matrix and isolated comparisons are required
+before selecting a default policy or claiming final acceleration.
 
 The sealed R94 and R95 read-only auditors wait for complete4P4D outputs. They
 reconstruct original per-role/per-rank pre-forcing scores, native paired SSE

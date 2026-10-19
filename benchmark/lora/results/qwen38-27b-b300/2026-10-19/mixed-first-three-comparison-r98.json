@@ -1,0 +1,401 @@
+{
+  "passed": true,
+  "native_requests": 576,
+  "natural_outputs_identical": true,
+  "identical_request_payloads": true,
+  "comparison": [
+    {
+      "cache_label": "cold",
+      "controls": {
+        "nocache": {
+          "cache": "cold",
+          "requests": 96,
+          "throughput_tokens_s_mean": 99.10892710019539,
+          "ttft_s": {
+            "p50": 2.2110958810008015,
+            "p95": 46.693627318003564,
+            "p99": 46.95540043299843
+          },
+          "tpot_s": {
+            "p50": 0.17221590909018641,
+            "p95": 0.1796916411490255,
+            "p99": 0.18053949130981517
+          },
+          "e2e_s": {
+            "p50": 46.27824482000142,
+            "p95": 80.88831232500524,
+            "p99": 86.56268561600154
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        },
+        "lru": {
+          "cache": "cold",
+          "requests": 96,
+          "throughput_tokens_s_mean": 92.52265550401289,
+          "ttft_s": {
+            "p50": 2.1402498519964865,
+            "p95": 48.27367628299544,
+            "p99": 48.57490189500095
+          },
+          "tpot_s": {
+            "p50": 0.17889646209411747,
+            "p95": 0.18609751151371337,
+            "p99": 0.1869517866274691
+          },
+          "e2e_s": {
+            "p50": 47.901353640001616,
+            "p95": 89.8243509840031,
+            "p99": 92.23398852299579
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        },
+        "active": {
+          "cache": "cold",
+          "requests": 96,
+          "throughput_tokens_s_mean": 119.31433429586252,
+          "ttft_s": {
+            "p50": 2.069284445999074,
+            "p95": 43.507029344997136,
+            "p99": 43.70874572900357
+          },
+          "tpot_s": {
+            "p50": 0.1602937418078392,
+            "p95": 0.16731305907057556,
+            "p99": 0.16842849948628938
+          },
+          "e2e_s": {
+            "p50": 43.09111070500512,
+            "p95": 71.4525829760023,
+            "p99": 73.60183354799665
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        }
+      },
+      "LRU_over_nocache_throughput": 0.9335451226353805,
+      "active_over_nocache_throughput": 1.2038707085915705,
+      "active_over_LRU_throughput": 1.2895688482556322
+    },
+    {
+      "cache_label": "hot",
+      "controls": {
+        "nocache": {
+          "cache": "hot",
+          "requests": 96,
+          "throughput_tokens_s_mean": 110.31090791338012,
+          "ttft_s": {
+            "p50": 2.2672498329993687,
+            "p95": 46.59758554900327,
+            "p99": 46.85729148700193
+          },
+          "tpot_s": {
+            "p50": 0.17172961009020904,
+            "p95": 0.17941085555295086,
+            "p99": 0.18028272898039124
+          },
+          "e2e_s": {
+            "p50": 46.20828677999816,
+            "p95": 72.6780818230036,
+            "p99": 77.85166853300325
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        },
+        "lru": {
+          "cache": "hot",
+          "requests": 96,
+          "throughput_tokens_s_mean": 104.98930471056411,
+          "ttft_s": {
+            "p50": 2.1102711140047177,
+            "p95": 48.52016035899578,
+            "p99": 48.74426174000109
+          },
+          "tpot_s": {
+            "p50": 0.17973416758037525,
+            "p95": 0.18685566377646276,
+            "p99": 0.1880316061999788
+          },
+          "e2e_s": {
+            "p50": 48.04251103600109,
+            "p95": 81.07328202699864,
+            "p99": 89.75085578599828
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        },
+        "active": {
+          "cache": "hot",
+          "requests": 96,
+          "throughput_tokens_s_mean": 119.30356938371499,
+          "ttft_s": {
+            "p50": 2.138031716000114,
+            "p95": 43.677127185001154,
+            "p99": 44.05024130099628
+          },
+          "tpot_s": {
+            "p50": 0.1607374077019688,
+            "p95": 0.16791465338039915,
+            "p99": 0.16929732471765543
+          },
+          "e2e_s": {
+            "p50": 43.10841261300084,
+            "p95": 71.5472751749985,
+            "p99": 74.03173800800141
+          },
+          "cached_tokens_min_max": [
+            0,
+            0
+          ]
+        }
+      },
+      "LRU_over_nocache_throughput": 0.9517581415702361,
+      "active_over_nocache_throughput": 1.0815210539051696,
+      "active_over_LRU_throughput": 1.1363402178213544
+    }
+  ],
+  "cache_counters": {
+    "nocache": {
+      "stage_delta": {
+        "hits": 0,
+        "misses": 1243472,
+        "hit_bytes": 0,
+        "merged_bytes": 281183455805440,
+        "admissions": 0,
+        "bypasses": 1243472,
+        "evictions": 0,
+        "invalidations": 0
+      },
+      "snapshot": {
+        "admissions": 0,
+        "budget_bytes": 0,
+        "bypasses": 1243472,
+        "evictions": 0,
+        "hit_bytes": 0,
+        "hits": 0,
+        "invalidations": 0,
+        "merged_bytes": 281183455805440,
+        "misses": 1243472,
+        "peak_retained_bytes": 0,
+        "policy": "lru",
+        "retained_bytes": 0,
+        "transient_reserve_bytes": 0
+      },
+      "scope": "Whole client stage includes2warmup batches+192measured requests and adapter load/unload, not only the measured interval.",
+      "source_sha256": "9febb92e87d5c387127ec22afd33a17cee3944195e4c9131566412c20f57f3a8"
+    },
+    "lru": {
+      "stage_delta": {
+        "hits": 48179,
+        "misses": 1370733,
+        "hit_bytes": 11254764666880,
+        "merged_bytes": 310314805493760,
+        "admissions": 1370733,
+        "bypasses": 0,
+        "evictions": 1370568,
+        "invalidations": 165
+      },
+      "snapshot": {
+        "admissions": 1370733,
+        "budget_bytes": 38654705664,
+        "bypasses": 0,
+        "evictions": 1370568,
+        "hit_bytes": 11254764666880,
+        "hits": 48179,
+        "invalidations": 165,
+        "merged_bytes": 310314805493760,
+        "misses": 1370733,
+        "peak_retained_bytes": 38650511360,
+        "policy": "lru",
+        "retained_bytes": 0,
+        "transient_reserve_bytes": 0
+      },
+      "scope": "Whole client stage includes2warmup batches+192measured requests and adapter load/unload, not only the measured interval.",
+      "source_sha256": "8ebfad54d0346739789be232fc93e6c6f0b23a5ed7cd5637ea496e3501031fb4"
+    },
+    "active": {
+      "stage_delta": {
+        "hits": 677890,
+        "misses": 610462,
+        "hit_bytes": 157415196590080,
+        "merged_bytes": 136773957058560,
+        "admissions": 16567,
+        "bypasses": 593895,
+        "evictions": 16403,
+        "invalidations": 164
+      },
+      "snapshot": {
+        "admissions": 16567,
+        "budget_bytes": 38654705664,
+        "bypasses": 593895,
+        "evictions": 16403,
+        "hit_bytes": 157415196590080,
+        "hits": 677890,
+        "invalidations": 164,
+        "merged_bytes": 136773957058560,
+        "misses": 610462,
+        "peak_retained_bytes": 38293995520,
+        "policy": "active",
+        "retained_bytes": 0,
+        "transient_reserve_bytes": 356515840
+      },
+      "scope": "Whole client stage includes2warmup batches+192measured requests and adapter load/unload, not only the measured interval.",
+      "source_sha256": "5737f877fe44cad8897628c85b3e771a848730fe4e938d4919aed54ed35489e9"
+    }
+  },
+  "profiles": {
+    "nocache": {
+      "source_sha256": "5c1ccb72a1b8d6af101821d8b3636f245abd2fe19a3e39770ea7395b1f3b3e9a",
+      "kernel_events": 52753,
+      "categories": [
+        {
+          "name": "FP32 GEMM",
+          "count": 7040,
+          "summed_kernel_ms": 536.2238900000001,
+          "summed_kernel_share": 0.35895584095452165
+        },
+        {
+          "name": "LoRA scale/add/BF16 store",
+          "count": 7040,
+          "summed_kernel_ms": 492.80436800000115,
+          "summed_kernel_share": 0.32989020004592096
+        },
+        {
+          "name": "GEMM / GEMV (dtype not inferred)",
+          "count": 10580,
+          "summed_kernel_ms": 368.4624090000013,
+          "summed_kernel_share": 0.24665393756090265
+        },
+        {
+          "name": "copy / routing",
+          "count": 24387,
+          "summed_kernel_ms": 78.35098600000146,
+          "summed_kernel_share": 0.05244925598008412
+        },
+        {
+          "name": "other",
+          "count": 2650,
+          "summed_kernel_ms": 10.18917699999999,
+          "summed_kernel_share": 0.0068207789076116425
+        },
+        {
+          "name": "GDN / convolution",
+          "count": 1056,
+          "summed_kernel_ms": 7.812782000000024,
+          "summed_kernel_share": 0.005229986550961684
+        }
+      ]
+    },
+    "lru": {
+      "source_sha256": "c40ba2cce92643f28b2c888ed149bbdb985913210dce03bb053a3aa0cbc888bf",
+      "kernel_events": 52753,
+      "categories": [
+        {
+          "name": "FP32 GEMM",
+          "count": 7040,
+          "summed_kernel_ms": 536.1222760000005,
+          "summed_kernel_share": 0.3588974250644296
+        },
+        {
+          "name": "LoRA scale/add/BF16 store",
+          "count": 7040,
+          "summed_kernel_ms": 492.8586909999984,
+          "summed_kernel_share": 0.329935395410663
+        },
+        {
+          "name": "GEMM / GEMV (dtype not inferred)",
+          "count": 10580,
+          "summed_kernel_ms": 368.67244099999846,
+          "summed_kernel_share": 0.24680114162448488
+        },
+        {
+          "name": "copy / routing",
+          "count": 24387,
+          "summed_kernel_ms": 78.11019600000103,
+          "summed_kernel_share": 0.05228946729249179
+        },
+        {
+          "name": "other",
+          "count": 2650,
+          "summed_kernel_ms": 10.218579999999973,
+          "summed_kernel_share": 0.006840644781965497
+        },
+        {
+          "name": "GDN / convolution",
+          "count": 1056,
+          "summed_kernel_ms": 7.821445000000017,
+          "summed_kernel_share": 0.005235925825964115
+        }
+      ]
+    },
+    "active": {
+      "source_sha256": "2298f1735eb4d5786007444e6f244336d67ff06f87b664840283fedfd507bc62",
+      "kernel_events": 42973,
+      "categories": [
+        {
+          "name": "GEMM / GEMV (dtype not inferred)",
+          "count": 10580,
+          "summed_kernel_ms": 358.97389199999895,
+          "summed_kernel_share": 0.3590025583542835
+        },
+        {
+          "name": "FP32 GEMM",
+          "count": 3780,
+          "summed_kernel_ms": 289.5754650000008,
+          "summed_kernel_share": 0.28959858944736816
+        },
+        {
+          "name": "LoRA scale/add/BF16 store",
+          "count": 3780,
+          "summed_kernel_ms": 266.07238399999886,
+          "summed_kernel_share": 0.26609363157648025
+        },
+        {
+          "name": "copy / routing",
+          "count": 21127,
+          "summed_kernel_ms": 67.45811700000073,
+          "summed_kernel_share": 0.067463503960792
+        },
+        {
+          "name": "other",
+          "count": 2650,
+          "summed_kernel_ms": 10.09805800000001,
+          "summed_kernel_share": 0.010098864394321897
+        },
+        {
+          "name": "GDN / convolution",
+          "count": 1056,
+          "summed_kernel_ms": 7.742234000000026,
+          "summed_kernel_share": 0.007742852266753526
+        }
+      ]
+    }
+  },
+  "proofs": {
+    "nocache": {
+      "cohort_audit_sha256": "1699390e0e626ddb775425b67ee064b0be1a06afef8ce4176a42d2331743d504",
+      "raw_requests_rehashed": 192
+    },
+    "lru": {
+      "cohort_audit_sha256": "aa09a57b61673fcbf166a165b1ba372e5f7be1ea5d23efd5e1b6a223dc1e69d4",
+      "raw_requests_rehashed": 192
+    },
+    "active": {
+      "cohort_audit_sha256": "d2028cb2f41509baf67e48b6db9cf609903fedb291ba3d212882716d7e258aad",
+      "raw_requests_rehashed": 192
+    }
+  },
+  "source_sha256": "97596b8acfdfac6056fb5442801d3a719e0c4be345db39cfe0eb02589e5f7842",
+  "scope": "First three R84 sequential controls onGPU2, R55 identical image/mem.52/KV65536/SSM256. Largest32*(2048+256)=73728 exceedsKV pool; inspect queue and actual hits. Observed order can influence clocks; reverse-order controls remain required. No final policy win, isolated speedup, multiGPU or4P4D acceptance."
+}
