@@ -1,0 +1,6 @@
+{
+  "pid": 976143,
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_pd_precision_r94.py ",
+  "unix_s": 1792445399.8628042,
+  "read_only": true
+}

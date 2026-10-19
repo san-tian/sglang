@@ -1,0 +1,12 @@
+{
+  "source_files": {
+    "audit_pd_precision_r94.py": "c1a49d17aabf4a815e2ef202e11230d91beaa548a54832e3219e0f4570e49250",
+    "watch_pd_precision_r94.py": "f5de7a5ebbc9b2c0b48d55ef12ae0ca99923962389a4fd9639dda184196069c7",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+    "test_pd_precision_parser_r94.py": "1d76c53f2e662df9599db614df5df410249f06a41d2a5ff310ea3a4d6265b0b1"
+  },
+  "scope": "Future complete4P4D main240/GDN8 original score audit. Existing2P2D M-only parser replay passed8pairs/298scores/32captures/67sealedfiles and8CPUnegative/positive cases. Neither is full4P4D GPU acceptance.",
+  "full4P4D_accepted": false,
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "parent_source_manifest_sha256": "363f234e16af233cf2ab946f6ffdb3beeb5f7d1cc464bf2d85647dee13b2b350"
+}

@@ -1,0 +1,6 @@
+{
+  "pid": 979460,
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_pd_native_r95.py ",
+  "unix_s": 1792445607.39411,
+  "read_only": true
+}

@@ -1,0 +1,10 @@
+{
+  "source_files": {
+    "watch_pd_native_r95.py": "d348893ac6787dece4ea1bb9e973c0ca6a03ae7967c548477a0b35246c75ab0b",
+    "audit_pd_native_r95.py": "650dc26eb65bb304afa3296e132cc82abcc99854bdca36f34b87f10fe8696567",
+    "test_pd_native_r95.py": "fc45218ef1bc3a39ec3bc7ed2ec8dcf6d92c976ce87bb931b319d954e6e85862"
+  },
+  "scope": "Future complete4P4D native D/M/base each636 requests,48speedpoints/576latency statistics and24actualranktraces. Existing2P2D M-only2native requests replayed and10CPUadversarial parser checks passed; no new4P4DGPUacceptance.",
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "full4P4D_accepted": false
+}

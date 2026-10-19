@@ -573,12 +573,25 @@ container. Seven CPU parser controls reject incomplete, wrong-role and
 wrong-image placement. Actual placement evidence remains pending until those
 GPU workers launch; visibility and base-gpu-id flags alone do not pass it.
 
-The first fresh R84 no-cache cohort has completed192 measured requests. An
-independent raw SSE audit recomputed all TTFT/TPOT values, six group throughputs
-and18 latency percentiles: cold/nominal-hot means99.11/110.31 tok/s, P95 client
-end-to-end80.89/72.68s at2048-in/256-out/concurrency32. Both labels had actual
-KV hits0; nominal hot is not evidence of a warm prefix. The following LRU and
-active/reverse-order controls remain pending, so no policy speedup is claimed.
-The first mixed profile also finalized successfully: one fully parsed11,040,270
-byte gzip trace with52,753 actual CUDA kernel events. It is a single-GPU no-cache
-profile, not validation of the pending all8 or4P4D profiles.
+The first two fresh R84 mixed controls have each completed192 measured
+natural requests and an actual kernel profile. Independent raw SSE replay and
+rehashing confirm identical request payloads and natural output IDs across all384.
+At2048-in/256-out/concurrency32, cold/nominal-hot means were99.11/110.31tok/s
+without projection caching and92.52/104.99tok/s with36GiB LRU; P95 end-to-end
+was80.89/72.68s versus89.82/81.07s. Both cache labels had actual KV hits0.
+The entire LRU client stage, including two warmup batches, recorded1,370,568
+projection evictions and48,179 hits. Each short profile contained52,753 CUDA
+kernels, including7,040 FP32 merges and7,040 BF16 merge stores. This is evidence
+of cyclic working-set churn in these first sequential controls, not a final
+policy comparison or isolated speed claim. Active and reverse-order controls
+remain live; the complete1,152-request matrix is still required.
+
+The sealed R94 and R95 read-only auditors wait for complete4P4D outputs. They
+reconstruct original per-role/per-rank pre-forcing scores, native paired SSE
+TTFT/TPOT and both-role kernel traces rather than trusting completion flags.
+Parser validation replayed the actual earlier2P2D M-only8-pair/298-score sealed
+reference (67files/32rank captures) and its two native smoke requests; eight
+precision and ten native parser checks passed. These validate the auditors and
+do not provide D/M or full4P4D GPU acceptance. The future full audit still requires
+240main+8GDN pairs, D/M/base636natural requests each, and24actual rank traces;
+placement, KV/SSM integrity and transport evidence remain separate gates.

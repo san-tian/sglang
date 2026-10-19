@@ -1,0 +1,47 @@
+{
+  "passed": true,
+  "scope": "Existing TP2-per-role M-only diagnostic parser replay. Does not establish D/M accuracy or full4P4D acceptance.",
+  "precision": {
+    "full": {
+      "passed": true,
+      "case_pairs": 8,
+      "scores": {
+        "prefill": {
+          "count": 170,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 170,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "prefill_last": {
+          "count": 8,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 8,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "decode": {
+          "count": 120,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 120,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        }
+      },
+      "reference_only": true,
+      "raw_files_rehashed": {
+        "M": 67
+      },
+      "original_rank_capture_files_reparsed": 32,
+      "reference_seal_sha256": "1d50a605a3b23dd617cd6354331dfb95b0bc6f8db2f50b3bd595cf8f9ce4a84c"
+    }
+  },
+  "full4P4D_accepted": false,
+  "auditor_sha256": "c1a49d17aabf4a815e2ef202e11230d91beaa548a54832e3219e0f4570e49250"
+}

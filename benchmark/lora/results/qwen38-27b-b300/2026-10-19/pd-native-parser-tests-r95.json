@@ -1,0 +1,66 @@
+{
+  "passed": true,
+  "cases": [
+    {
+      "case": "valid",
+      "expected_rejection": false,
+      "passed": true
+    },
+    {
+      "case": "wrong_bootstrap_room",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "forced_native_output",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "wrong_SSE_time",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "truncated_decode",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "false_throughput",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "false_P95",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "duplicate_groups",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "nonfinite_TTFT",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "mismatched_prefill_token",
+      "expected_rejection": true,
+      "passed": true
+    }
+  ],
+  "actual_input_files_sha256": {
+    "requests.jsonl": "53679036e11ece625052775228c324ba7888324b59402449bc53d4a0a91d9359",
+    "groups.jsonl": "04f6013ce9bd964ffea0f699e2347fc7aa23cd3212f50a687e9a860852ce6aba",
+    "summary.json": "e6ec5b190eb0d32171c80f2369c69173ee6d1f87a12c0fc2f7890be132b79804",
+    "server-info.json": "f765bbc3112aa58d42d29593bba4cc634c9c47136ab02b494ce8eaa500722f81",
+    "prefill-server-info.json": "b566b51a7e219a5147634e2547d3dc4188e4f8701adfe05af10d9f7292dafb55",
+    "in128-out16-c1-r0-cold-i0.json": "90138f285819f5edf97f3f4869bcddf2c217ee4fec0b5212934be3ca281a9cfc",
+    "in128-out16-c1-r0-hot-i0.json": "ca4d55c8e68b600d7386d18ba17bb177d148d813cc173c05766d8942aad7fc3d"
+  },
+  "source_sha256": "fc45218ef1bc3a39ec3bc7ed2ec8dcf6d92c976ce87bb931b319d954e6e85862",
+  "scope": "CPU-only parser replay on copies of existing2P2D M smoke, not new GPU/PD4 accuracy or speed acceptance."
+}
