@@ -699,5 +699,18 @@ input/256output tokens,c32 throughput is356.0149/356.1626tok/s cold/nominal-hot;
 pooled original E2E P95 is23.0106/22.9822s. Actual cached prompt tokens are0
 in both modes. Every rank's10-step sample has9729kernel events, including1290
 NCCL AllReduce and10all-gather events; these counts do not attribute E2E time.
-This is only the completed M baseline. Dynamic/base controls, full TP8 precision,
-capacity, DCP/attentionDP8 and4P4D remain pending, with the original queue intact.
+This baseline alone cannot accept dynamic/base speed ratios or capacity. The
+subsequent actual TP8 precision stage is recorded below; remaining queue is intact.
+
+
+TP8 precision has now passed on actual8GPUs:240main+8GDN independent D/M
+pairs/114,692original scores have zero mean/P99/maximum error and100%argmax
+agreement. The unchanged R99 auditor reparsed3,968per-rank captures, full-prompt
+responses, both reference seals and repeated-prefix noise. The unchanged R101
+mixed auditor also passed48requests/768scores/512captures with zero error across
+base/real/zero/GDN routing. Actual R92 records place all three precision
+containers'8distinct schedulerPIDs on8physical GPUUUIDs each. Stage reports use
+separate output names, preserving the R102 observer's later full-topology audit.
+These are precision/mixed-routing results only; all scored cold/hot requests had
+zero KV hits. Dynamic/base natural speed, equal-byte real KV residency, DCP2,
+attentionDP8,4P4D and remaining isolated/long-context controls are still pending.
