@@ -1,0 +1,38 @@
+{
+  "started_unix_s": 1792476641.2045693,
+  "source_sha256": "1fdd12bd1f0b50e31688343dbc68b1bf1e55e4bc5784f31393474f5fa177c5a3",
+  "phases": [
+    {
+      "phase": "smoke",
+      "exit_code": 0,
+      "started_unix_s": 1792476641.2047963,
+      "ended_unix_s": 1792476728.9881632
+    },
+    {
+      "phase": "speed",
+      "exit_code": 0,
+      "started_unix_s": 1792476728.9884515,
+      "ended_unix_s": 1792477082.8512745
+    },
+    {
+      "phase": "natural",
+      "exit_code": 0,
+      "started_unix_s": 1792477082.851629,
+      "ended_unix_s": 1792477105.103678
+    },
+    {
+      "phase": "capacity",
+      "exit_code": 1,
+      "started_unix_s": 1792477105.1040547,
+      "ended_unix_s": 1792477123.96312
+    },
+    {
+      "phase": "slots",
+      "exit_code": 0,
+      "started_unix_s": 1792477123.9634848,
+      "ended_unix_s": 1792477155.6104517
+    }
+  ],
+  "complete": false,
+  "ended_unix_s": 1792477155.6107595
+}

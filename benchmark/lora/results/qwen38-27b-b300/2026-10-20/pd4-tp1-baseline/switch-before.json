@@ -1,0 +1,22 @@
+{
+  "unix_s": 1792476463.3035128,
+  "stopped_experiments": [
+    "qwen38-1p1d-prefill-r160",
+    "qwen38-1p1d-decode-r160",
+    "qwen38-fp8-mtp-colocated-r228",
+    "qwen38-fp8-off-colocated-r230",
+    "qwen38-fp8-mtp-prefill-r228",
+    "qwen38-fp8-mtp-decode-r228"
+  ],
+  "gpu_inventory": "0, GPU-a14f3d9b-1c82-9ef6-3f23-fa33f570874f, 275040 MiB, 219045 MiB\n1, GPU-d65bcca1-7560-4600-4838-8d41eaadb2c7, 275040 MiB, 219051 MiB\n2, GPU-de90bae1-f5d2-374c-a035-94f0f681f7f2, 275040 MiB, 224697 MiB\n3, GPU-b2516cac-c615-068e-8867-b9c878cd800c, 275040 MiB, 224063 MiB\n4, GPU-83492baa-c267-dfd3-7567-c26d32a39ff3, 275040 MiB, 220815 MiB\n5, GPU-6d6b6026-e0f2-c5c2-48f4-a88f7d8ffa61, 275040 MiB, 225521 MiB\n6, GPU-173d551e-782e-5624-d6e8-53c2f843e61c, 275040 MiB, 0 MiB\n7, GPU-f62b0201-35ab-a719-25f8-5479a9a8575d, 275040 MiB, 0 MiB\n",
+  "restore_argv": [
+    "docker",
+    "start",
+    "qwen38-1p1d-prefill-r160",
+    "qwen38-1p1d-decode-r160",
+    "qwen38-fp8-mtp-colocated-r228",
+    "qwen38-fp8-off-colocated-r230",
+    "qwen38-fp8-mtp-prefill-r228",
+    "qwen38-fp8-mtp-decode-r228"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "normal_phases": [
+    "smoke",
+    "speed",
+    "natural",
+    "capacity-r263",
+    "slots"
+  ],
+  "original_suite": "suite-finished.json",
+  "original_capacity_attempt_retained": true,
+  "resolved_capacity": "capacity-r263/complete.json",
+  "unix_s": 1792477400.8393042
+}

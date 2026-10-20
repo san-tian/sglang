@@ -1,0 +1,60 @@
+[
+  {
+    "pid": 1370243,
+    "argv": [
+      "python3",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py",
+      "--kind",
+      "pd",
+      ""
+    ]
+  },
+  {
+    "pid": 1370319,
+    "argv": [
+      "python3",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py",
+      "--kind",
+      "cached",
+      ""
+    ]
+  },
+  {
+    "pid": 1370323,
+    "argv": [
+      "python3",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py",
+      "--kind",
+      "isolated",
+      ""
+    ]
+  },
+  {
+    "pid": 1370439,
+    "argv": [
+      "python3",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py",
+      "--kind",
+      "million",
+      ""
+    ]
+  },
+  {
+    "pid": 1518692,
+    "argv": [
+      "python3",
+      "-u",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/measure_1p1d_r154.py",
+      ""
+    ]
+  },
+  {
+    "pid": 1527072,
+    "argv": [
+      "python3",
+      "-u",
+      "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/measure_1p1d_r156.py",
+      ""
+    ]
+  }
+]

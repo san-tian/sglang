@@ -1,0 +1,5 @@
+{
+  "change": "CRLF to LF only; numeric values unchanged",
+  "before_sha256": "0166e5e2f6eb7a83cf26f777b47d021112b69d5ec12d476c6e1beb44ba3bf43d",
+  "after_sha256": "867cee8e42357ecbb9146fd3c73692bf10af534a588d1909b9bd96793eae2faa"
+}

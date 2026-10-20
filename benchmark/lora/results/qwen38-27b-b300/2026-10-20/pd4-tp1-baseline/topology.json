@@ -1,0 +1,75 @@
+{
+  "workers": [
+    {
+      "name": "qwen38-pd4-prefill-0-r253",
+      "role": "prefill",
+      "index": 0,
+      "physical_gpu": 0,
+      "url": "http://127.0.0.1:40000",
+      "bootstrap_port": 41000
+    },
+    {
+      "name": "qwen38-pd4-prefill-1-r253",
+      "role": "prefill",
+      "index": 1,
+      "physical_gpu": 1,
+      "url": "http://127.0.0.1:40100",
+      "bootstrap_port": 41100
+    },
+    {
+      "name": "qwen38-pd4-prefill-2-r253",
+      "role": "prefill",
+      "index": 2,
+      "physical_gpu": 2,
+      "url": "http://127.0.0.1:40200",
+      "bootstrap_port": 41200
+    },
+    {
+      "name": "qwen38-pd4-prefill-3-r253",
+      "role": "prefill",
+      "index": 3,
+      "physical_gpu": 3,
+      "url": "http://127.0.0.1:40300",
+      "bootstrap_port": 41300
+    },
+    {
+      "name": "qwen38-pd4-decode-0-r253",
+      "role": "decode",
+      "index": 0,
+      "physical_gpu": 4,
+      "url": "http://127.0.0.1:40400",
+      "bootstrap_port": 41000
+    },
+    {
+      "name": "qwen38-pd4-decode-1-r253",
+      "role": "decode",
+      "index": 1,
+      "physical_gpu": 5,
+      "url": "http://127.0.0.1:40500",
+      "bootstrap_port": 41100
+    },
+    {
+      "name": "qwen38-pd4-decode-2-r253",
+      "role": "decode",
+      "index": 2,
+      "physical_gpu": 6,
+      "url": "http://127.0.0.1:40600",
+      "bootstrap_port": 41200
+    },
+    {
+      "name": "qwen38-pd4-decode-3-r253",
+      "role": "decode",
+      "index": 3,
+      "physical_gpu": 7,
+      "url": "http://127.0.0.1:40700",
+      "bootstrap_port": 41300
+    }
+  ],
+  "tp_size": 1,
+  "prefill_replicas": 4,
+  "decode_replicas": 4,
+  "dispatch": "client-side balanced pairing; P and D chosen independently; no production routing changes",
+  "model_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+  "runtime_overlay": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934"
+}

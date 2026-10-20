@@ -1,0 +1,9 @@
+{
+  "model": "Qwen/Qwen3.8-27B-FP8",
+  "model_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+  "image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "base_git_HEAD": "3c560089e1818a5217a73f2168273485a5350341",
+  "fork_overlay_revision": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "verified_files": 208,
+  "note": "Inherited .git/OCI label is upstream; overlay hashes define actual engine changes."
+}
