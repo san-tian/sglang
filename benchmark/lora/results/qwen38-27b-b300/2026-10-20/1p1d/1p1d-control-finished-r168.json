@@ -1,0 +1,79 @@
+{
+  "passed": true,
+  "primary_dynamic_restored": true,
+  "scores": {
+    "stage": "dynamic",
+    "topology": "physical-1p1d-r168",
+    "cases": 8,
+    "case_pairs": 32,
+    "rounds": 2,
+    "decode_tokens": 32,
+    "cache_modes": [
+      "cold",
+      "hot"
+    ],
+    "batch_size": 8,
+    "elapsed_s": 11.90644537701155,
+    "scores": {
+      "prefill": {
+        "count": 700,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 700,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      },
+      "prefill_last": {
+        "count": 32,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 32,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      },
+      "decode": {
+        "count": 992,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 992,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      }
+    },
+    "repeat_noise": {
+      "prefill": {
+        "count": 525,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 525,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      },
+      "prefill_last": {
+        "count": 24,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 24,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      },
+      "decode": {
+        "count": 744,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 744,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      }
+    },
+    "note": "hot means no flush, inspect cached_tokens for actual cache reuse"
+  },
+  "full_goal_complete": false,
+  "unix_s": 1792466645.2713494
+}

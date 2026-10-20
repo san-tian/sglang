@@ -1,0 +1,20 @@
+{
+  "runtime_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "source_files_sha256": {
+    "launch_1p1d_r160.py": "e9ca569457765198edc4a996021e7f18d04ddebbfb79c953e7abb29d2d99133d",
+    "measure_1p1d_r160.py": "6249f3798aaea188ee84b9694f546cb31d5eccf172c4f879fd0bcae35e621726",
+    "merge_control_1p1d_r161.py": "8e77ef895cf63192e5981a16793c6a415fc0b2281efbda37a0e02a438c148bbb",
+    "sweep_1p1d_slots_r163.py": "a3b0561a859f87f08d8f89917353f50a17217683d714cfb4a08e8efcc066fd1e",
+    "audit_1p1d_r162.py": "0ea0afbd8836c6f554225da1d3913dcb3747fcbdcb99094f8cace14c6a43d2eb",
+    "merge_control_1p1d_r168.py": "ee4e6a556c25c8f2175d7a6f539776d49c863263e8049571b0e72ba72da71faf",
+    "sweep_1p1d_slots_r169.py": "8eaf42b83fac78797a2c054bbafd5ed956614f0c3bc41827b934bba1a6d3c976",
+    "audit_1p1d_r170.py": "606aef51eab86bb86e7391aa1db15352221ee4c7ce794920aa6fe3dcf4d2213e",
+    "audit_1p1d_complete_r171.py": "e15da238b315bc630adc92ca46be76244732bc6a13ac33e72a2cb999ac8d87bc",
+    "audit_1p1d_slots_r172.py": "d0663224c06316d98fbf4ff2f0332c9f64ea73a8ce0673adeb52224cce1397af",
+    "provide_adapter_path_alias_r173.py": "840d8f5a5c7fb6745dfa87126bb6bd7b19e3f9e04225bf378dd3a2f4b6f9f4ed",
+    "finalize_1p1d_r174.py": "875a8d0608d07640c8081f1c01437febba221771e48ad77663c43c5cd4654710",
+    "start_recovery_1p1d_r168.py": "833ece65160cb9dfb083ed897bc22f9926392c1c8732017a8c1b2047820ee572"
+  },
+  "scope": "Native 1P1D with common CUDA device enumeration; P GPU0 and D GPU1, no debug checksum; partial diagnostic cohorts retained",
+  "recovery_note": "R161 failed before merged model startup copying ephemeral socket files; R168 copies only regular files/directories/symlinks. R160 measurements unchanged. Failed run retained."
+}

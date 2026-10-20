@@ -1,0 +1,50 @@
+{
+  "passed": true,
+  "raw_integrity_passed": true,
+  "full32_residency_gate_passed": false,
+  "original_full32_gate_failure_preserved": true,
+  "max_running_requests_observed": 30.0,
+  "peak_active_sequence_sample": {
+    "role": "decode",
+    "started_monotonic": 75170.840201799,
+    "ended_monotonic": 75170.849901437,
+    "raw_sha256": "ff992ef58a85036560ba600aae5adadba4413325add52c0172fefd7e938e73b8",
+    "metrics": {
+      "kv_used_tokens": 1080039.0,
+      "num_running_reqs": 30.0,
+      "decode_sum_seq_lens": 1014473.0,
+      "kv_available_tokens": 51445.0,
+      "max_total_num_tokens": 1131484.0
+    }
+  },
+  "unix_s": 1792467643.5343757,
+  "completed_requests": 32,
+  "input_tokens_each": 32768,
+  "output_tokens_each": 2048,
+  "submitted_prompt_tokens": 1048576,
+  "eligible_decode_samples": 436,
+  "full_prompt_resident_samples": 0,
+  "same_scrape_peak": {
+    "role": "decode",
+    "started_monotonic": 75170.840201799,
+    "ended_monotonic": 75170.849901437,
+    "raw_sha256": "ff992ef58a85036560ba600aae5adadba4413325add52c0172fefd7e938e73b8",
+    "metrics": {
+      "kv_used_tokens": 1080039.0,
+      "num_running_reqs": 30.0,
+      "decode_sum_seq_lens": 1014473.0,
+      "kv_available_tokens": 51445.0,
+      "max_total_num_tokens": 1131484.0
+    }
+  },
+  "batch_elapsed_s": 237.74757768999552,
+  "scope": "Raw integrity audit and observed lower bounds. Original full32 simultaneous residency gate is retained and reported separately; passed does not accept that gate. Active sequence length excludes queued reservations; KV used can include queued/cached allocations. No P+D sum, no hardware maximum or task quality.",
+  "files_sha256": {
+    "complete.json": "ad32c3527d797d3d06ee45e2d030d407ec788d7891d118440013769f07ab3253",
+    "server-info.json": "df92f9d3f0db9626ee901c6a0e52dce750cd16b9f0e867b4a40c30d403b0659c",
+    "requests.jsonl": "93fff824ccc85ff33e38c6d08a25b83b12be278477115edc794121c71a921a5f",
+    "groups.jsonl": "7c8b573c9b6549fa46af75fb073ee45c80851ffc244e372000206b3b793ca38d",
+    "controls.jsonl": "a4af6742f0438a1c9fd1ee5bd2c008fc363f3b96b792db2784dc2e8b7f711f79",
+    "raw-metrics.jsonl.gz": "00ad9bccd12d03274776dba2b5fc2eb9494bf33b1e3bdee84390e9d1c697e8d2"
+  }
+}

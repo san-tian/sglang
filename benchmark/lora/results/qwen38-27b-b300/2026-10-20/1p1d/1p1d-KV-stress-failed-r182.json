@@ -1,0 +1,4 @@
+{
+  "traceback": "Traceback (most recent call last):\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/stress_1p1d_kv_r182.py\", line 18, in <module>\n    subprocess.run(['python3',str(R/'audit_1p1d_kv_r183.py')],check=True)\n  File \"/usr/lib/python3.12/subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['python3', '/opt/dlami/nvme/qwen38-mol-multigpu-20261019/audit_1p1d_kv_r183.py']' returned non-zero exit status 1.\n",
+  "unix_s": 1792467546.63262
+}

@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "primary_dynamic_restored": true,
+  "primary_GPU_slots": 16,
+  "sweep_GPU_slots": 32,
+  "sweep_registered_adapters": 64,
+  "unix_s": 1792467301.665329,
+  "full_goal_complete": false
+}

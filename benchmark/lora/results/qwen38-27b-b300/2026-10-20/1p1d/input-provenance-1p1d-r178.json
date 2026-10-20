@@ -1,0 +1,25 @@
+{
+  "files": {
+    "/opt/dlami/nvme/models/Qwen3.8-27B/config.json": {
+      "sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+      "bytes": 4312
+    },
+    "/opt/dlami/nvme/qwen38-mol-experiment/adapters/real_r16/adapter_config.json": {
+      "sha256": "6351f9565141cedf1710ca0c50901d2aff22762bf633294422d306b68508b361",
+      "bytes": 1305
+    },
+    "/opt/dlami/nvme/qwen38-mol-experiment/adapters/real_r16/adapter_model.safetensors": {
+      "sha256": "ee61a48a0aaeac32a5576a3e258cd7190bad8638193a21659237471f8d1f9003",
+      "bytes": 318843352
+    },
+    "/opt/dlami/nvme/qwen38-mol-development-20261019/merged/real_r16/config.json": {
+      "sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+      "bytes": 4312
+    },
+    "/opt/dlami/nvme/qwen38-mol-development-20261019/merged/real_r16/model.safetensors.index.json": {
+      "sha256": "77042094076611b69791a610065f28b7013b8c621795fa86ddccc8bac7d1b9df",
+      "bytes": 112216
+    }
+  },
+  "note": "Config, adapter and merge index provenance; base/merge shard hashes are not recomputed in this run."
+}

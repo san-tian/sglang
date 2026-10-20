@@ -1,0 +1,14 @@
+{
+  "unix_s": 1792466672.2835684,
+  "container_id": "6d1b21165a59c280bdc98509a2407a38693806ca6c5ad5e3fc6831678c81f7cd",
+  "command": [
+    "docker",
+    "exec",
+    "qwen38-1p1d-slots32-prefill-r169",
+    "python3",
+    "-c",
+    "from pathlib import Path; Path('/opt/dlami').mkdir(parents=True,exist_ok=True); p=Path('/opt/dlami/nvme'); p.symlink_to('/work',target_is_directory=True) if not p.exists() else None; assert p.resolve()==Path('/work'); assert (p/'qwen38-mol-experiment/adapters/real_r16/adapter_model.safetensors').is_file(); print('absolute adapter target resolves to mounted /work')"
+  ],
+  "output": "absolute adapter target resolves to mounted /work\n",
+  "scope": "Container path alias only; no runtime, weights, sampling or timing code changed"
+}

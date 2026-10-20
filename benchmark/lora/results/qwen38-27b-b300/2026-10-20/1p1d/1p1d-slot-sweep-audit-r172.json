@@ -1,0 +1,99 @@
+{
+  "passed": true,
+  "natural_requests_audited": 262,
+  "GPU_slots_per_role": 32,
+  "registered_adapters_per_role": 64,
+  "allocated_KV_per_role": {
+    "prefill": {
+      "allocated_KV_tokens": 797660,
+      "K_GiB_rounded": 24.34,
+      "V_GiB_rounded": 24.34,
+      "context_length": 262144,
+      "max_running_requests_configured": 64,
+      "mamba_slots": 256
+    },
+    "decode": {
+      "allocated_KV_tokens": 797660,
+      "K_GiB_rounded": 24.34,
+      "V_GiB_rounded": 24.34,
+      "context_length": 262144,
+      "max_running_requests_configured": 64,
+      "mamba_slots": 256
+    }
+  },
+  "speed_points": [
+    {
+      "GPU_slots_per_role": 32,
+      "registered_adapters_per_role": 64,
+      "distinct_requested_adapters": 1,
+      "rounds": 2,
+      "natural_requests_completed": 2,
+      "output_tokens_s_mean": 16.74640796940715,
+      "e2e_s_max": 1.9473456239938969
+    },
+    {
+      "GPU_slots_per_role": 32,
+      "registered_adapters_per_role": 64,
+      "distinct_requested_adapters": 16,
+      "rounds": 2,
+      "natural_requests_completed": 32,
+      "output_tokens_s_mean": 17.02150447916445,
+      "e2e_s_max": 31.832265051998547
+    },
+    {
+      "GPU_slots_per_role": 32,
+      "registered_adapters_per_role": 64,
+      "distinct_requested_adapters": 32,
+      "rounds": 2,
+      "natural_requests_completed": 64,
+      "output_tokens_s_mean": 16.989590983277672,
+      "e2e_s_max": 62.161840564003796
+    },
+    {
+      "GPU_slots_per_role": 32,
+      "registered_adapters_per_role": 64,
+      "distinct_requested_adapters": 64,
+      "rounds": 2,
+      "natural_requests_completed": 128,
+      "output_tokens_s_mean": 16.154021317169693,
+      "e2e_s_max": 128.8486289600114
+    }
+  ],
+  "identity_checks": [
+    {
+      "adapter": "slot-00",
+      "natural_ids_equal": true,
+      "scores_compared": 16,
+      "max_logprob_difference_nat": 0.0
+    },
+    {
+      "adapter": "slot-31",
+      "natural_ids_equal": true,
+      "scores_compared": 16,
+      "max_logprob_difference_nat": 0.0
+    },
+    {
+      "adapter": "slot-63",
+      "natural_ids_equal": true,
+      "scores_compared": 16,
+      "max_logprob_difference_nat": 0.0
+    }
+  ],
+  "base_plus32_completed_requests": 33,
+  "primary_restored_with_GPU_slots": 16,
+  "limitations": [
+    "32 GPU slots and 64 registrations are tested operating points, not hardware maxima",
+    "Capacity adapters have distinct scales of common real rank16 A/B weights, with a rank32 pool",
+    "Over-pool 64-adapter requests can queue and reload",
+    "This is 128-input 32-output capacity-mix timing, not the 128/128 or 2048/256 main speed matrix"
+  ],
+  "files_sha256": {
+    "complete.json": "55274a1932f29c592bd3bfa64acab98dc06c858332c572df4417e85d59673b5f",
+    "server-info.json": "ae9617d696c313fd292e0edc8fa4999bac5d2d26f543782da5b31deb7d502b9f",
+    "placement.json": "f4b42be8d8f6772162c842a3bfd3d83539839dd05b48f53be5993bda77c51930",
+    "requests.jsonl": "2a2e2887c4584918967c293ca6fbfcf53b14d06f5e05ed9c710542e84cdf3381",
+    "groups.jsonl": "95c61a4c7fb71dad3fc63ecaf9b2ec4f7714e6d883567069a06e0dbb83d3ef50",
+    "controls.jsonl": "fc97ff8f341a005ce5f0fef2111d8026f29826206691ec556c11f046b7c2c74e",
+    "scaled-adapters.json": "625df275b5daf7dfb49505d95173dcbe81d080a00cd1bcb6398a397744e7e527"
+  }
+}

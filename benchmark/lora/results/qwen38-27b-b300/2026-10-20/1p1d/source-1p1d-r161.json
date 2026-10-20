@@ -1,0 +1,11 @@
+{
+  "runtime_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "source_files_sha256": {
+    "launch_1p1d_r160.py": "e9ca569457765198edc4a996021e7f18d04ddebbfb79c953e7abb29d2d99133d",
+    "measure_1p1d_r160.py": "6249f3798aaea188ee84b9694f546cb31d5eccf172c4f879fd0bcae35e621726",
+    "merge_control_1p1d_r161.py": "8e77ef895cf63192e5981a16793c6a415fc0b2281efbda37a0e02a438c148bbb",
+    "sweep_1p1d_slots_r163.py": "a3b0561a859f87f08d8f89917353f50a17217683d714cfb4a08e8efcc066fd1e",
+    "audit_1p1d_r162.py": "0ea0afbd8836c6f554225da1d3913dcb3747fcbdcb99094f8cace14c6a43d2eb"
+  },
+  "scope": "Native 1P1D with common CUDA device enumeration; P GPU0 and D GPU1, no debug checksum; partial diagnostic cohorts retained"
+}

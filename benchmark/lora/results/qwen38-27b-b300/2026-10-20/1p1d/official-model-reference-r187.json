@@ -1,0 +1,14 @@
+{
+  "model": "Qwen/Qwen3.8-27B",
+  "checked_at_utc": "2026-10-20T03:42:05.320554+00:00",
+  "official_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "model_card_url": "https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/README.md",
+  "model_card_sha256": "57e4bdb258ee1a7d2635c5174ebd4e56abe392505cdb5f8bbb356b0dc4293641",
+  "config_url": "https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/config.json",
+  "config_sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+  "local_config_matches_official": true,
+  "official_nominal_parameters_B": 27,
+  "official_native_context_tokens": 262144,
+  "official_extended_context_tokens": 1000000,
+  "note": "Qwen3.8 retains qwen3_5 architecture identifiers. Full local stored tensor element count includes vision/MTP tensors; distinct from nominal language-model parameter label."
+}

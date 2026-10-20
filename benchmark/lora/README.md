@@ -1,5 +1,9 @@
 # Dynamic LoRA versus merged-model comparison
 
+Latest measured deployment: [two-B300 1P1D throughput, KV residency and LoRA
+capacity (2026-10-20)](results/qwen38-27b-b300/2026-10-20/1p1d/README.md).
+This is a BF16 eager operating point; multi-adapter throughput remains a bottleneck.
+
 This comparison uses two independent SGLang servers:
 
 - D: original base model with the adapter loaded dynamically.

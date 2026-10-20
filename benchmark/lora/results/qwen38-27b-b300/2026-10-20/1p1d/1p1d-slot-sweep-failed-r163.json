@@ -1,0 +1,4 @@
+{
+  "traceback": "Traceback (most recent call last):\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/sweep_1p1d_slots_r163.py\", line 72, in <module>\n    try:main()\n        ^^^^^^\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/sweep_1p1d_slots_r163.py\", line 23, in main\n    assert not (R/'1p1d-control-failed-r161.json').exists()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "unix_s": 1792466053.8450918
+}
