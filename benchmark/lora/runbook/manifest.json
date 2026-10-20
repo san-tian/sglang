@@ -1,0 +1,171 @@
+{
+  "source_document": "https://neocloud.feishu.cn/docx/W4NLdR7bhoHXL2xBcQDc8NeKnqd",
+  "source_revision": 405,
+  "runtime_commit": "19955ce786d7c573f0a48a77231d5f251866fb1c",
+  "clients_commit": "63a980b42f89c327fcd76968af30cd3f809eecc9",
+  "files": [
+    {
+      "name": "01a-link-inputs.sh",
+      "terminal": 3,
+      "source_block_id": "doxcntuhpEHaL0TaXbMmD8h7Ifg",
+      "sha256": "1c91b6e65cbcd3ea67531b5e7fa5f45391fd06e91964c93224fed0e35623cd9c"
+    },
+    {
+      "name": "01b-install.sh",
+      "terminal": 3,
+      "source_block_id": "doxcn1oOHOWfei4s2uunS6ITuGf",
+      "sha256": "9c16df4c9b3e005ed3562dca992f20e14bd0c73dcdf5ea319e41a80cf05fe371"
+    },
+    {
+      "name": "01c-check-inputs.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnTjmQOYZuCJlNcxkaJWREyh",
+      "sha256": "b87adf3fbc2e0ed008042f8186c270ce62b7af5d116e9f403c7ca620a6d9a489"
+    },
+    {
+      "name": "01d-record-versions.sh",
+      "terminal": 3,
+      "source_block_id": "doxcn8Wg1XSTANJ8Rl0mUX5E49c",
+      "sha256": "548fc66c1f725c5ff401db8ab1043c1c90eaa136a1316068f4433163d07ba95c"
+    },
+    {
+      "name": "01e-hash-inputs.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnyds69Xm0NdzZnYXQZFyUoc",
+      "sha256": "4ba3560a066f0f37e674a6a0c2553ee0770d0c5212aabc681991407e59132db7"
+    },
+    {
+      "name": "02a-export-mapping.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnHFliVr9XP8c6fORvi2JeQh",
+      "sha256": "c9e19fb7bfe21058c4af62fdbdfa25b4f050939e01fbeecc253a0728580845b8"
+    },
+    {
+      "name": "02b-check-mapping.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnx4AOgMdhhwybZ9mH6XYKMf",
+      "sha256": "0d26d8978e9c0c5d9168c3ed49bf8f4b7566345390944de3d98ba61716e9bdad"
+    },
+    {
+      "name": "03a-make-prompts.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnbx9OyiAaaDOJiM8jYxs2bf",
+      "sha256": "0ecbfeaca1f70273c141c62b24e29268251c3e528e2d12a0681df08b2c25fb18"
+    },
+    {
+      "name": "03b-make-zero-and-corpus.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnMBh0tQ1QmIFkRgv0eYhwkc",
+      "sha256": "3734fcce84a6304178963eaa9214ec62492ec682203520f873f1ddcb76d79c0e"
+    },
+    {
+      "name": "04a-start-d.sh",
+      "terminal": 1,
+      "source_block_id": "doxcnnppSG1NuCBYGfQ2hfN779f",
+      "sha256": "d06dc083bcb5aeb33ab7c5398c789a54508fa778aa2c29b12a843f54b25355be"
+    },
+    {
+      "name": "04b-smoke.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnIBUbUJkIJaduUjXbS7pWhd",
+      "sha256": "392fd5a565693aed8ce8fea341fe639a14a8afbb6a8aeb5569e00d41abdc537e"
+    },
+    {
+      "name": "05-lifecycle.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnTIjEQlwXYp4EqfozsALpMg",
+      "sha256": "68fa0b6bb6622c168e91b66c773bd09118ef53e1abee320f506b7d0bb81015a5"
+    },
+    {
+      "name": "06a-merge-and-start-ma.sh",
+      "terminal": 2,
+      "source_block_id": "doxcnue6HAKkEnqnoGS8bahp8mc",
+      "sha256": "d4fefe54ab58a109f2eb875c4a720a523192106246dd7032c1b5a60b90b4df81"
+    },
+    {
+      "name": "06b-check-merge.sh",
+      "terminal": 3,
+      "source_block_id": "doxcntc9TpzyYdne265tnJbI6Df",
+      "sha256": "5e479d7109ea92db91daf377c5d5b9c45f23636c10ff4d09918ff8d29c4ea5cc"
+    },
+    {
+      "name": "07a-check-servers.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnzLLQlbvZFWmEkCv3QTkb8b",
+      "sha256": "287aa086501c927ff701dd39635ec259b4ad94c9b089ffea21654150387c87c8"
+    },
+    {
+      "name": "07b-compare-a.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnW7XOZUE5VGeWn2F8PHUYkg",
+      "sha256": "e0cfbce7ef9244137cae309c20bcf039153d5db957d454d544b8142fe2a393c4"
+    },
+    {
+      "name": "07c-accept-a.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnRkSMKS4G0aFERtz02adcsg",
+      "sha256": "74055831d6f2753dc3f9c8a6241f1a767bab29a2fe83a5e64aebab259fe4ff2d"
+    },
+    {
+      "name": "08a-merge-and-start-mb.sh",
+      "terminal": 2,
+      "source_block_id": "doxcnc8OYj0AiaLYyKZKf3zznBv",
+      "sha256": "0ec49c333fa94f687355a0f4eb5bb37b889f37cabb165a842082823bb5cd9961"
+    },
+    {
+      "name": "08b-compare-and-accept-b.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnxBt70gqHJVDZoP3esEiFNf",
+      "sha256": "8639e3472f5984c380b8c9bc1289431890027385ac59f6acc1d412c108e78f72"
+    },
+    {
+      "name": "09-mixed.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnjsmV0PbR4yhLoaPBKkn6jc",
+      "sha256": "cad74765581aa3d2c4ba5f5a45d41cbfbc6c7f71529df6bb26a025f0ac3b48b2"
+    },
+    {
+      "name": "10a-restore-ma.sh",
+      "terminal": 2,
+      "source_block_id": "doxcnVEXlezFvwX9mBSbuJGyiod",
+      "sha256": "d6044397034f74ca8bd0a952c82de2cf62c0d3e45d9ce503e411e6127e724e11"
+    },
+    {
+      "name": "10b-check-restored-ma.sh",
+      "terminal": 3,
+      "source_block_id": "doxcn0z5K8QHVuXsc6YZZ9MehFm",
+      "sha256": "d382c3f314a7d759ffe678c65d2efe2dae3e1d3db03f6ff2f33b50150b88b8a9"
+    },
+    {
+      "name": "10c-cache-restore.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnbaGc3AwLpsVW6kivJuYlwg",
+      "sha256": "d38219670c6e1cb24ce07f09d4090364aaf28cd4c9e25d2f8546c696a74c6e9c"
+    },
+    {
+      "name": "11-long-context.sh",
+      "terminal": 3,
+      "source_block_id": "doxcngSsnmYXVcnLjDll10fxUWe",
+      "sha256": "790f5d85538bdf326a351d01d3b149e30e271203670b2800e224bd3df71d4f8a"
+    },
+    {
+      "name": "12a-acceptance-template.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnYIjUsDRwhrB69SSBuwHLvh",
+      "sha256": "35458f09f50efd49d52f20de556940b47360f2af7b5434a0899a64e0ac4cbe8a"
+    },
+    {
+      "name": "12b-freeze-evidence.sh",
+      "terminal": 3,
+      "source_block_id": "doxcnxErUHkGb5AO9MKRxMTynSu",
+      "sha256": "f4d70e3a59624399b517486ec39eb5d9056fb37f3b66aaebe29777bd11124042"
+    }
+  ],
+  "packaging_changes": [
+    "shells stop on failure and locate the fixed runtime checkout",
+    "input locations supplied as environment variables",
+    "foreground servers and long client accept a context length environment variable",
+    "service logs append across context-length restarts",
+    "freeze also records final source diff and the executed runbook"
+  ]
+}
