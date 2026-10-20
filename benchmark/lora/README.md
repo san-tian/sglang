@@ -984,3 +984,18 @@ CPU parser test;it supplies no new placement,precision or speed acceptance.
 Actual upcoming controls require live scheduler/GPU UUID placement and raw
 SSE,percentile,configuration and idle-sample audits. Sources and process ID
 are preserved;all measured speed comparisons are still pending.
+
+
+Resident-KV gain acceptance is explicit (R150)
+
+The CPU-only comparator reparses the original raw TP8 and future DP8 metrics,
+26native completions,allocation hashes,and actual scheduler/GPU placement at
+the same512MiB/rank full-attention KV tensor budget. A positive result requires
+sustained simultaneous DP8 residency of8unique6000-token prompts(at least48000
+resident tokens) and a c8 observed peak above TP8. Configured-row ratios are
+reported separately;SSM/metadata and whole-GPU maximum capacity are outside
+this budget. CPU replay rechecked the existing13-request TP8 baseline and931
+raw snapshots:c8 peak32545tokens with5running requests. Fixtures reject a larger
+configured pool without observed gain,and a larger peak without sustained
+full-batch residency. DP8 measurement and the real cross-topology gain report
+remain pending;the synthetic positive fixture is not GPU evidence.

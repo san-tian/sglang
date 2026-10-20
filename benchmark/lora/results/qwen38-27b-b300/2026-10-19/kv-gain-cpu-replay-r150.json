@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "CPU_replay_only": true,
+  "real_TP8_native_requests_reparsed": 13,
+  "real_TP8_metrics_snapshots_reparsed": 931,
+  "real_TP8_c8_observed_KV_tokens": 32545,
+  "real_TP8_c8_observed_running_requests": 5,
+  "negative_fixtures_rejected": [
+    "larger_configured_pool_without_observed_gain",
+    "larger_peak_without_sustained_full_batch"
+  ],
+  "synthetic_positive_fixture_passed": true,
+  "fixtures_are_not_GPU_evidence": true,
+  "new_DP8_capacity_accepted": false,
+  "full_goal_complete": false,
+  "original_TP8_report_sha256": "1d4fe57c262c29211c3e02721201d59ad2521c60b34b2f9712cec810459aa1e9",
+  "source_sha256": "7c16f9e51ddfb47022ac92b6d77bdb8fc1e2fe4388abf3367761f5c2e018117c",
+  "auditor_sha256": "915c24186593046d43b5d71768502204727f0d55788d8558beff40babaafd50c"
+}

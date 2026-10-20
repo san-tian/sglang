@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-20T02:02:00Z",
+  "as_of_utc": "2026-10-20T02:11:00Z",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -485,7 +485,11 @@
     "active-isolated-process-r147.json": "2514ae41836a761830c7c0d9f1e276fa2a90f18ac51cc880e8ea8ab444ca20de",
     "active-isolated-cpu-check-r147.log": "b6a161abed43b9a0dba9259cd451b39b20b10425ac13cc14786554c0e6fac7f1",
     "test_active_isolated_parser_r148.py": "9aabf46a033366514c8bda51b4db682e5d099bfebd8b3b3dcf3b494010987752",
-    "active-isolated-parser-replay-r148.json": "50f4718dc3fd08584f28aeaf964ea4aa3e887e58a23b51ec17eb51cca14e69c9"
+    "active-isolated-parser-replay-r148.json": "50f4718dc3fd08584f28aeaf964ea4aa3e887e58a23b51ec17eb51cca14e69c9",
+    "audit_kv_gain_r150.py": "915c24186593046d43b5d71768502204727f0d55788d8558beff40babaafd50c",
+    "test_kv_gain_r150.py": "7c16f9e51ddfb47022ac92b6d77bdb8fc1e2fe4388abf3367761f5c2e018117c",
+    "kv-gain-cpu-replay-r150.json": "c5e830bb05ee9a8541eb05e14530cd6c22ed97596848cc7aa9ab3b004d6a2a34",
+    "source-kv-gain-r150.json": "83a42e3c61be302cbee22a231a8d898b320ecf072c29afaf28734d46f191c48e"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -1169,6 +1173,22 @@
     ],
     "parser_replay_new_GPU_accepted": false,
     "GPU_speed_accepted": false,
+    "full_goal_complete": false
+  },
+  "equal_byte_KV_gain_gate": {
+    "source_manifest": "source-kv-gain-r150.json",
+    "CPU_replay_report": "kv-gain-cpu-replay-r150.json",
+    "required_DP8_report": "capacity-dpa8-independent-audit-r135.json",
+    "full_attention_KV_bytes_per_rank": 536870912,
+    "physical_GPUs": 8,
+    "positive_gate": "Sustained simultaneous residency for all8 unique6000-token prompts with512-token outputs, at least48000resident prompt tokens, and a strictly higher observed same-scrape c8 peak than TP8. Original raw/placement/configuration/image/hash controls required.",
+    "configured_capacity_ratio_is_not_observed_gain": true,
+    "real_TP8_requests_reparsed": 13,
+    "real_TP8_metric_snapshots_reparsed": 931,
+    "TP8_c8_observed_peak_tokens": 32545,
+    "TP8_c8_running_requests_at_peak": 5,
+    "CPU_negative_fixtures_rejected": 2,
+    "new_DP8_GPU_accepted": false,
     "full_goal_complete": false
   }
 }
