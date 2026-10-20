@@ -1,12 +1,12 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-19T23:48:27.438257+00:00",
+  "as_of_utc": "2026-10-20T00:02:52.051096+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
   "cache_runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
   "topology_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
-  "scope": "Partial overall results. Actual uncached TP8 baseline now completed:248 main/GDN independent D/M pairs/114692 scores,48 mixed requests/768 scores,1908 three-way natural SSE payloads/576 latency statistics/24 rank traces,13 equal-byte actual KV requests and five actual 8GPU placements all passed original audits. See tp8-original-audits-finished-r102.json and linked R99/R100/R101/R64 reports. This establishes baseline precision, speed and observed KV residency at 512MiB full-attention KV per rank; it is not an optimized multi-GPU result, maximum whole-GPU capacity, long-context quality or overall completion. DCP2/attentionDP8/full4P4D/cached multiGPU/isolated speed/new million-cache controls remain required and unaccepted. Prior R84 mixed1152 requests show active/no-cache+19.09%/+9.51%, actual KVhits0, original failed CPU marker preserved with separate successful R105 recheck. No default-policy change.",
+  "scope": "Partial overall results. Actual uncached TP8 baseline now completed:248 main/GDN independent D/M pairs/114692 scores,48 mixed requests/768 scores,1908 three-way natural SSE payloads/576 latency statistics/24 rank traces,13 equal-byte actual KV requests and five actual 8GPU placements all passed original audits. See tp8-original-audits-finished-r102.json and linked R99/R100/R101/R64 reports. This establishes baseline precision, speed and observed KV residency at 512MiB full-attention KV per rank; it is not an optimized multi-GPU result, maximum whole-GPU capacity, long-context quality or overall completion. DCP2/attentionDP8/full4P4D/cached multiGPU/isolated speed/new million-cache controls remain required and unaccepted. Prior R84 mixed1152 requests show active/no-cache+19.09%/+9.51%, actual KVhits0, original failed CPU marker preserved with separate successful R105 recheck. No default-policy change. Additional DCP2 merged-reference cross-topology prefill diagnostic exceeds the screening threshold (mean0.118339/P992.9375/max13.187374nat across49744scores), despite zero within-side repeat noise; difference is concentrated in three long repeated-prefix inputs. This is not a dynamic-LoRA-vs-merge failure attribution. Operator-level actual-kernel/FP64 diagnosis is queued only in early dynamic precision;11CPU parsing/window checks passed, no new GPU operator acceptance. Original baseline/full-topology protocols are unchanged.",
   "files_sha256": {
     "cache-threeway-comparison-r49.json": "0b4b6bc5082b558673cdb486928183353d28f8e413f6d97ab7df1fb1df287f38",
     "cache-threeway-profile-audit-r49.json": "a149614e2886da7ba32f906bd05bf2780a70bc3dbf459c3ff0ddd9520651088f",
@@ -220,7 +220,19 @@
     "tp8-mixed-raw-audit-r101.json": "3d7cd0626a8dc1a21afdbe1e0e95e54175cde82e146521692958436c77f0f8b7",
     "capacity-tp8-independent-audit-r64.json": "1d4fe57c262c29211c3e02721201d59ad2521c60b34b2f9712cec810459aa1e9",
     "tp8-original-audits-finished-r102.json": "25797c1b308dc8ba18c73da82f1fe58b006405bf189fa967c46c35c8121aefaf",
-    "perf-tp8-comparison-r30.json": "90d874a223d9c945a426c2125c73fcd8e9e0eb652c90171e0a90a3a64f23acf1"
+    "perf-tp8-comparison-r30.json": "90d874a223d9c945a426c2125c73fcd8e9e0eb652c90171e0a90a3a64f23acf1",
+    "audit_cross_topology_prefill_r113.py": "300247f84755d7e5fe1e26da13ac64b65bac445dadb9ac50f9be6dadaa58077a",
+    "test_cross_topology_prefill_r113.py": "9c96a52e91f7327b3c2b40e37270aefb1d73270e9d584c1a78b9d13b297e1598",
+    "probe_dcp_extend_kernel_r113.py": "54a63ec156ccf5108cc68d9b0a2fe4378ef202d5ac3561cff4021ea4287cc3ca",
+    "watch_dcp_kernel_probe_r113.py": "6f921e54aa6c8bc7460784a0277750a9163d729ce236adf4b663ec3e712a2f53",
+    "test_probe_phase_r113.py": "f7f8fcc43fe2f219b01a14353070043563f2667719783f3ee7c924331fc2de8d",
+    "source-dcp-diagnostic-r113.json": "32718a548f777546e67da63b03fee399cf8c61ebe0e94b7d4e6a023a32c60a68",
+    "tp8-vs-dcp8x2-merged-prefill-r113.json": "c873ef259b17d49023d2d2acfafc05ded9bb3c6b8559337c86d756c329941bda",
+    "dcp8x2-reference-seal-observation-r113.json": "849da62f402e39ef4007452155500b523f58060ddb1e5793b3d13e69bc420514",
+    "dcp-kernel-probe-process-r113.json": "ebf7bf61e3caa0f00ec1221d000273265fc85283fb44511d2e0c3312e45eb08a",
+    "cross-topology-prefill-tests-r113.log": "df0b764b6f8475c46ddc9ce2b38149a0ad6d821d5b8794661690bae1e07fd9d0",
+    "dcp-probe-phase-tests-r113.log": "d6b4819e0cd37e5ebc9c6ab6e400c6688bc8caa3253c132e169dce60ccb0d822",
+    "cross-topology-prefill-run-r113.log": "fc6d018e44929e40412f00acb1c1eb7477aa0fe37dd50ef7ab949a544c070a29"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -378,5 +390,25 @@
       "tp8-original-audits-finished-r102.json",
       "perf-tp8-comparison-r30.json"
     ]
+  },
+  "dcp2_cross_topology_prefill": {
+    "report": "tp8-vs-dcp8x2-merged-prefill-r113.json",
+    "diagnostic_gate_passed": false,
+    "sides": "TP8 merged versus DCP2 merged; not dynamic LoRA versus merge",
+    "case_pairs": 240,
+    "prefill_scores": 49744,
+    "statistics": {
+      "count": 49744,
+      "mean_abs_nat": 0.11833930431139318,
+      "p99_abs_nat": 2.9375,
+      "max_abs_nat": 13.187374114990234,
+      "argmax_matches": 49712,
+      "argmax_match_fraction": 0.9993567063364426,
+      "passes_logprob_gate": false
+    },
+    "cpu_checks": 11,
+    "kernel_probe_status": "Queued CPU observer, only allowed during early dynamic precision; no GPU operator result yet",
+    "source_manifest": "source-dcp-diagnostic-r113.json",
+    "full_goal_complete": false
   }
 }

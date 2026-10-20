@@ -1,0 +1,10 @@
+test_completed_precision_is_not_a_probe_window (test_probe_phase_r113.ProbeWindowTests.test_completed_precision_is_not_a_probe_window) ... ok
+test_early_precision_allows_probe (test_probe_phase_r113.ProbeWindowTests.test_early_precision_allows_probe) ... ok
+test_later_precision_does_not_allow_a_new_probe (test_probe_phase_r113.ProbeWindowTests.test_later_precision_does_not_allow_a_new_probe) ... ok
+test_native_timing_never_allows_probe (test_probe_phase_r113.ProbeWindowTests.test_native_timing_never_allows_probe) ... ok
+test_reference_or_initialization_is_not_a_probe_window (test_probe_phase_r113.ProbeWindowTests.test_reference_or_initialization_is_not_a_probe_window) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.002s
+
+OK

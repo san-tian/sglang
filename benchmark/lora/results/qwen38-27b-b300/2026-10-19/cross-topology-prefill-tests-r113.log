@@ -1,0 +1,11 @@
+test_large_errors_fail_existing_numerical_gate (test_cross_topology_prefill_r113.PrefillDiagnosticTests.test_large_errors_fail_existing_numerical_gate) ... ok
+test_numerical_error_and_argmax_agreement_are_separate (test_cross_topology_prefill_r113.PrefillDiagnosticTests.test_numerical_error_and_argmax_agreement_are_separate) ... ok
+test_prompt_token_scores_not_top_token_probabilities (test_cross_topology_prefill_r113.PrefillDiagnosticTests.test_prompt_token_scores_not_top_token_probabilities) ... ok
+test_rejects_different_prompt_token_identity (test_cross_topology_prefill_r113.PrefillDiagnosticTests.test_rejects_different_prompt_token_identity) ... ok
+test_rejects_nonfinite_scores (test_cross_topology_prefill_r113.PrefillDiagnosticTests.test_rejects_nonfinite_scores) ... ok
+test_rejects_truncated_prefill (test_cross_topology_prefill_r113.PrefillDiagnosticTests.test_rejects_truncated_prefill) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.001s
+
+OK

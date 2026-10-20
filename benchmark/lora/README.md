@@ -721,3 +721,19 @@ whole-GPU capacity. See the R64 report for timestamped scrape hashes, per-worker
 normalization and all8rank allocation logs. DCP2,attentionDP8,full4P4D,
 cached multiGPU,isolated speed and million-context cache/quality controls remain
 required and pending. The overall goal remains incomplete.
+
+Cross-topology DCP2 prefill diagnostic (R113): the sealed merged reference has
+completed240cases/1,943hashed files including1,920rank captures, with zero
+within-side repeat noise. Comparing fixed-input prefill against TP8 merged
+reveals mean0.118339nat, P992.9375nat, maximum13.187374nat across49,744scores;
+argmax agreement is49,712/49,744. The discrepancy repeats in three long repeated
+prefixes, with first errors exceeding0.1nat around input positions769/1409.
+Both sides use2048-token prefill chunks and the same deterministic Triton/GDN
+settings. This is a merged-vs-merged topology diagnostic, not attribution of a
+LoRA loading error, and no decode scores on differing paths are compared.
+The failed diagnostic is retained as passed=false. Eleven CPU parser/window
+checks passed. An additive actual-kernel versus FP64 arithmetic probe is queued
+only during early DCP dynamic precision, before natural performance sampling;
+its locally emulated LSE combination cannot prove distributed transport or
+whole-model accuracy. No operator GPU result exists yet. Full DCP2 D/M/native/
+KV, attentionDP8,4P4D and optimization controls remain required.

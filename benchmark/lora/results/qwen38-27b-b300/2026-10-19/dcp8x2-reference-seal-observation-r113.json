@@ -1,0 +1,38 @@
+{
+  "scope": "DCP2 merged-reference integrity only; not independent D/M accuracy, native speed or equal-byte KV acceptance",
+  "utc": "2026-10-19T23:54:00.115924+00:00",
+  "case_pairs": 240,
+  "seal_files_rehashed": 1943,
+  "seal_sha256": "0ba8b2aeb3f6e0f75b477afef522e5425642dce5a3f008718624ab891d3b94cd",
+  "repeat_noise": {
+    "prefill": {
+      "count": 43526,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 43526,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "prefill_last": {
+      "count": 210,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 210,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "decode": {
+      "count": 53550,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 53550,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    }
+  },
+  "rank_capture_files": 1920,
+  "full_goal_complete": false
+}

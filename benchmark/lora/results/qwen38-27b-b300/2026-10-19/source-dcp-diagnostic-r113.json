@@ -1,0 +1,16 @@
+{
+  "source_files": {
+    "audit_cross_topology_prefill_r113.py": "300247f84755d7e5fe1e26da13ac64b65bac445dadb9ac50f9be6dadaa58077a",
+    "test_cross_topology_prefill_r113.py": "9c96a52e91f7327b3c2b40e37270aefb1d73270e9d584c1a78b9d13b297e1598",
+    "probe_dcp_extend_kernel_r113.py": "54a63ec156ccf5108cc68d9b0a2fe4378ef202d5ac3561cff4021ea4287cc3ca",
+    "watch_dcp_kernel_probe_r113.py": "6f921e54aa6c8bc7460784a0277750a9163d729ce236adf4b663ec3e712a2f53",
+    "test_probe_phase_r113.py": "f7f8fcc43fe2f219b01a14353070043563f2667719783f3ee7c924331fc2de8d"
+  },
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "cpu_checks": {
+    "raw_prefill_parser": 6,
+    "precision_window_guards": 5
+  },
+  "scope": "Observed cross-topology merged-reference prefill error is diagnostic, not dynamic MoL acceptance. Additive one-GPU kernel probe is queued only in early DCP dynamic precision, before native timing; original coordinators and immutable runtime remain unchanged.",
+  "full_goal_complete": false
+}
