@@ -1,0 +1,9 @@
+{
+  "pid": 1441487,
+  "start_ticks": "6937748",
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_active_isolated_r147.py ",
+  "source_sha256": "c16013333ba4d8c562d22b1d55c425019befe1102cff4a4e85e5bfb5870966cf",
+  "manifest_sha256": "d0d689413744551f4e1933888c403f91d1dbba0867272a7a7064f7028f32bc6c",
+  "resource_acquired": false,
+  "unix_s": 1792461630.1898162
+}

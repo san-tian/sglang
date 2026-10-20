@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-20T01:54:00Z",
+  "as_of_utc": "2026-10-20T02:02:00Z",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -477,7 +477,15 @@
     "dpa8-precision-stage-raw-audit-r145.json": "3caeef203a52a190f0fb1539268d138d101b057b5e376a439f9890ecc07282ee",
     "source-dpa8-precision-stage-r145.json": "7b7bfd8c8a81657d8f6cd1875f5f4b58ed619cc0c74970e8b6d2076c0c50a9b5",
     "dpa8-mixed-stage-raw-audit-r146.json": "66fdc204d4cc0e51b86bfbfc9f0088a8ba4846053e71b2a10aec3198a386cab8",
-    "source-dpa8-mixed-stage-r146.json": "374f6100e0ffb6fa09f32fcd91be43bd427ec36bf3ad2b36c2475a7edea05fa5"
+    "source-dpa8-mixed-stage-r146.json": "374f6100e0ffb6fa09f32fcd91be43bd427ec36bf3ad2b36c2475a7edea05fa5",
+    "run_active_isolated_r147.py": "c16013333ba4d8c562d22b1d55c425019befe1102cff4a4e85e5bfb5870966cf",
+    "audit_active_isolated_r147.py": "4341f0285cf26f22dc895eb9cf368675a7cddd856f02fd31b5719311671cb4c3",
+    "check_active_isolated_r147.py": "404e140bba57f90aff52e2ce1adab0bfaed90d242b3f503b896dc4faf605042a",
+    "source-host-r147.json": "d0d689413744551f4e1933888c403f91d1dbba0867272a7a7064f7028f32bc6c",
+    "active-isolated-process-r147.json": "2514ae41836a761830c7c0d9f1e276fa2a90f18ac51cc880e8ea8ab444ca20de",
+    "active-isolated-cpu-check-r147.log": "b6a161abed43b9a0dba9259cd451b39b20b10425ac13cc14786554c0e6fac7f1",
+    "test_active_isolated_parser_r148.py": "9aabf46a033366514c8bda51b4db682e5d099bfebd8b3b3dcf3b494010987752",
+    "active-isolated-parser-replay-r148.json": "50f4718dc3fd08584f28aeaf964ea4aa3e887e58a23b51ec17eb51cca14e69c9"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -1125,6 +1133,42 @@
     "launch_construction_cases": 12,
     "resource_guard_cases": 3,
     "GPU_accepted": false,
+    "full_goal_complete": false
+  },
+  "active_isolated_candidate": {
+    "source_manifest": "source-host-r147.json",
+    "process_record": "active-isolated-process-r147.json",
+    "runtime_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+    "status": "Actual CPU waiter verified live; GPU resource not acquired",
+    "coordinator_PID": 1441487,
+    "predecessors": 6,
+    "physical_GPU": 2,
+    "other_GPUs_required_idle": 7,
+    "order": [
+      "nocache",
+      "lru",
+      "active",
+      "m",
+      "base",
+      "active",
+      "lru",
+      "nocache"
+    ],
+    "natural_requests_planned": 5088,
+    "fill_requests_planned": 50,
+    "profile_during_timing": false,
+    "CPU_unit_methods_passed": 4,
+    "actual_launch_construction_cases": 8,
+    "resource_guard_cases": 3,
+    "parser_replay": "active-isolated-parser-replay-r148.json",
+    "parser_replayed_original_SSE_payloads": 636,
+    "parser_recomputed_latency_statistics": 192,
+    "corruptions_rejected": [
+      "first_SSE_timestamp",
+      "truncated_final_output"
+    ],
+    "parser_replay_new_GPU_accepted": false,
+    "GPU_speed_accepted": false,
     "full_goal_complete": false
   }
 }

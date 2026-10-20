@@ -1,0 +1,70 @@
+{
+  "runtime_image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "runtime_commit": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "source_files": {
+    "run_active_isolated_r147.py": "c16013333ba4d8c562d22b1d55c425019befe1102cff4a4e85e5bfb5870966cf",
+    "audit_active_isolated_r147.py": "4341f0285cf26f22dc895eb9cf368675a7cddd856f02fd31b5719311671cb4c3",
+    "check_active_isolated_r147.py": "404e140bba57f90aff52e2ce1adab0bfaed90d242b3f503b896dc4faf605042a",
+    "host_common_r144.py": "b7e210359f15130068fbc0eae426a0d1bb48caebb930964570781c34f33b5c92",
+    "audit_topology_native_r100.py": "89c4bfc17163e052031dd661c4f5fe72a42497159b3e9e40209319c55e92a55c",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+    "watch_actual_placement_r92.py": "da058bfbcc1ec404dbac8077a675c1ae0c4335951ae15c716d4842547304d706",
+    "perf_endpoint_r85.py": "fdff746aa3648a7d9037f55af68c5d3e9b37f1d43abd676e465214a7b6d649e8",
+    "perf_cache_fill_r47.py": "8d22eceb275504eb06456e24b1c5773efd5dde31dfa8319e306d70ac95e80e3a",
+    "client-r33/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f"
+  },
+  "predecessors": [
+    {
+      "pid": 1369114,
+      "start_ticks": "6662375",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_attention_dp8_r135.py ",
+      "observed_state": "S"
+    },
+    {
+      "pid": 1370243,
+      "start_ticks": "6663024",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind pd ",
+      "observed_state": "S"
+    },
+    {
+      "pid": 1370319,
+      "start_ticks": "6663129",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind cached ",
+      "observed_state": "S"
+    },
+    {
+      "pid": 1370323,
+      "start_ticks": "6663234",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind isolated ",
+      "observed_state": "S"
+    },
+    {
+      "pid": 1370439,
+      "start_ticks": "6663339",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind million ",
+      "observed_state": "S"
+    },
+    {
+      "pid": 1428833,
+      "start_ticks": "6860043",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_active_multigpu_r144.py ",
+      "observed_state": "S"
+    }
+  ],
+  "order": [
+    "nocache",
+    "lru",
+    "active",
+    "m",
+    "base",
+    "active",
+    "lru",
+    "nocache"
+  ],
+  "natural_requests_planned": 5088,
+  "fill_requests_planned": 50,
+  "scope": "R55 TP1 actual GPU2, other7 idle in every1s observation, BF16 deterministic eager/memory.52/KV65536/SSM256; no profiler during timing. Eight636-request controls in no-cache/LRU/active/M/base/active/LRU/no-cache order; LRU andactive each36864MiB. Three cache controls repeated in reverse order; independent M/base once. First5controls each10cold/warm-fill requests with KV flushed eachtime, separate registration API time. Raw original SSE/group/label/percentile audits, actual GPU/cgroup/image/model/config checks and fill/idle audits. Ratios are observed separate-time controls; c32*2304 exceeds65536KV and may queue. Full precision previously measured separately, not reaccepted by natural IDs. No max-KV/longcontext/fullgoal acceptance. Existing five experiments and R144 run unchanged first.",
+  "full_goal_complete": false,
+  "unix_s": 1792461629.895499
+}

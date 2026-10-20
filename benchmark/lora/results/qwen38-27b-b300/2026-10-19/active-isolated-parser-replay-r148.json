@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "CPU_parser_replay_only": true,
+  "native_responses_replayed": 636,
+  "latency_statistics_recomputed": 192,
+  "corruptions_rejected": [
+    "first_SSE_timestamp",
+    "truncated_final_output"
+  ],
+  "placement_is_synthetic_fixture": true,
+  "original_raw_files_unchanged": true,
+  "new_GPU_accepted": false,
+  "full_goal_complete": false,
+  "test_source_sha256": "9aabf46a033366514c8bda51b4db682e5d099bfebd8b3b3dcf3b494010987752",
+  "auditor_sha256": "4341f0285cf26f22dc895eb9cf368675a7cddd856f02fd31b5719311671cb4c3"
+}

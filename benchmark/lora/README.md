@@ -963,3 +963,24 @@ Four CPU test methods cover12actual launch-construction cases and3resource
 guards,including busy GPUs and PID identity changes. Those checks pass;GPU
 execution and speed acceptance are still pending. Sources and actual process
 record are bound in source-host-r144.json and the snapshot manifest.
+
+
+Matched R55 isolated controls are queued (R147/R148)
+
+After all five original owners andR144 finish,the actual new CPU waiter
+requires no remaining GPU processes before using physicalGPU2. Every1second
+sample requires the other7GPUs idle. Order:no-cache/LRU/active/M/base/active/
+LRU/no-cache,each636natural requests(total5088),without profiler during timing.
+The first5controls additionally measure50cold/warm projection-fill requests
+with KV flushed eachtime. R55 image,memory.52,KV65536 andSSM256 are fixed;
+LRU/active budgets are36864MiB. The largest batch exceeds that KV pool and
+may queue;this is not maximum-capacity evidence or a randomized causal trial.
+
+Four CPU unit methods verify8actual launch constructions and3resource guards.
+R148 replays636sealed R55 SSE responses and192latency statistics through the
+new no-profile parser,and rejects changed first-event timestamps and truncated
+final outputs. GPU placement is an explicit synthetic fixture only in this
+CPU parser test;it supplies no new placement,precision or speed acceptance.
+Actual upcoming controls require live scheduler/GPU UUID placement and raw
+SSE,percentile,configuration and idle-sample audits. Sources and process ID
+are preserved;all measured speed comparisons are still pending.
