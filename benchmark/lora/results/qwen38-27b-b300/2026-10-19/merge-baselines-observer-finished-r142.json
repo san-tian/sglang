@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "full_goal_complete": false,
+  "producer_pid": 1369114,
+  "scope": "Merged native controls only; numerical parity, MoL, capacity and full goal remain separate.",
+  "report": "merge-baselines-audit-r142.json",
+  "report_sha256": "2c4c390f0326d385a9fa2459cd974561ecffce64c41e37a23aa472b3ca2e531d",
+  "unix_s": 1792460296.3375452
+}

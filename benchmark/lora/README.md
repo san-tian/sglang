@@ -911,3 +911,25 @@ explain this failure. This does not identify a responsible layer or sole cause;
 matched-input/batch/chunk layer controls remain required. The analysis uses only
 sealed CPU-readable responses and sends no requests to the ongoing native
 benchmark. See prefill-localization-r141.json and its source/hash bindings.
+
+Completed attention-DP8 merged native baseline (R142)
+
+The original merged-only native audit bodies reparse636TP8 and636attention-DP8
+SSE responses,384latency statistics and16actual rank traces. The only audit AST
+changes select the merged arm and read a separately generated DP8 profiler
+summary; the running experiment's files and original checks are preserved.
+Raw request payload hashes match across topologies, and both controls use the
+same immutable R28 image, weights and physical GPUs0–7 at separate times.
+
+| Input/output tokens | Concurrency | TP8 M tok/s | Attention-DP8 M tok/s | DP8/TP8 | TP8/DP8 E2E P95 s |
+|---|---:|---:|---:|---:|---:|
+|128/128|32|411.52|392.01|0.95258|9.95/10.44|
+|2048/256|1|13.39|11.75|0.87768|19.14/21.92|
+|2048/256|32|356.01|336.07|0.94397|23.01/24.38|
+
+These are cold natural-generation means over3rounds; all16cold/nominal-hot
+points remain in merge-baselines-audit-r142.json. This configuration has not
+shown a merged-baseline speed advantage. Cross-topology numerical parity is
+still failed; MoL speed, same-topology precision/mixed and equal-byte resident
+KV capacity remain separate pending gates. These observations do not accept an
+optimization or infer capacity gains from configured worker counts.

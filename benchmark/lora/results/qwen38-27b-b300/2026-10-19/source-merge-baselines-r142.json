@@ -1,0 +1,16 @@
+{
+  "source_files": {
+    "audit_merge_baselines_r142.py": "f3fb9d814d1c8023dfc0146b5831108154c9abecc93986716760596f266bd278",
+    "watch_merge_baselines_r142.py": "e518b5bf3da9e93dfc23092d2a65d1b42cb6832a778dbbcfa6e56e6095e12501",
+    "audit_topology_native_r100.py": "89c4bfc17163e052031dd661c4f5fe72a42497159b3e9e40209319c55e92a55c",
+    "audit_attention_dp8_native_r135.py": "2913f41998921825718102222bf7b96e93ba3507c94f7a5daf41cfa82b4a8d77",
+    "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08"
+  },
+  "observer_pid": 1400677,
+  "observer_actual_cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_merge_baselines_r142.py ",
+  "actual_state": "S",
+  "unix_s": 1792460217.59412,
+  "read_only_measurement": true,
+  "full_goal_complete": false,
+  "scope": "Select original M-only native audit loop; only AST changes are merged-arm selection and separate profiler-summary read for R135. No producer files, requests or GPU runtime changes."
+}
