@@ -1,0 +1,917 @@
+{
+  "correlation_verified": true,
+  "root_cause_proven": false,
+  "full_goal_complete": false,
+  "scope": "Frozen scheduler logs and raw input logprobs correlate the first cross-topology difference with the first scored token after a prefix/current split. FIFO per-request decomposition is inferred from corpus order and matching aggregate sequence/token counts; logs lack request IDs. No intervention or per-layer capture proves causality. No new GPU experiment or acceptance.",
+  "source_manifest_sha256": "2184f99611e938d805732ce6b1bf676c41e16ec07a84136e384d102012635f9c",
+  "prefill_batch_tokens": [
+    2008,
+    2000,
+    2018,
+    222
+  ],
+  "prefill_batch_sequence_counts": [
+    27,
+    3,
+    2,
+    1
+  ],
+  "fifo_inferred_allocation": [
+    [
+      {
+        "case": "english-0",
+        "start": 0,
+        "end": 20
+      },
+      {
+        "case": "english-1",
+        "start": 0,
+        "end": 22
+      },
+      {
+        "case": "english-2",
+        "start": 0,
+        "end": 24
+      },
+      {
+        "case": "english-3",
+        "start": 0,
+        "end": 23
+      },
+      {
+        "case": "english-4",
+        "start": 0,
+        "end": 29
+      },
+      {
+        "case": "chinese-0",
+        "start": 0,
+        "end": 17
+      },
+      {
+        "case": "chinese-1",
+        "start": 0,
+        "end": 21
+      },
+      {
+        "case": "chinese-2",
+        "start": 0,
+        "end": 27
+      },
+      {
+        "case": "chinese-3",
+        "start": 0,
+        "end": 20
+      },
+      {
+        "case": "chinese-4",
+        "start": 0,
+        "end": 20
+      },
+      {
+        "case": "code-0",
+        "start": 0,
+        "end": 24
+      },
+      {
+        "case": "code-1",
+        "start": 0,
+        "end": 27
+      },
+      {
+        "case": "code-2",
+        "start": 0,
+        "end": 24
+      },
+      {
+        "case": "code-3",
+        "start": 0,
+        "end": 21
+      },
+      {
+        "case": "code-4",
+        "start": 0,
+        "end": 26
+      },
+      {
+        "case": "math-0",
+        "start": 0,
+        "end": 27
+      },
+      {
+        "case": "math-1",
+        "start": 0,
+        "end": 25
+      },
+      {
+        "case": "math-2",
+        "start": 0,
+        "end": 28
+      },
+      {
+        "case": "math-3",
+        "start": 0,
+        "end": 31
+      },
+      {
+        "case": "math-4",
+        "start": 0,
+        "end": 21
+      },
+      {
+        "case": "reasoning-0",
+        "start": 0,
+        "end": 29
+      },
+      {
+        "case": "reasoning-1",
+        "start": 0,
+        "end": 28
+      },
+      {
+        "case": "reasoning-2",
+        "start": 0,
+        "end": 25
+      },
+      {
+        "case": "reasoning-3",
+        "start": 0,
+        "end": 26
+      },
+      {
+        "case": "reasoning-4",
+        "start": 0,
+        "end": 30
+      },
+      {
+        "case": "long_prefix-0",
+        "start": 0,
+        "end": 625
+      },
+      {
+        "case": "long_prefix-1",
+        "start": 0,
+        "end": 768
+      }
+    ],
+    [
+      {
+        "case": "long_prefix-1",
+        "start": 768,
+        "end": 874
+      },
+      {
+        "case": "long_prefix-2",
+        "start": 0,
+        "end": 1126
+      },
+      {
+        "case": "long_prefix-3",
+        "start": 0,
+        "end": 768
+      }
+    ],
+    [
+      {
+        "case": "long_prefix-3",
+        "start": 768,
+        "end": 1378
+      },
+      {
+        "case": "long_prefix-4",
+        "start": 0,
+        "end": 1408
+      }
+    ],
+    [
+      {
+        "case": "long_prefix-4",
+        "start": 1408,
+        "end": 1630
+      }
+    ]
+  ],
+  "inferred_chunk_cuts": {
+    "long_prefix-1": [
+      768
+    ],
+    "long_prefix-3": [
+      768
+    ],
+    "long_prefix-4": [
+      1408
+    ]
+  },
+  "scheduler_logs": {
+    "tp8": {
+      "file": "qwen38-tp8-m-real_r16-r85-final.log",
+      "sha256": "bf7197c5e670f71207b9017ecb219c92af65cc1e735dcddcdf46f9d079725699",
+      "matching_four_batch_groups": [
+        [
+          {
+            "line": 408,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:15 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 94.29"
+          },
+          {
+            "line": 409,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:17 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 870.79"
+          },
+          {
+            "line": 410,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:26 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 235.47"
+          },
+          {
+            "line": 411,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:26 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2260.70"
+          }
+        ],
+        [
+          {
+            "line": 419,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:50 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 83.95"
+          },
+          {
+            "line": 420,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:50 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 14052.67"
+          },
+          {
+            "line": 421,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:50 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 16206.15"
+          },
+          {
+            "line": 422,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:27:50 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2395.48"
+          }
+        ],
+        [
+          {
+            "line": 440,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:13 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 87.35"
+          },
+          {
+            "line": 441,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:13 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 14054.77"
+          },
+          {
+            "line": 442,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:13 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 16054.55"
+          },
+          {
+            "line": 443,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:13 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2495.11"
+          }
+        ],
+        [
+          {
+            "line": 451,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:36 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 87.18"
+          },
+          {
+            "line": 452,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:36 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 14103.13"
+          },
+          {
+            "line": 453,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:37 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 16098.01"
+          },
+          {
+            "line": 454,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:28:37 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2495.52"
+          }
+        ],
+        [
+          {
+            "line": 472,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:00 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 87.59"
+          },
+          {
+            "line": 473,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:00 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 13625.78"
+          },
+          {
+            "line": 474,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:00 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 15865.34"
+          },
+          {
+            "line": 475,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:00 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2511.30"
+          }
+        ],
+        [
+          {
+            "line": 483,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:23 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 87.19"
+          },
+          {
+            "line": 484,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:23 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 14136.26"
+          },
+          {
+            "line": 485,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:23 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 16226.00"
+          },
+          {
+            "line": 486,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:23 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2521.44"
+          }
+        ],
+        [
+          {
+            "line": 504,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:46 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 86.85"
+          },
+          {
+            "line": 505,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:47 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 13923.88"
+          },
+          {
+            "line": 506,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:47 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 16099.63"
+          },
+          {
+            "line": 507,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:29:47 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2501.29"
+          }
+        ],
+        [
+          {
+            "line": 515,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 22:30:10 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 87.36"
+          },
+          {
+            "line": 516,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 22:30:10 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 14078.05"
+          },
+          {
+            "line": 517,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 22:30:10 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 16278.27"
+          },
+          {
+            "line": 518,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 22:30:10 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2528.17"
+          }
+        ]
+      ]
+    },
+    "dcp8x2": {
+      "file": "qwen38-dcp8x2-m-real_r16-r31-final.log",
+      "sha256": "6abcbda8960e6d4e26d5473d2b7ba082216a4504b9660f8f9da1fe136d1d508a",
+      "matching_four_batch_groups": [
+        [
+          {
+            "line": 414,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:49:51 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 80.63"
+          },
+          {
+            "line": 415,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:49:54 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 787.54"
+          },
+          {
+            "line": 416,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:03 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 218.37"
+          },
+          {
+            "line": 417,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:03 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2019.59"
+          }
+        ],
+        [
+          {
+            "line": 425,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:30 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 74.79"
+          },
+          {
+            "line": 426,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:30 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 12805.00"
+          },
+          {
+            "line": 427,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:30 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 14557.67"
+          },
+          {
+            "line": 428,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:30 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2143.36"
+          }
+        ],
+        [
+          {
+            "line": 446,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:57 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 74.67"
+          },
+          {
+            "line": 447,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:57 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 12758.13"
+          },
+          {
+            "line": 448,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:57 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 14505.96"
+          },
+          {
+            "line": 449,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:50:57 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2154.89"
+          }
+        ],
+        [
+          {
+            "line": 457,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:24 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 74.97"
+          },
+          {
+            "line": 458,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:24 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 10949.51"
+          },
+          {
+            "line": 459,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:25 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 12311.69"
+          },
+          {
+            "line": 460,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:25 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 1702.49"
+          }
+        ],
+        [
+          {
+            "line": 478,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:51 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 74.90"
+          },
+          {
+            "line": 479,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:52 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 12893.33"
+          },
+          {
+            "line": 480,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:52 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 14355.46"
+          },
+          {
+            "line": 481,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:51:52 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2149.99"
+          }
+        ],
+        [
+          {
+            "line": 489,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:19 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 74.38"
+          },
+          {
+            "line": 490,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:19 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 12874.73"
+          },
+          {
+            "line": 491,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:19 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 14529.62"
+          },
+          {
+            "line": 492,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:19 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2131.84"
+          }
+        ],
+        [
+          {
+            "line": 510,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:46 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 73.92"
+          },
+          {
+            "line": 511,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:47 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 12818.16"
+          },
+          {
+            "line": 512,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:47 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 14489.66"
+          },
+          {
+            "line": 513,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:52:47 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2149.27"
+          }
+        ],
+        [
+          {
+            "line": 521,
+            "seqs": 27,
+            "tokens": 2008,
+            "cached": 0,
+            "text": "[2026-10-19 23:53:14 TP0] Prefill batch, #new-seq: 27, #new-token: 2008, #cached-token: 0, full token usage: 0.00, mamba usage: 0.35, #running-req: 0, #queue-req: 1, #pending-token: 4240, cuda graph: False, input throughput (token/s): 74.64"
+          },
+          {
+            "line": 522,
+            "seqs": 3,
+            "tokens": 2000,
+            "cached": 0,
+            "text": "[2026-10-19 23:53:14 TP0] Prefill batch, #new-seq: 3, #new-token: 2000, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 26, #queue-req: 0, #pending-token: 2240, cuda graph: False, input throughput (token/s): 12748.38"
+          },
+          {
+            "line": 523,
+            "seqs": 2,
+            "tokens": 2018,
+            "cached": 0,
+            "text": "[2026-10-19 23:53:14 TP0] Prefill batch, #new-seq: 2, #new-token: 2018, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 28, #queue-req: 0, #pending-token: 222, cuda graph: False, input throughput (token/s): 14616.34"
+          },
+          {
+            "line": 524,
+            "seqs": 1,
+            "tokens": 222,
+            "cached": 0,
+            "text": "[2026-10-19 23:53:14 TP0] Prefill batch, #new-seq: 1, #new-token: 222, #cached-token: 0, full token usage: 0.00, mamba usage: 0.37, #running-req: 29, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 2119.50"
+          }
+        ]
+      ]
+    }
+  },
+  "observations": [
+    {
+      "case": "long_prefix-1",
+      "round": 0,
+      "cache": "cold",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 0,
+      "cache": "cold",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 0,
+      "cache": "cold",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    },
+    {
+      "case": "long_prefix-1",
+      "round": 0,
+      "cache": "hot",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 0,
+      "cache": "hot",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 0,
+      "cache": "hot",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    },
+    {
+      "case": "long_prefix-1",
+      "round": 1,
+      "cache": "cold",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 1,
+      "cache": "cold",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 1,
+      "cache": "cold",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    },
+    {
+      "case": "long_prefix-1",
+      "round": 1,
+      "cache": "hot",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 1,
+      "cache": "hot",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 1,
+      "cache": "hot",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    },
+    {
+      "case": "long_prefix-1",
+      "round": 2,
+      "cache": "cold",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 2,
+      "cache": "cold",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 2,
+      "cache": "cold",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    },
+    {
+      "case": "long_prefix-1",
+      "round": 2,
+      "cache": "hot",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 2,
+      "cache": "hot",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 2,
+      "cache": "hot",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    },
+    {
+      "case": "long_prefix-1",
+      "round": 3,
+      "cache": "cold",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 3,
+      "cache": "cold",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 3,
+      "cache": "cold",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    },
+    {
+      "case": "long_prefix-1",
+      "round": 3,
+      "cache": "hot",
+      "input_tokens": 874,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-3",
+      "round": 3,
+      "cache": "hot",
+      "input_tokens": 1378,
+      "inferred_prefix_length": 768,
+      "first_nonzero_input_index_0based": 769,
+      "first_above_0p1_input_index_0based": 769
+    },
+    {
+      "case": "long_prefix-4",
+      "round": 3,
+      "cache": "hot",
+      "input_tokens": 1630,
+      "inferred_prefix_length": 1408,
+      "first_nonzero_input_index_0based": 1409,
+      "first_above_0p1_input_index_0based": 1409
+    }
+  ]
+}

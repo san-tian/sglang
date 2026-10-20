@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-20T00:19:54.236045+00:00",
+  "as_of_utc": "2026-10-20T00:22:55.018628+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -239,7 +239,11 @@
     "dcp-merge-baseline-audit-r114.log": "8ee7953da5d75d09b4838797c1fe28363d9f5ab26401c63e8889f6c56ec40648",
     "dcp-extend-kernel-probe-r113.json": "52de160e4fb04494c2654ec512528da58aa165c8eb365dcf4eb14e53b0ca82b9",
     "dcp-kernel-probe-finished-r113.json": "f76528d16b10381624637c2363d07f2f9b927b01e0702ac1273757bce28a356d",
-    "dcp-extend-kernel-probe-r113.log": "0145788bda34589531d0e0bc7fcb78d817f0de2a1e74af663e5195eeca954fd8"
+    "dcp-extend-kernel-probe-r113.log": "0145788bda34589531d0e0bc7fcb78d817f0de2a1e74af663e5195eeca954fd8",
+    "audit_dcp_chunk_boundary_r115.py": "71a4239cd5663598daa25ee599adb711be9837c874e630f5418c284f2e0f0e5a",
+    "source-dcp-boundary-r115.json": "2184f99611e938d805732ce6b1bf676c41e16ec07a84136e384d102012635f9c",
+    "dcp-chunk-boundary-correlation-r115.json": "ce56eeed4989b5174667f21ca73175746f01c32fa4e41a96562810abc4a903df",
+    "dcp-boundary-audit-r115.log": "a517ffb50fb8605fb4dd922e29a492f7c44bc821a3b427b2c5b35cf6e8da01d2"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -421,7 +425,25 @@
     "kernel_probe_finished": "dcp-kernel-probe-finished-r113.json",
     "kernel_probe_max_error_vs_fp64": 0.00814962387084961,
     "kernel_probe_dcp_vs_unified_max_abs": 0.00390625,
-    "kernel_probe_peak_pytorch_allocated_bytes": 109102080
+    "kernel_probe_peak_pytorch_allocated_bytes": 109102080,
+    "chunk_boundary_correlation": {
+      "report": "dcp-chunk-boundary-correlation-r115.json",
+      "correlation_verified": true,
+      "root_cause_proven": false,
+      "affected_case_observations": 24,
+      "fifo_inferred_prefix_lengths": {
+        "long_prefix-1": [
+          768
+        ],
+        "long_prefix-3": [
+          768
+        ],
+        "long_prefix-4": [
+          1408
+        ]
+      },
+      "scope": "Both frozen scheduler logs match the four aggregate batches8times; per-request FIFO allocation is inferred and logs lack request IDs. First nonzero score at prefix length+1. No causal intervention or new GPU experiment."
+    }
   },
   "dcp2_merge_baseline": {
     "report": "dcp8x2-merge-baseline-observation-r114.json",

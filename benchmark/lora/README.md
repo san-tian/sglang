@@ -761,3 +761,15 @@ separate times with automatic KV pools; they are not isolated or equal-byte KV
 capacity comparisons. No dynamic/base speed ratio, D/M accuracy, DCP2 capacity,
 cross-topology numerical parity, attentionDP8 or4P4D acceptance follows. The
 R113 cross-topology prefill failure remains unresolved.
+
+
+Chunk-boundary correlation (R115): both frozen TP8/DCP2 scheduler logs contain
+8 identical four-batch groups with token counts2008/2000/2018/222 and sequence
+counts27/3/2/1. FIFO decomposition of the fixed30-input corpus infers prefix
+lengths768/768/1408 for long_prefix-1/-3/-4. All24 affected case-round/mode
+observations first differ at zero-based input index prefix_length+1; all other
+cases have zero cross-topology prefill difference. Raw responses and frozen log
+hashes were checked. The aggregate logs lack per-request IDs, so the FIFO mapping
+is an inference, not direct layer instrumentation or a causal proof. This
+narrows follow-up to the prefix/current split and distributed path; the failed
+R113 model-level parity gate remains false. No new GPU experiment was run.

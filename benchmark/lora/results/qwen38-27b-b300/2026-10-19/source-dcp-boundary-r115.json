@@ -1,0 +1,17 @@
+{
+  "scope": "Read-only correlation; no GPU intervention, rootcause or model acceptance.",
+  "source_files": {
+    "audit_dcp_chunk_boundary_r115.py": "71a4239cd5663598daa25ee599adb711be9837c874e630f5418c284f2e0f0e5a",
+    "audit_cross_topology_prefill_r113.py": "300247f84755d7e5fe1e26da13ac64b65bac445dadb9ac50f9be6dadaa58077a",
+    "audit_topology_original_r99.py": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952",
+    "tp8-vs-dcp8x2-merged-prefill-r113.json": "c873ef259b17d49023d2d2acfafc05ded9bb3c6b8559337c86d756c329941bda"
+  },
+  "scheduler_logs": {
+    "tp8": "qwen38-tp8-m-real_r16-r85-final.log",
+    "dcp8x2": "qwen38-dcp8x2-m-real_r16-r31-final.log"
+  },
+  "scheduler_log_sha256": {
+    "tp8": "bf7197c5e670f71207b9017ecb219c92af65cc1e735dcddcdf46f9d079725699",
+    "dcp8x2": "6abcbda8960e6d4e26d5473d2b7ba082216a4504b9660f8f9da1fe136d1d508a"
+  }
+}
