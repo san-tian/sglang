@@ -900,3 +900,14 @@ independent same-topology MoL/merge,mixed,native and KV protocols continue;
 cross-topology equivalence remains unaccepted. Fixed prefill chunk/logical-batch
 controls separating full-attention,GDN and TP arithmetic remain necessary.
 No scores on different natural decode continuation paths are compared.
+
+R141 independently rehashes both sealed references and recomputes the original
+cross-topology report before localizing it by input length and token position.
+The 4,720 scores from inputs no longer than256tokens already fail:mean
+0.046751398nat,P990.499006271nat,max3.644939244nat. All25short cases contain a
+position above0.1nat. Each topology's43,526within-side repeated scores has zero
+drift and100%argmax agreement. Thus long-input chunk boundaries alone cannot
+explain this failure. This does not identify a responsible layer or sole cause;
+matched-input/batch/chunk layer controls remain required. The analysis uses only
+sealed CPU-readable responses and sends no requests to the ongoing native
+benchmark. See prefill-localization-r141.json and its source/hash bindings.

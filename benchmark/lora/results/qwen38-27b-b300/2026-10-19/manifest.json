@@ -1,12 +1,12 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-20T01:22:36.981827+00:00",
+  "as_of_utc": "2026-10-20T01:32:05.306384+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
   "cache_runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
   "topology_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
-  "scope": "Partial overall results. Original TP8 full baseline remains accepted:248 independent main/GDN D/M pairs/114692 scores,48 mixed,1908 native SSE/24 traces,13 equal-byte KV requests. Original R28 DCP same-topology248 D/M pairs passed, but its48-request mixed test failed (decode P990.110658,max0.256179nat,716/720argmax); its coordinator and original R102 observer terminated. Original failed evidence is preserved. Candidate image R116 changes only deterministic DCP extend metadata/kernel in the R28 image. Actual two-rank NCCL production-backend probe passes47 cases/rank including34 bit-identical chunk cuts,7FP64 cases,5 unchanged nonDCP comparisons and1 ragged test; old cut1 control deadlock is preserved and skipped only on the old path in corrected probeR117. Actual new8GPU48-request mixed regression passes768 zero-error scores; actual physical placement is independently bound. Candidate R125 cross-topology merged prefill FAILED:49744 scores,mean0.760610338nat,P9910.124895096nat,max24.039284229nat,48192/49744argmax. R118 was explicitly terminated after the owned performance client receivedSIGTERM due this numerical rejection; its full raw auditor terminal result is false. Real-model QKV/FP64 diagnosticR127 is started with an explicit hook and unchanged returned outputs. No full new-image acceptance; full4P4D, cached multiGPU, isolated and million/quality controls remain required. Four childless CPU waiters now depend explicitly on the new full recovery completion, without faking any original success marker. No new speed/capacity or complete-topology acceptance follows from the mixed fix. R129 real-model QKV diagnosis completed:48records,24bit-exact replicated KV pairs,11886592exact KV write/read elements and35659776independent FP64 attention outputs. Candidate/full-model cross-topology remains rejected, despite both local attention paths being close to FP64. Server-dispatcher means are explicitly discarded. R130 empty-driver generated completions are INVALID and quarantined,0GPU tests. R131 actual DP8 startup failed from CLI32/8=4SSMslots<5required. R135 original-image DP8 usesCLI256/global,32actual slots per worker,4effective requests per worker;8actual scheduler PID/GPU matches and8SSM allocations verified, no numerical/speed/capacity acceptance yet. Four childless waiters explicitly migrated to resource-release-only barrierR136, avoiding impossible numerical-success dependency; unchanged4P4D/cache/isolated/million measurement sources and original failed reports preserved. R137 runs unchanged original PD raw auditors against actual replacement PID. R139 original-image TP8/attentionDP8 merged cross-topology prefill FAILED:240pairs/49744scores,mean0.924584424nat,P9910.227768898nat,max28.344268322nat,47808/49744argmax. Both images are the same originalR28;this is not specific to the new DCP override. Same-topology MoL/merge and mixed gates remain unchanged and separate; no cross-topology lossless claim is accepted. Fixed-chunk/logical-batch and full-attention/GDN/TP controls remain necessary.",
+  "scope": "Partial overall results. Original TP8 full baseline remains accepted:248 independent main/GDN D/M pairs/114692 scores,48 mixed,1908 native SSE/24 traces,13 equal-byte KV requests. Original R28 DCP same-topology248 D/M pairs passed, but its48-request mixed test failed (decode P990.110658,max0.256179nat,716/720argmax); its coordinator and original R102 observer terminated. Original failed evidence is preserved. Candidate image R116 changes only deterministic DCP extend metadata/kernel in the R28 image. Actual two-rank NCCL production-backend probe passes47 cases/rank including34 bit-identical chunk cuts,7FP64 cases,5 unchanged nonDCP comparisons and1 ragged test; old cut1 control deadlock is preserved and skipped only on the old path in corrected probeR117. Actual new8GPU48-request mixed regression passes768 zero-error scores; actual physical placement is independently bound. Candidate R125 cross-topology merged prefill FAILED:49744 scores,mean0.760610338nat,P9910.124895096nat,max24.039284229nat,48192/49744argmax. R118 was explicitly terminated after the owned performance client receivedSIGTERM due this numerical rejection; its full raw auditor terminal result is false. Real-model QKV/FP64 diagnosticR127 is started with an explicit hook and unchanged returned outputs. No full new-image acceptance; full4P4D, cached multiGPU, isolated and million/quality controls remain required. Four childless CPU waiters now depend explicitly on the new full recovery completion, without faking any original success marker. No new speed/capacity or complete-topology acceptance follows from the mixed fix. R129 real-model QKV diagnosis completed:48records,24bit-exact replicated KV pairs,11886592exact KV write/read elements and35659776independent FP64 attention outputs. Candidate/full-model cross-topology remains rejected, despite both local attention paths being close to FP64. Server-dispatcher means are explicitly discarded. R130 empty-driver generated completions are INVALID and quarantined,0GPU tests. R131 actual DP8 startup failed from CLI32/8=4SSMslots<5required. R135 original-image DP8 usesCLI256/global,32actual slots per worker,4effective requests per worker;8actual scheduler PID/GPU matches and8SSM allocations verified, no numerical/speed/capacity acceptance yet. Four childless waiters explicitly migrated to resource-release-only barrierR136, avoiding impossible numerical-success dependency; unchanged4P4D/cache/isolated/million measurement sources and original failed reports preserved. R137 runs unchanged original PD raw auditors against actual replacement PID. R139 original-image TP8/attentionDP8 merged cross-topology prefill FAILED:240pairs/49744scores,mean0.924584424nat,P9910.227768898nat,max28.344268322nat,47808/49744argmax. Both images are the same originalR28;this is not specific to the new DCP override. Same-topology MoL/merge and mixed gates remain unchanged and separate; no cross-topology lossless claim is accepted. Fixed-chunk/logical-batch and full-attention/GDN/TP controls remain necessary. R141 CPU-only sealed-response localization:4720 short-input scores already fail mean0.046751398nat/P990.499006271nat;25short cases have >0.1nat positions. Both topologies independently repeat43526scores with zero drift. Long-input chunk boundaries cannot be the sole explanation. No new model speed/capacity acceptance.",
   "files_sha256": {
     "cache-threeway-comparison-r49.json": "0b4b6bc5082b558673cdb486928183353d28f8e413f6d97ab7df1fb1df287f38",
     "cache-threeway-profile-audit-r49.json": "a149614e2886da7ba32f906bd05bf2780a70bc3dbf459c3ff0ddd9520651088f",
@@ -458,7 +458,9 @@
     "source-pd-after-migration-r137.json": "66a5d60b22ad58e6c037a901ea5738328687ed65c14599b0f370a5ebddec7323",
     "audit_tp8_vs_attention_dp8_r139.py": "125aa1713a19e61cbcff4609b6dc6013c349674a538c6d5483c6233be3cf4340",
     "source-attention-dp8-cross-r139.json": "757b10cd1e4571027f43e2e9a1a9d9ba9355b4b55b20c73cc528f8c86eb4502e",
-    "tp8-vs-attention-dp8-prefill-r139.json": "d6296e09e85053fece98bb75bb51077f1c38a2cc68804cb618c194c463e73621"
+    "tp8-vs-attention-dp8-prefill-r139.json": "d6296e09e85053fece98bb75bb51077f1c38a2cc68804cb618c194c463e73621",
+    "audit_prefill_localization_r141.py": "8943267d60cbef1575453680be41f1111867bcafeb8e20373e7688c00ac8376e",
+    "prefill-localization-r141.json": "153a61255937cf2da0b1fd3282cfdb80e82feadb8cfe79a721a3ddfa1119116b"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -844,5 +846,42 @@
       "dpa8": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288"
     },
     "scope": "Original immutable R28 image on both sides: R135 attentionDP8 merged versus R85 TP8 merged. Cross-topology merged-reference prefill only; no runtime source overrides. Identical fixed input tokens; no decode scores on differing continuation paths are compared. This neither accepts dynamic MoL precision nor native speed, KV residency, or the overall goal."
+  },
+  "attention_DP8_prefill_localization": {
+    "diagnosis_completed": true,
+    "accuracy_accepted": false,
+    "case_pairs": 240,
+    "short_cases_with_error_gt_0_1": 25,
+    "within_topology_repeat_noise": {
+      "tp8": {
+        "count": 43526,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 43526,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      },
+      "dpa8": {
+        "count": 43526,
+        "mean_abs_nat": 0.0,
+        "p99_abs_nat": 0.0,
+        "max_abs_nat": 0.0,
+        "argmax_matches": 43526,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": true
+      }
+    },
+    "conclusion": "Cross-topology drift already occurs below the DP8 256-token prefill chunk size; a long-input chunk-boundary-only explanation is insufficient. This does not identify the responsible layer or prove TP arithmetic, attention or GDN as the sole cause.",
+    "report": "prefill-localization-r141.json",
+    "short_input_scores": {
+      "count": 4720,
+      "mean_abs_nat": 0.046751398168781926,
+      "p99_abs_nat": 0.4990062713623047,
+      "max_abs_nat": 3.6449392437934875,
+      "argmax_matches": 4704,
+      "argmax_match_fraction": 0.9966101694915255,
+      "passes_logprob_gate": false
+    }
   }
 }
