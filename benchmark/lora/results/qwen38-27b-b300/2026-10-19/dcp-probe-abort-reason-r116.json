@@ -1,0 +1,8 @@
+{
+  "at_unix": 1792456830.6229172,
+  "scope": "Abort only owned diagnostic after actual rank-stack evidence of divergent old-path collectives, not an observation timeout. Candidate GPU acceptance remains unproven.",
+  "stacks_sha256": "255bfddc5ffea0e5b7f0b13ede58df0e19162970b7aad2d6f5b77aa90e9b95e5",
+  "original_control_fault": "cut1 gives prefix shard lengths1/0; old path locally returns on empty prefix, leaving rank0 in prefix work while rank1 entered the next candidate call.",
+  "candidate_image_unchanged": true,
+  "correction": "R117 keeps candidate cut1 and skips only old-path cut1 control; all >=2 old controls retained."
+}

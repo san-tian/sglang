@@ -1,0 +1,19 @@
+{
+  "at_unix": 1792456799.3373868,
+  "rows": [
+    {
+      "host_pid": 1257272,
+      "namespace_pid": 475,
+      "returncode": 0,
+      "stdout": "Process 475: /opt/sglang/bin/python3 -u /work/qwen38-mol-multigpu-20261019/probe_dcp_chunk_invariance_r116.py --output /work/qwen38-mol-multigpu-20261019/dcp-chunk-invariance-probe-r116.json --original-kernel /work/qwen38-mol-multigpu-20261019/extend_attention_r28_original_r116.py\nPython v3.12.15 (/opt/python/cpython-3.12.15-linux-x86_64-gnu/bin/python3.12)\n\nThread 475 (active): \"MainThread\"\n    _init_handles (triton/compiler/compiler.py:480)\n    launch_metadata (triton/compiler/compiler.py:496)\n    run (triton/runtime/jit.py:778)\n    <lambda> (triton/runtime/jit.py:374)\n    extend_attention_fwd (sglang/kernels/ops/attention/extend_attention.py:1097)\n    _forward_extend_dcp (triton_backend.py:2102)\n    forward (probe_dcp_chunk_invariance_r116.py:93)\n    run (probe_dcp_chunk_invariance_r116.py:115)\n    <module> (probe_dcp_chunk_invariance_r116.py:167)\n",
+      "stderr": ""
+    },
+    {
+      "host_pid": 1257273,
+      "namespace_pid": 476,
+      "returncode": 0,
+      "stdout": "Process 476: /opt/sglang/bin/python3 -u /work/qwen38-mol-multigpu-20261019/probe_dcp_chunk_invariance_r116.py --output /work/qwen38-mol-multigpu-20261019/dcp-chunk-invariance-probe-r116.json --original-kernel /work/qwen38-mol-multigpu-20261019/extend_attention_r28_original_r116.py\nPython v3.12.15 (/opt/python/cpython-3.12.15-linux-x86_64-gnu/bin/python3.12)\n\nThread 476 (active): \"MainThread\"\n    forward (probe_dcp_chunk_invariance_r116.py:82)\n    run (probe_dcp_chunk_invariance_r116.py:113)\n    <module> (probe_dcp_chunk_invariance_r116.py:167)\n",
+      "stderr": ""
+    }
+  ]
+}

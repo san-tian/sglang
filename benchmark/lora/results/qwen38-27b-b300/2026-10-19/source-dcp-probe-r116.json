@@ -1,0 +1,11 @@
+{
+  "source_files": {
+    "run_dcp_probe_host_r116.py": "07e61ba812986a4ea3580e8b73782db06a0ff84e9444773d997ca0d4d6dac72f",
+    "probe_dcp_chunk_invariance_r116.py": "9214f25abbf5cbb7e617b18cf87c5140fcc4d804024f6f6fe07f4a396beaf4e0",
+    "extend_attention_r28_original_r116.py": "51589f3cf8562b88cac52580d4fbf49a4bc3694e565eda74f7846b94783fc723",
+    "source-runtime-candidate-r116.json": "414195656f8881dbfa2a866c1b67466cb02af329db549e939d9140aa589c8947",
+    "audit_failed_mixed_r116.py": "0f9a2edc17a14fe1edbbf0b1a6945b960791bf376b2904cb87cce1ba3d20efeb",
+    "source-failed-mixed-r116.json": "960bf4da90fd277827ce0600f3ad3084a04cc87f35a55f31b8f66b9318a7a13b"
+  },
+  "scope": "Actual two-GPU candidate diagnostic; original failed mixed evidence preserved; no broad model/speed acceptance."
+}

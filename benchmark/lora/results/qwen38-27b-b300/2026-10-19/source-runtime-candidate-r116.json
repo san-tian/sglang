@@ -1,0 +1,10 @@
+{
+  "base_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "candidate_parent_commit": "8f89d323d4e1b2cd39b7508ea323400a59a94b63",
+  "scope": "Candidate deterministic DCP unified sharded prefill; not accepted until actual GPU and full-model results. Only two source files differ from R28 image.",
+  "source_files": {
+    "Dockerfile": "5bccebc84a8577da9d0b04b03362157199c391a27e7fa26265feddc8c8805b9b",
+    "python/sglang/kernels/ops/attention/extend_attention.py": "48a2b99e353745dff42bebe9e154691bb80d352620e36580f5e21ec1d0b90c23",
+    "python/sglang/srt/layers/attention/triton_backend.py": "bc7a90ccf4a93b3e9ba8e429cbacbfa349095302da8468603c3565481a694139"
+  }
+}

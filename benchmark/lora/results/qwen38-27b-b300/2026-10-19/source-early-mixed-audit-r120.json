@@ -1,0 +1,9 @@
+{
+  "source_files": {
+    "audit_early_mixed_r120.py": "41f861c7f5ffc5db33878a7853882d3b4e35794b76bcfded57ad4a9d1b7f5c25",
+    "audit_failed_mixed_r116.py": "0f9a2edc17a14fe1edbbf0b1a6945b960791bf376b2904cb87cce1ba3d20efeb",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+    "source-host-r118.json": "24544189038731f89ee823a5101628275e4f9832ba60442c5dfbb1c9c84c0bec"
+  },
+  "scope": "Early exact original mixed failure only; strict all finite raw capture/phase statistics, record any numerical failure, no complete topology or speed claim."
+}

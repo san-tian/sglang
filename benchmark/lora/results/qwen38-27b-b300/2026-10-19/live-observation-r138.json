@@ -1,0 +1,116 @@
+{
+  "at_unix": 1792458981.7626543,
+  "processes": [
+    {
+      "pid": 1369114,
+      "exists": true,
+      "state": "S",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_attention_dp8_r135.py ",
+      "children": "1378241 ",
+      "wchan": "do_wait"
+    },
+    {
+      "pid": 1369115,
+      "exists": true,
+      "state": "S",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_attention_dp8_r135.py ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1375221,
+      "exists": true,
+      "state": "S",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_pd_after_resource_queue_r137.py ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1370243,
+      "exists": true,
+      "state": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind pd ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1370319,
+      "exists": true,
+      "state": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind cached ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1370323,
+      "exists": true,
+      "state": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind isolated ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1370439,
+      "exists": true,
+      "state": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind million ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    }
+  ],
+  "container_id": "6113cf1aaad1e164dc3cb4614211b01e14a13c3bcc821e73140f1d00f876b62c",
+  "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "state": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 1369264,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-10-20T01:14:36.880358527Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "command": [
+    "python3",
+    "-m",
+    "sglang.launch_server",
+    "--model-path",
+    "/work/qwen38-mol-development-20261019/merged/real_r16",
+    "--served-model-name",
+    "qwen38-27b",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "30704",
+    "--tp-size",
+    "8",
+    "--context-length",
+    "4096",
+    "--mem-fraction-static",
+    "0.5",
+    "--max-mamba-cache-size",
+    "256",
+    "--max-running-requests",
+    "32",
+    "--chunked-prefill-size",
+    "2048",
+    "--disable-cuda-graph",
+    "--enable-custom-logit-processor",
+    "--linear-attn-prefill-backend",
+    "triton",
+    "--enable-deterministic-inference",
+    "--attention-backend",
+    "triton",
+    "--bf16-gemm-backend",
+    "torch",
+    "--attn-dp-size",
+    "8",
+    "--random-seed",
+    "0"
+  ],
+  "full_goal_complete": false,
+  "scope": "Live observation only, not numerical or speed acceptance"
+}

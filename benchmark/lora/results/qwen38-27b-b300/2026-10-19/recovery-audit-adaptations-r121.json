@@ -1,0 +1,28 @@
+{
+  "parents": {
+    "audit_recovery_precision_r121.py": {
+      "parent": "audit_topology_original_r99.py",
+      "parent_sha256": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952"
+    },
+    "audit_recovery_native_r121.py": {
+      "parent": "audit_topology_native_r100.py",
+      "parent_sha256": "89c4bfc17163e052031dd661c4f5fe72a42497159b3e9e40209319c55e92a55c"
+    },
+    "audit_recovery_mixed_r121.py": {
+      "parent": "audit_topology_mixed_r101.py",
+      "parent_sha256": "67785956d86357ec88bf1a1404abc5a6e82d511c0c0bda39c55d78a623bb308a"
+    },
+    "audit_recovery_capacity_r121.py": {
+      "parent": "audit_capacity_residency_r64.py",
+      "parent_sha256": "5522dad2d7e8ef2540f3083c4f5e67848551ab2142183793250f5c31104c2e2c"
+    }
+  },
+  "precision_numerical_helpers_ast_unchanged": [
+    "numerical_stats",
+    "check_statistics",
+    "native_scores",
+    "capture_scores"
+  ],
+  "changes": "Image ID, paths/namespace, parent-runtime-plus-two-overrides provenance, output names and scope labels only. All raw-score, count, finite, statistic, capture agreement, natural response, trace, placement, same-scrape KV and equal-byte assertions retained.",
+  "gpu_tests_executed": false
+}

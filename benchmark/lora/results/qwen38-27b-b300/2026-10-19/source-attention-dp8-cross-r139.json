@@ -1,0 +1,9 @@
+{
+  "source_files": {
+    "audit_tp8_vs_attention_dp8_r139.py": "125aa1713a19e61cbcff4609b6dc6013c349674a538c6d5483c6233be3cf4340",
+    "audit_topology_original_r99.py": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952",
+    "source-host-r135.json": "f19c7bce083d676f2e162d841c132c57df6c42c9c34c77669605447d12515233",
+    "source-host-r85.json": "e8124d7bc96dfd6e4d2d5b6c84ff26c43cd3dd8dc8eda2680d2cf27825115658"
+  },
+  "scope": "Read-only cross-topology original-image TP8/attentionDP8 merged prefill diagnostic; original finite/gate/statistics/hash assertions retained."
+}

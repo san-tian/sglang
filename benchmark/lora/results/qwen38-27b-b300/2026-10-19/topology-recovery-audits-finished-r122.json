@@ -1,0 +1,9 @@
+{
+  "passed": false,
+  "full_goal_complete": false,
+  "topologies": {},
+  "runtime_image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "scope": "Full recovered DCP2 and attentionDP8 raw audits, not cached optimization,4P4D or overall goal completion.",
+  "error": "Traceback (most recent call last):\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_recovery_audits_r122.py\", line 25, in <module>\n    wait(R/f'{top}-precision-perf-capacity-complete-r118.json')\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_recovery_audits_r122.py\", line 15, in wait\n    assert proc.exists() and (proc/'stat').read_text().split()[2]!='Z',('Coordinator terminal without required evidence',path.name,pid)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('Coordinator terminal without required evidence', 'dcp8x2-precision-perf-capacity-complete-r118.json', 1264524)\n",
+  "at_unix": 1792457907.5433815
+}

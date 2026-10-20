@@ -1,0 +1,72 @@
+{
+  "label": "batch",
+  "tp_rank": 6,
+  "dcp_rank": 0,
+  "dcp_group_ranks": [
+    6,
+    7
+  ],
+  "layer_id": 7,
+  "q_shape": [
+    2008,
+    3,
+    256
+  ],
+  "k_shape": [
+    2008,
+    1,
+    256
+  ],
+  "kv_pool_type": "HybridLinearKVPool",
+  "lengths": [
+    20,
+    22,
+    24,
+    23,
+    29,
+    17,
+    21,
+    27,
+    20,
+    20,
+    24,
+    27,
+    24,
+    21,
+    26,
+    27,
+    25,
+    28,
+    31,
+    21,
+    29,
+    28,
+    25,
+    26,
+    30,
+    625,
+    768
+  ],
+  "k_pool_vs_source": {
+    "mean_abs": 0.0,
+    "max_abs": 0.0,
+    "unequal": 0,
+    "count": 258816
+  },
+  "v_pool_vs_source": {
+    "mean_abs": 0.0,
+    "max_abs": 0.0,
+    "unequal": 0,
+    "count": 258816
+  },
+  "candidate_vs_dense": {
+    "mean_abs": 104.37532043457031,
+    "max_abs": 0.015625,
+    "unequal": 224833,
+    "count": 1542144
+  },
+  "candidate_finite": true,
+  "out_cache_loc_is_physical": true,
+  "runtime_image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "scope": "Real model Q/K/V, exact KV write read-back and attention-only FP64 oracle deferred to independent process. Candidate output is returned unchanged; diagnostic timing is not a speed result."
+}

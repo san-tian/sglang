@@ -1,0 +1,28 @@
+{
+  "passed": false,
+  "actual_model_tests_completed": 0,
+  "container": "qwen38-dpa8-m-real_r16-r131",
+  "container_id": "2e5c919876679c9c5933d14bfbb46d69b384b54f2492929bb1840d3b741a35a9",
+  "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 1,
+    "Error": "",
+    "StartedAt": "2026-10-20T01:10:35.619790337Z",
+    "FinishedAt": "2026-10-20T01:11:38.06538917Z"
+  },
+  "cli_global_ssm_slots": 32,
+  "attention_dp_workers": 8,
+  "effective_ssm_slots_per_worker": 4,
+  "slots_per_request": 5,
+  "effective_max_requests": 0,
+  "reason": "SSM CLI global quantity incorrectly treated as per-worker; fixed configuration needs global256/per-worker32.",
+  "engine_log_sha256": "2fea6c8375de73da4b7f858f98e62f5930924159f4ae04a3dd84f0f11cf04251",
+  "full_goal_complete": false
+}

@@ -1,0 +1,8 @@
+{
+  "at_unix": 1792457454.4941485,
+  "pid": 1302858,
+  "source_manifest": "source-pd-after-migration-r124.json",
+  "source_manifest_sha256": "ccc6228478f4ae4f8a7f81264c65ef3e8450a95bd16fa7d754b1738fa169713f",
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_pd_after_migration_r124.py ",
+  "full_goal_complete": false
+}

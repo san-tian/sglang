@@ -1,0 +1,9 @@
+{
+  "scope": "Preserve observed failing mixed data; equality checks remain strict, numerical gate failures are recorded instead of aborting early. No gate is relaxed or relabeled passed.",
+  "source_files": {
+    "audit_failed_mixed_r116.py": "0f9a2edc17a14fe1edbbf0b1a6945b960791bf376b2904cb87cce1ba3d20efeb",
+    "audit_topology_mixed_r101.py": "67785956d86357ec88bf1a1404abc5a6e82d511c0c0bda39c55d78a623bb308a",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+    "source-topology-audits-r102.json": "50143c8889d476a179724d1cc4a078534ab77f0832ce60037e12473734de2fe5"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "returncode": 0,
+  "state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-10-20T01:08:19.412322939Z",
+    "FinishedAt": "2026-10-20T01:08:41.674125934Z"
+  },
+  "container_id": "b529d909b783a05d79d0c7d48e1783e0ec2d44343a19daee1b5e8e5d6b568ee2",
+  "image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "command": [
+    "docker",
+    "create",
+    "--name",
+    "qwen38-real-qkv-oracle-r129",
+    "--gpus",
+    "\"device=0,1\"",
+    "--network",
+    "host",
+    "--ipc",
+    "host",
+    "-v",
+    "/opt/dlami/nvme:/work",
+    "-v",
+    "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/caches/qwen38-real-qkv-oracle-r129:/root/.cache",
+    "-e",
+    "TMPDIR=/root/.cache/tmp",
+    "-e",
+    "PYTHONPYCACHEPREFIX=/root/.cache/pycache",
+    "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+    "python3",
+    "/work/qwen38-mol-multigpu-20261019/run_real_qkv_oracle_r129.py"
+  ],
+  "at_unix": 1792458522.45776,
+  "source_sha256": "0101a0dcab5a328c4c316be93c3ab7f63ec5c9a185c2f7684d989c04ed0ab0da"
+}

@@ -1,0 +1,20 @@
+{
+  "at_unix": 1792456903.6400416,
+  "returncode": 0,
+  "state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-10-20T00:40:46.300403867Z",
+    "FinishedAt": "2026-10-20T00:41:41.295050984Z"
+  },
+  "runtime_image_id": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "passed": true,
+  "full_goal_complete": false
+}

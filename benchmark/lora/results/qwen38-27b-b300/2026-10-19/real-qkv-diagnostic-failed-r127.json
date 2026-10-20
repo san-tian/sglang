@@ -1,0 +1,24 @@
+{
+  "passed": false,
+  "diagnostic_records": 0,
+  "reason": "Diagnostic FP64 BMM blocked by server batch-invariant dispatcher; not model acceptance",
+  "container": "qwen38-dcp8x2-qkv-probe-r127",
+  "container_id": "6e7a607c0143d1e9b03672fd44e91a8ce4ff186a15f2a807b5b78a7bbf8e97fc",
+  "state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 1,
+    "Error": "",
+    "StartedAt": "2026-10-20T01:01:24.883089463Z",
+    "FinishedAt": "2026-10-20T01:03:14.228327599Z"
+  },
+  "engine_log_sha256": "0aa585c3d854d36f042efabcffecdb71c447a435c3dd26366794cd995425beec",
+  "source_manifest_sha256": "96dd7f9b98f70be8f9baf89833c89a17013f7445a304be05a930139c80a9a064",
+  "at_unix": 1792458259.5682645,
+  "full_goal_complete": false
+}

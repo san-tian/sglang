@@ -1,0 +1,1543 @@
+{
+  "unix_s": 1792458359.8094761,
+  "name": "qwen38-dcp8x2-qkv-probe-r129",
+  "container_id": "b4e027f9cd88d1c5c1cd07463b087cebde74208a49d969351cfa5834b9d0095f",
+  "image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "container_running": true,
+  "command": [
+    "python3",
+    "-m",
+    "sglang.launch_server",
+    "--model-path",
+    "/work/qwen38-mol-development-20261019/merged/real_r16",
+    "--served-model-name",
+    "qwen38-27b",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "30706",
+    "--tp-size",
+    "8",
+    "--context-length",
+    "4096",
+    "--mem-fraction-static",
+    "0.5",
+    "--max-mamba-cache-size",
+    "256",
+    "--max-running-requests",
+    "32",
+    "--chunked-prefill-size",
+    "2048",
+    "--disable-cuda-graph",
+    "--enable-custom-logit-processor",
+    "--linear-attn-prefill-backend",
+    "triton",
+    "--enable-deterministic-inference",
+    "--attention-backend",
+    "triton",
+    "--bf16-gemm-backend",
+    "torch",
+    "--random-seed",
+    "0",
+    "--dcp-size",
+    "2",
+    "--dcp-comm-backend",
+    "a2a"
+  ],
+  "docker_cgroup_host_processes": [
+    {
+      "pid": 1338928,
+      "ppid": 1338904,
+      "args": "python3 -m sglang.launch_server --model-path /work/qwen38-mol-development-20261019/merged/real_r16 --served-model-name qwen38-27b --host 127.0.0.1 --port 30706 --tp-size 8 --context-length 4096 --mem-fraction-static 0.5 --max-mamba-cache-size 256 --max-running-requests 32 --chunked-prefill-size 2048 --disable-cuda-graph --enable-custom-logit-processor --linear-attn-prefill-backend triton --enable-deterministic-inference --attention-backend triton --bf16-gemm-backend torch --random-seed 0 --dcp-size 2 --dcp-comm-backend a2a"
+    },
+    {
+      "pid": 1341446,
+      "ppid": 1338928,
+      "args": "/opt/sglang/bin/python3 -c from multiprocessing.resource_tracker import main;main(50)"
+    },
+    {
+      "pid": 1341447,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP0"
+    },
+    {
+      "pid": 1341512,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP1"
+    },
+    {
+      "pid": 1341577,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP2"
+    },
+    {
+      "pid": 1341642,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP3"
+    },
+    {
+      "pid": 1341766,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP4"
+    },
+    {
+      "pid": 1341831,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP5"
+    },
+    {
+      "pid": 1341898,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP6"
+    },
+    {
+      "pid": 1341964,
+      "ppid": 1338928,
+      "args": "sglang::scheduler_TP7"
+    },
+    {
+      "pid": 1341965,
+      "ppid": 1338928,
+      "args": "sglang::detokenizer"
+    },
+    {
+      "pid": 1346786,
+      "ppid": 1341964,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1346789,
+      "ppid": 1341577,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1346790,
+      "ppid": 1341512,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1346791,
+      "ppid": 1341642,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1346792,
+      "ppid": 1341898,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1346801,
+      "ppid": 1341831,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1346802,
+      "ppid": 1341766,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1346803,
+      "ppid": 1341447,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347816,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347818,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347820,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347822,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347824,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347826,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347829,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347831,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347838,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347887,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347889,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347892,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347894,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347896,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347898,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347900,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347902,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347904,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347906,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347908,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347910,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347912,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347914,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347916,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347918,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347920,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347922,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347924,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347926,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347928,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347930,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347935,
+      "ppid": 1346786,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347944,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347945,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347946,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347952,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347953,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347954,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347959,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347960,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347961,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347962,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347967,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347968,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347969,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347973,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347974,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347975,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347976,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347979,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347983,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347984,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347985,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347987,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347992,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347994,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347995,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1347996,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348001,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348004,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348006,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348007,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348008,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348011,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348014,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348015,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348017,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348018,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348021,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348024,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348025,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348026,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348028,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348030,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348033,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348036,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348037,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348039,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348040,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348042,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348045,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348048,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348049,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348050,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348051,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348054,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348058,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348060,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348061,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348062,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348063,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348066,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348070,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348072,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348073,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348074,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348075,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348077,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348079,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348084,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348086,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348087,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348088,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348089,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348091,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348093,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348098,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348100,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348101,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348102,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348103,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348105,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348107,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348112,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348114,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348115,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348116,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348117,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348119,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348121,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348125,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348128,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348129,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348130,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348131,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348133,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348134,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348139,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348142,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348143,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348144,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348145,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348147,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348150,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348153,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348156,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348157,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348158,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348159,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348161,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348164,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348167,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348169,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348171,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348172,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348173,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348175,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348177,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348181,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348183,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348185,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348186,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348188,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348189,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348192,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348195,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348197,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348199,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348200,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348202,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348203,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348207,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348209,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348211,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348214,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348215,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348216,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348220,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348222,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348223,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348224,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348227,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348228,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348229,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348234,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348235,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348237,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348240,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348241,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348242,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348244,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348247,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348248,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348250,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348253,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348255,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348256,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348258,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348261,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348262,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348264,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348267,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348269,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348271,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348273,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348274,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348276,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348278,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348281,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348283,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348285,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348287,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348289,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348290,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348293,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348295,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348296,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348298,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348300,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348303,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348304,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348307,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348309,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348310,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348312,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348314,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348317,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348318,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348321,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348322,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348323,
+      "ppid": 1346791,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=744 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348327,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348328,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348333,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348334,
+      "ppid": 1346803,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=549 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348339,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348341,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348344,
+      "ppid": 1346802,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=811 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348346,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348350,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348354,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348357,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348359,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348360,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348362,
+      "ppid": 1346790,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=614 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348368,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348369,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348370,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348375,
+      "ppid": 1346789,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=679 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348377,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348378,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348384,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348385,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348388,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348390,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348391,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348394,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348395,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348398,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348399,
+      "ppid": 1346801,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=876 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348405,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348407,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348409,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348411,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348413,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    },
+    {
+      "pid": 1348416,
+      "ppid": 1346792,
+      "args": "/opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=943 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA="
+    }
+  ],
+  "scheduler_gpu_processes": [
+    {
+      "pid": 1341447,
+      "gpu_uuid": "GPU-a14f3d9b-1c82-9ef6-3f23-fa33f570874f",
+      "memory_mib": "139024",
+      "gpu_index": 0
+    },
+    {
+      "pid": 1341512,
+      "gpu_uuid": "GPU-d65bcca1-7560-4600-4838-8d41eaadb2c7",
+      "memory_mib": "139184",
+      "gpu_index": 1
+    },
+    {
+      "pid": 1341577,
+      "gpu_uuid": "GPU-de90bae1-f5d2-374c-a035-94f0f681f7f2",
+      "memory_mib": "139184",
+      "gpu_index": 2
+    },
+    {
+      "pid": 1341642,
+      "gpu_uuid": "GPU-b2516cac-c615-068e-8867-b9c878cd800c",
+      "memory_mib": "139184",
+      "gpu_index": 3
+    },
+    {
+      "pid": 1341766,
+      "gpu_uuid": "GPU-83492baa-c267-dfd3-7567-c26d32a39ff3",
+      "memory_mib": "139184",
+      "gpu_index": 4
+    },
+    {
+      "pid": 1341831,
+      "gpu_uuid": "GPU-6d6b6026-e0f2-c5c2-48f4-a88f7d8ffa61",
+      "memory_mib": "139184",
+      "gpu_index": 5
+    },
+    {
+      "pid": 1341898,
+      "gpu_uuid": "GPU-173d551e-782e-5624-d6e8-53c2f843e61c",
+      "memory_mib": "139184",
+      "gpu_index": 6
+    },
+    {
+      "pid": 1341964,
+      "gpu_uuid": "GPU-f62b0201-35ab-a719-25f8-5479a9a8575d",
+      "memory_mib": "139024",
+      "gpu_index": 7
+    }
+  ],
+  "all_container_gpu_processes": [
+    {
+      "pid": 1338928,
+      "gpu_uuid": "GPU-a14f3d9b-1c82-9ef6-3f23-fa33f570874f",
+      "memory_mib": "722"
+    },
+    {
+      "pid": 1341447,
+      "gpu_uuid": "GPU-a14f3d9b-1c82-9ef6-3f23-fa33f570874f",
+      "memory_mib": "139024"
+    },
+    {
+      "pid": 1341512,
+      "gpu_uuid": "GPU-d65bcca1-7560-4600-4838-8d41eaadb2c7",
+      "memory_mib": "139184"
+    },
+    {
+      "pid": 1341577,
+      "gpu_uuid": "GPU-de90bae1-f5d2-374c-a035-94f0f681f7f2",
+      "memory_mib": "139184"
+    },
+    {
+      "pid": 1341642,
+      "gpu_uuid": "GPU-b2516cac-c615-068e-8867-b9c878cd800c",
+      "memory_mib": "139184"
+    },
+    {
+      "pid": 1341766,
+      "gpu_uuid": "GPU-83492baa-c267-dfd3-7567-c26d32a39ff3",
+      "memory_mib": "139184"
+    },
+    {
+      "pid": 1341831,
+      "gpu_uuid": "GPU-6d6b6026-e0f2-c5c2-48f4-a88f7d8ffa61",
+      "memory_mib": "139184"
+    },
+    {
+      "pid": 1341898,
+      "gpu_uuid": "GPU-173d551e-782e-5624-d6e8-53c2f843e61c",
+      "memory_mib": "139184"
+    },
+    {
+      "pid": 1341964,
+      "gpu_uuid": "GPU-f62b0201-35ab-a719-25f8-5479a9a8575d",
+      "memory_mib": "139024"
+    }
+  ],
+  "expected_compute_gpus": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "observed_compute_gpus": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "placement_matched": true,
+  "scope": "Actual scheduler host PID to live GPU UUID match; no model/transport/performance acceptance."
+}

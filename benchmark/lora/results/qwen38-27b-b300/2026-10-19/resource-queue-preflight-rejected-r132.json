@@ -1,0 +1,8 @@
+{
+  "passed": false,
+  "mutation_started": false,
+  "reason": "R131 coordinator had already exited from verified SSM startup failure; R132 required a live producer and stopped before waiter changes.",
+  "expected_owner_pid": 1358646,
+  "source_sha256": "0422f9d6159026d1bc0d167218831445819bad1c47a8894a66a8e34ab0f630cb",
+  "full_goal_complete": false
+}

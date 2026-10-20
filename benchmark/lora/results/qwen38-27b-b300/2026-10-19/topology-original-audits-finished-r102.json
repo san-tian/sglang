@@ -1,0 +1,89 @@
+{
+  "passed": false,
+  "full_goal_complete": false,
+  "topologies": {
+    "tp8": {
+      "passed": true,
+      "precision_audit_sha256": "6c9371dee420a1d02ba51eb8398ad164af93d41e0ce2e533ade28e66f2f47f60",
+      "native_audit_sha256": "c0103aa9da87266035009c7625a32cf1d22aec043a085563628b7574b0f0b2e8",
+      "mixed_audit_sha256": "3d7cd0626a8dc1a21afdbe1e0e95e54175cde82e146521692958436c77f0f8b7",
+      "capacity_audit_sha256": "1d4fe57c262c29211c3e02721201d59ad2521c60b34b2f9712cec810459aa1e9",
+      "actual_placement": {
+        "qwen38-tp8-m-real_r16-r85": {
+          "container_id": "d4c8385882ab227531fea47aba8efb35cfdd82f544348f9a702b8b03927d62a6",
+          "observed_compute_gpus": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "unix_s": 1792448744.541314
+        },
+        "qwen38-tp8-m-gdn_fused-r31": {
+          "container_id": "02d74e70b533a270179ecefbbe1c28753d9b4a6939eafd2b8ea728e6119b5cb3",
+          "observed_compute_gpus": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "unix_s": 1792450079.6615615
+        },
+        "qwen38-tp8-d-r31": {
+          "container_id": "32ed1e41b901e5f9272415d354ad7c6654a7a7c91b57afb23a152e6154f82f1e",
+          "observed_compute_gpus": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "unix_s": 1792450204.420517
+        },
+        "qwen38-tp8-base-r41": {
+          "container_id": "c7cd3ce68fdc34336f7ef36e61c4ff7e9aec8c0b20afaad5b67e6dc89b624007",
+          "observed_compute_gpus": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "unix_s": 1792452186.287067
+        },
+        "qwen38-tp8-capacity-r31": {
+          "container_id": "24ba62b64533662a4fbfb853530fe62f64bfa2d1c224a03743f692b23e1d015f",
+          "observed_compute_gpus": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "unix_s": 1792453318.2769713
+        }
+      },
+      "full_goal_complete": false
+    }
+  },
+  "scope": "Full TP8/DCP2/attentionDP8 original precision, native SSE statistics, mixed routing and actual placement with separate equal-byte KV reports. No overall goal acceptance from this observer alone.",
+  "error": "Traceback (most recent call last):\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_topology_raw_r102.py\", line 25, in <module>\n    wait(R/f'{top}-precision-perf-capacity-complete-r31.json',954883,'run_eight_gpu_suite_r85.py');verify()\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_topology_raw_r102.py\", line 15, in wait\n    assert proc.exists() and (proc/'stat').read_text().split()[2]!='Z',('Actual coordinator terminal without required evidence',path.name,pid)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('Actual coordinator terminal without required evidence', 'dcp8x2-precision-perf-capacity-complete-r31.json', 954883)\n",
+  "unix_s": 1792455900.5571098
+}

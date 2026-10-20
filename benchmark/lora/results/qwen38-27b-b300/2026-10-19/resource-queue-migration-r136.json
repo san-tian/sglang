@@ -1,0 +1,58 @@
+{
+  "at_unix": 1792458882.696726,
+  "gpu_workers_interrupted": false,
+  "original_failed_barrier_written": false,
+  "new_barrier": "attention-dp8-resource-released-r135.json",
+  "barrier_semantics": "GPU resource release only, never model correctness or performance acceptance",
+  "source_manifest_sha256": "67913031cee332f8139dfabf8ae20d6fa81d79a6522400340cfccdd39371feff",
+  "coordinators": [
+    {
+      "kind": "pd",
+      "old_pid": 1293637,
+      "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind pd",
+      "old_wchan": "hrtimer_nanosleep",
+      "old_children": [],
+      "old_starttime_ticks": "6504912",
+      "new_pid": 1370243,
+      "new_waiting_verified": true,
+      "new_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind pd ",
+      "old_terminal": true
+    },
+    {
+      "kind": "cached",
+      "old_pid": 1293723,
+      "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind cached",
+      "old_wchan": "hrtimer_nanosleep",
+      "old_children": [],
+      "old_starttime_ticks": "6505017",
+      "new_pid": 1370319,
+      "new_waiting_verified": true,
+      "new_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind cached ",
+      "old_terminal": true
+    },
+    {
+      "kind": "isolated",
+      "old_pid": 1293910,
+      "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind isolated",
+      "old_wchan": "hrtimer_nanosleep",
+      "old_children": [],
+      "old_starttime_ticks": "6505123",
+      "new_pid": 1370323,
+      "new_waiting_verified": true,
+      "new_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind isolated ",
+      "old_terminal": true
+    },
+    {
+      "kind": "million",
+      "old_pid": 1294082,
+      "old_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind million",
+      "old_wchan": "hrtimer_nanosleep",
+      "old_children": [],
+      "old_starttime_ticks": "6505228",
+      "new_pid": 1370439,
+      "new_waiting_verified": true,
+      "new_cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_resource_lease_r136.py --kind million ",
+      "old_terminal": true
+    }
+  ]
+}

@@ -782,3 +782,121 @@ error and100%argmax agreement. This validates dynamic LoRA against its own DCP2
 independent merge, not TP8-versus-DCP2 merged numerical parity; that separate
 R113 diagnostic remains failed. Native D/base timing, mixed routing, equal-byte
 KV and the full original R102 topology audit remain separate pending gates.
+
+
+DCP chunk-invariance investigation (R116–R128, rejected candidate)
+
+The original R28 DCP2 mixed test failed after its independent D/M stage passed.
+A complete raw audit re-read512rank captures/768scores and rehashed550files:
+decode P99=0.110658407nat,max=0.256178975nat,argmax716/720;8case-round
+gates failed, including base/zero identities. Its coordinator terminated before
+dynamic native speed sampling. Original failures, logs and source are preserved.
+
+The candidate makes deterministic DCP prefill sweep all local sharded KV in one
+unified kernel and uses the same distributed LSE merge even for prefix-zero
+chunks. Local-key causal positions include the DCP stride/rank. Empty causal
+shards contribute zero output/LSE-negative-infinity. Non-deterministic serving
+is outside this candidate's acceptance scope. Only two source files override
+the original R28 image; the source manifest and actual immutable image are saved.
+
+A real two-GPU NCCL probe exercises the production backend and sharded-index
+kernel:47cases/rank,including34whole-versus-chunk comparisons(maximum0),
+7FP64 oracle cases(maximum0.00787735,atol/rtol0.01),5bit-identical default
+non-DCP comparisons,and1ragged1/129-token batch. Query/LSE all-gathers and output
+all-reduce are actual collectives. The old valid control differs in28cases/rank,
+maximum0.015625. Its cut1 empty-prefix-shard collective divergence was captured
+with both process stacks; that failed R116 probe remains preserved. Corrected
+R117 skips only the old cut1 control,retaining candidate cut1. These are attention
+values,not logprob-nat tolerances or full-model speed claims.
+
+The new actual8GPU mixed serving regression is independently re-audited from
+512rank captures/550hashed files:48first-token+720decode scores all have
+mean/P99/maximum0and100%argmax agreement. The candidate's eight actual scheduler
+PIDs match GPUs0–7;its image,launch and stopped container state are separately
+bound in dcp-mixed-fix-placement-r120.json. This resolves this exact48-request
+regression,not the complete new-image accuracy/speed/capacity matrix.
+
+The planned R118 protocol retains248main/GDN D/M pairs,48mixed requests,three636-request natural
+controls,24rank traces and13equal-byte KV requests for each of DCP2/attentionDP8,
+using new immutable output namespaces and original measurement clients. R122
+independently reparses scores/SSE/statistics/traces/placement/same-scrape KV.
+Four original CPU waiters were verified childless/asleep before explicit barrier
+migration;their sealed4P4D/cache/isolated/million drivers still execute unchanged.
+Original R31 success files are never synthesized. A strict argv precheck failed
+before any mutation in R119;R123 records the corrected exact python3-u guard.
+The original PD old-PID observers may terminate on that deliberate CPU migration;
+R124 watches the actual replacement PID and runs the unchanged original PD
+auditors. No GPU workload was interrupted by this waiting-queue migration.
+
+R125 rejects this candidate:240TP8-versus-DCP merged prefill pairs/49744scores,
+mean0.760610338nat,P9910.124895096nat,max24.039284229nat,48192/49744argmax.
+These violate the unchanged mean<=0.01/P99<=0.1gates. The candidate is NOT accepted.
+R126 preserves the failed report, exact image/container/process, then sendsSIGTERM
+only to the owned native performance client. The original finally block stops
+the experiment engine;R122 independently records terminal failure, not success.
+Partial speed observations from this rejected cohort are not accepted results.
+R127 starts a real-model diagnostic with explicit sitecustomize provenance,
+KV write/read-back checks and attention-only FP64 oracles;returned model outputs
+are preserved. Synthetic attention and same-topology mixed agreement cannot
+substitute for real-model cross-topology correctness. Four downstream waiters
+remain blocked on a completion marker that will not be synthesized. A subsequent
+corrected cohort requires new evidence namespaces and explicit dependency migration.
+
+Full new-image D/M,TP8-versus-DCP merged parity,native speed,equal-byte capacity,
+attentionDP8,full4P4D,cached multiGPU,isolated speed and million-context quality
+remain separate gates. The whole goal remains incomplete.
+
+
+Real-model attention diagnosis (R129–R138, no full-model acceptance)
+
+The rejected R116 candidate is archived under source-r116/ and is not enabled
+in the branch runtime. Its full-model TP8/DCP prefill failure remains a failure.
+R129 captures48actual model Q/K/V sets:the first two full-attention layers for
+short20-token,long874-token and packed2008-token prefix batches on8ranks.
+All11886592K/V write/read elements agree exactly;24replicated-head K/V pairs
+are bit-identical. Raw tensor SHA256 values are retained in the oracle reports;
+the large tensors remain in the experiment NVMe directory,not this snapshot.
+
+Independent FP64 arithmetic on35659776attention output elements gives candidate
+mean/max0.000363357/0.016140440 and dense mean/max0.000369753/0.017577127.
+Their mutual mean/max is0.000084951/0.03125. These attention-value differences
+are not logprob-nat errors and do not accept the full-model0.760610nat drift.
+They localize a real numerical-path difference while excluding KV write/head
+mapping errors only in the captured layers/inputs. Further full-model work remains.
+The failed R127 in-server FP64 probe is preserved. The deterministic dispatcher
+also produced invalid in-server global means larger than their maxima;those
+means are discarded. R129's accepted diagnostic statistics are recomputed in
+an independent process outside that dispatcher,with source/capture/tensor hashes.
+
+R130 had a generator bug:an empty driver wrote completion without any GPU test.
+Those exact files are preserved with INVALID names and a false diagnostic report;
+they are not accepted or used as dependencies. Corrected R131 includes concrete
+per-stage evidence guards but actual original-image attentionDP8 startup failed:
+CLI32SSMslots is global and divides by8DP workers to4slots,below5slots/request.
+R135 usesCLI256global=>32slots/worker. All8actual allocation logs show32slots,
+0.09GiB convolution+4.64GiB SSM per rank;all8worker state snapshots show4effective
+requests,and actual8scheduler host PIDs map to GPUs0–7. Health succeeds.
+This is startup/configuration proof only. Full248D/M pairs,48mixed,1908native,
+24rank traces and13equal-byte KV requests and raw audits are still running.
+
+Four original CPU waiters were verified childless/asleep before R136 explicitly
+migrated them to a GPU-resource-release barrier. R135 releases that resource on
+actual terminal cleanup,regardless of numerical outcome. No R31/R118 accuracy
+success is synthesized;all original measurements/clients/runtimes stay unchanged.
+This lets independent4P4D/cache/isolated/million tests proceed after the GPU lease
+without falsely depending on unresolved DCP numerical correctness. R137 watches
+the actual replacement PD PID and runs the unchanged R94/R95 raw auditors.
+The rejected R132 live-owner preflight changed no process and is preserved.
+
+
+Original-image attentionDP8 cross-topology diagnostic (R139, failed)
+
+The complete240-pair merged reference is sealed. Against original TP8,49744
+prefill scores give mean0.924584424nat,P9910.227768898nat,max28.344268322nat,
+argmax47808/49744. Both use exactly the same original R28 immutable image,
+weights and fixed input tokens. This fails unchanged mean<=0.01/P99<=0.1gates.
+The failure is therefore not specific to the new DCP source overrides. The
+independent same-topology MoL/merge,mixed,native and KV protocols continue;
+cross-topology equivalence remains unaccepted. Fixed prefill chunk/logical-batch
+controls separating full-attention,GDN and TP arithmetic remain necessary.
+No scores on different natural decode continuation paths are compared.

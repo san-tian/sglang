@@ -1,0 +1,9 @@
+{
+  "passed": false,
+  "full_goal_complete": false,
+  "coordinator_pid": 1293637,
+  "migration_sha256": "1a5f9937c48652616b9ff873a084e60827a1af9f70e3e706134de0fcf451d5ed",
+  "scope": "Original full4P4D R94 precision and R95 natural/kernel audits, unchanged; monitor only the verified migrated CPU coordinator. Original old-PID observers and any terminal reports preserved.",
+  "error": "Traceback (most recent call last):\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_pd_after_migration_r124.py\", line 16, in <module>\n    p=Path(f'/proc/{pid}');assert p.exists() and (p/'stat').read_text().split()[2]!='Z','Actual migrated PD coordinator terminal without completion evidence'\n                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Actual migrated PD coordinator terminal without completion evidence\n",
+  "at_unix": 1792458883.5829396
+}

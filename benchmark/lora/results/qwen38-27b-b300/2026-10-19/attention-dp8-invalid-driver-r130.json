@@ -1,0 +1,19 @@
+{
+  "passed": false,
+  "actual_GPU_launches": 0,
+  "cohort_completed": false,
+  "reason": "Driver generator used first completion-marker occurrence before the topology loop; generated loop was empty. No GPU measurement was executed; generated completion is invalid.",
+  "quarantined_markers": {
+    "attention-dp8-cohort-complete-r130.json": {
+      "quarantined_as": "attention-dp8-cohort-complete-INVALID-empty-driver-r130.json",
+      "sha256": "8a43e5ac12ff67894d666c2a58180d38cc26486cbf2e4c87f44fabac2f799b7f"
+    },
+    "attention-dp8-resource-released-r130.json": {
+      "quarantined_as": "attention-dp8-resource-released-INVALID-empty-driver-r130.json",
+      "sha256": "fbb57d2409b451d22ba523462ade45c162143ba212953182e0d5b839f3885eef"
+    }
+  },
+  "at_unix": 1792458577.867248,
+  "full_goal_complete": false,
+  "source_sha256": "53e29d93b4f0b130aae987fb4fc03b334db9f13d19f101b000b00ba3f838e0af"
+}

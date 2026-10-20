@@ -1,0 +1,28 @@
+{
+  "diagnostic_completed": true,
+  "model_accuracy_accepted": false,
+  "full_goal_complete": false,
+  "records": 48,
+  "replicated_head_pairs": 24,
+  "KV_write_read_elements": 11886592,
+  "KV_max_abs": 0,
+  "attention_elements": 35659776,
+  "attention_statistics": {
+    "candidate_vs_fp64": {
+      "mean_abs": 0.00036335725631357076,
+      "max_abs": 0.0161404402909886
+    },
+    "dense_vs_fp64": {
+      "mean_abs": 0.0003697525178404065,
+      "max_abs": 0.017577126624776618
+    },
+    "candidate_vs_dense": {
+      "mean_abs": 8.495121824963272e-05,
+      "max_abs": 0.03125
+    }
+  },
+  "statistics_source": "Independent FP64 arithmetic outside the deterministic server dispatcher",
+  "discard_server_recorded_means": true,
+  "scope": "Real model first two full-attention layers for short, long and packed-batch prefixes; exact K/V write read-back, replicated head equality and FP64 attention-only oracles. No full-model acceptance or speed claim.",
+  "oracle_report_sha256": "20a77581596464964ab0e35cf7e2252b3d5cb1304df89cf17caf31978e05e543"
+}

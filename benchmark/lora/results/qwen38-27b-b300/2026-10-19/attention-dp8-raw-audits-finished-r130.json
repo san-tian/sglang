@@ -1,0 +1,9 @@
+{
+  "passed": false,
+  "full_goal_complete": false,
+  "topologies": {},
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "scope": "Original-image attentionDP8 full raw audits, not cached optimization,4P4D or overall goal completion.",
+  "error": "Traceback (most recent call last):\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_attention_dp8_r130.py\", line 25, in <module>\n    wait(R/f'{top}-precision-perf-capacity-complete-r130.json')\n  File \"/opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_attention_dp8_r130.py\", line 15, in wait\n    assert proc.exists() and (proc/'stat').read_text().split()[2]!='Z',('Coordinator terminal without required evidence',path.name,pid)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('Coordinator terminal without required evidence', 'dpa8-precision-perf-capacity-complete-r130.json', 1356237)\n",
+  "at_unix": 1792458531.4587593
+}

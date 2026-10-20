@@ -1,0 +1,20 @@
+{
+  "source_files": {
+    "watch_recovery_audits_r122.py": "87cfc13fe447f729431d9611187a995b369a553243e49b7ad1ab045362af1353",
+    "prepare_recovery_audits_r121.py": "38083e01529eb5f0ccb883e450785a34a2a6a9885edac89e5ccbd08157350139",
+    "audit_recovery_precision_r121.py": "c1ea7df64a7708112b86a629dd5dda21191890a93ef34b57757c0c20a3b9b420",
+    "audit_recovery_native_r121.py": "375ae4d07ef5a7ddc584b23eb4c895874b76a368f4ed88fc42052905d0f0da3d",
+    "audit_recovery_mixed_r121.py": "38efe2f57e4635de51446a70152b182f31400ca949c159d9bb6f750547d66cc7",
+    "audit_recovery_capacity_r121.py": "3419a434fbd1727e3302a81c21b01fade4f9280cc0f8b271eb67442922aaa152",
+    "recovery-audit-adaptations-r121.json": "6fd604aea65dd7e3cfccf5a89620ab1681627a64d83ea5f0d2b309f232f3039f",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+    "source-host-r118.json": "24544189038731f89ee823a5101628275e4f9832ba60442c5dfbb1c9c84c0bec",
+    "source-runtime-candidate-r116.json": "414195656f8881dbfa2a866c1b67466cb02af329db549e939d9140aa589c8947",
+    "audit_topology_original_r99.py": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952",
+    "audit_topology_native_r100.py": "89c4bfc17163e052031dd661c4f5fe72a42497159b3e9e40209319c55e92a55c",
+    "audit_topology_mixed_r101.py": "67785956d86357ec88bf1a1404abc5a6e82d511c0c0bda39c55d78a623bb308a",
+    "audit_capacity_residency_r64.py": "5522dad2d7e8ef2540f3083c4f5e67848551ab2142183793250f5c31104c2e2c"
+  },
+  "runtime_image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "scope": "Independent raw audits of full new protocol; no original report or barrier overwritten."
+}

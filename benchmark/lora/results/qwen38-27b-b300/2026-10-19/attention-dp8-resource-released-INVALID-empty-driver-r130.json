@@ -1,0 +1,9 @@
+{
+  "at_unix": 1792458526.711487,
+  "resource_released": true,
+  "observed_gpu_processes": "",
+  "cohort_completed": true,
+  "model_accuracy_accepted": false,
+  "full_goal_complete": false,
+  "scope": "GPU lease release only; no correctness/speed/capacity acceptance."
+}

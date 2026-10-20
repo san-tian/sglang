@@ -1,0 +1,62 @@
+{
+  "at_unix": 1792457522.6310596,
+  "processes": [
+    {
+      "pid": 1264524,
+      "stat": "S",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_eight_gpu_recovery_r118.py ",
+      "children": "1297230",
+      "wchan": "do_wait"
+    },
+    {
+      "pid": 1302789,
+      "stat": "S",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_recovery_audits_r122.py ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1302858,
+      "stat": "S",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_pd_after_migration_r124.py ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1305544,
+      "stat": "S",
+      "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_candidate_cross_topology_r125.py ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1293637,
+      "stat": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind pd ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1293723,
+      "stat": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind cached ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1293910,
+      "stat": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind isolated ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    },
+    {
+      "pid": 1294082,
+      "stat": "S",
+      "cmdline": "python3 /opt/dlami/nvme/qwen38-mol-multigpu-20261019/resume_wait_barrier_r119.py --kind million ",
+      "children": "",
+      "wchan": "hrtimer_nanosleep"
+    }
+  ],
+  "full_goal_complete": false
+}

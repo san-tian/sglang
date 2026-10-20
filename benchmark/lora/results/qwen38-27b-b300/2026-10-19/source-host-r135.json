@@ -1,0 +1,22 @@
+{
+  "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
+  "runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
+  "source_files": {
+    "perf_endpoint_r85.py": "fdff746aa3648a7d9037f55af68c5d3e9b37f1d43abd676e465214a7b6d649e8",
+    "capacity_residency_r61.py": "8f96958cdacacebb1bb35d75b8547e087cbc3a075b31317382786f1ebcd672cc",
+    "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08",
+    "client-r30/compare_frozen.py": "b7bc4483b697d4965f5994fd264adeab6c2573ad6934c86133b27da9f881cc56",
+    "client-r30/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+    "client-r30/compare_mixed.py": "17c0178b84d269e3f946645bf3c48f40aaab4727aa31dbbeffe6543fb9d302d2",
+    "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+    "watch_actual_placement_r92.py": "da058bfbcc1ec404dbac8077a675c1ae0c4335951ae15c716d4842547304d706",
+    "host_common_r135.py": "7aa6e09ab891ee942c68b5f0c96755348a48e7798b1fef18fdd974631d6ad0c2",
+    "run_attention_dp8_r135.py": "b289ce0d2900d745a5cdc351d15849a75046cec48a0709de1b971f66c1d65d92"
+  },
+  "mamba_cache_cli_global": 256,
+  "expected_mamba_cache_per_DP_worker": 32,
+  "mamba_slots_per_request": 5,
+  "scope": "Independent original-image attentionDP8 continuation. DCP2 rejected candidate remains unresolved. Original clients, counts and numerical gates retained; no original completion marker is synthesized."
+}

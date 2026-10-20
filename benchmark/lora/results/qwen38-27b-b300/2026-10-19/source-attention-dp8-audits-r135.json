@@ -1,0 +1,36 @@
+{
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "source_files": {
+    "audit_attention_dp8_precision_r135.py": "ca034e483a54933f6ec6f3600432b4c467a0c0c84e30ee57efc41d118387bbe0",
+    "audit_attention_dp8_native_r135.py": "2913f41998921825718102222bf7b96e93ba3507c94f7a5daf41cfa82b4a8d77",
+    "audit_attention_dp8_mixed_r135.py": "ebeeeab6fca99be4f0399c9d1978cdf1cffd4493ac97306df31aa60bcfcec5b7",
+    "audit_attention_dp8_capacity_r135.py": "a4a6edf03209d10064b5c58a2bc7632bad8b12da309cbe32c637565ad9a66ae5",
+    "watch_attention_dp8_r135.py": "1777ce22c5ed3a7d497856256fbe2972adcae235eff62f3d93c3e058a2ba1d51",
+    "source-host-r135.json": "f19c7bce083d676f2e162d841c132c57df6c42c9c34c77669605447d12515233",
+    "audit_active_raw_r65.py": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+    "audit_topology_original_r99.py": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952"
+  },
+  "adaptations": {
+    "audit_recovery_precision_r121.py": {
+      "source_sha256": "c1ea7df64a7708112b86a629dd5dda21191890a93ef34b57757c0c20a3b9b420",
+      "adapted": "audit_attention_dp8_precision_r135.py",
+      "adapted_sha256": "ca034e483a54933f6ec6f3600432b4c467a0c0c84e30ee57efc41d118387bbe0"
+    },
+    "audit_recovery_native_r121.py": {
+      "source_sha256": "375ae4d07ef5a7ddc584b23eb4c895874b76a368f4ed88fc42052905d0f0da3d",
+      "adapted": "audit_attention_dp8_native_r135.py",
+      "adapted_sha256": "2913f41998921825718102222bf7b96e93ba3507c94f7a5daf41cfa82b4a8d77"
+    },
+    "audit_recovery_mixed_r121.py": {
+      "source_sha256": "38efe2f57e4635de51446a70152b182f31400ca949c159d9bb6f750547d66cc7",
+      "adapted": "audit_attention_dp8_mixed_r135.py",
+      "adapted_sha256": "ebeeeab6fca99be4f0399c9d1978cdf1cffd4493ac97306df31aa60bcfcec5b7"
+    },
+    "audit_recovery_capacity_r121.py": {
+      "source_sha256": "3419a434fbd1727e3302a81c21b01fade4f9280cc0f8b271eb67442922aaa152",
+      "adapted": "audit_attention_dp8_capacity_r135.py",
+      "adapted_sha256": "a4a6edf03209d10064b5c58a2bc7632bad8b12da309cbe32c637565ad9a66ae5"
+    }
+  },
+  "scope": "Namespace/image/provenance adaptations only; finite, numerical, raw-score, inventory, native-latency, trace, actual-placement and same-scrape residency assertions retained."
+}

@@ -1,0 +1,8 @@
+{
+  "at_unix": 1792457453.4932032,
+  "pid": 1302789,
+  "source_manifest": "source-recovery-audits-r122.json",
+  "source_manifest_sha256": "4646590c874cbb03bd2becef79ae2def9f9a94f9004199c706341423a31a4864",
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/watch_recovery_audits_r122.py ",
+  "full_goal_complete": false
+}

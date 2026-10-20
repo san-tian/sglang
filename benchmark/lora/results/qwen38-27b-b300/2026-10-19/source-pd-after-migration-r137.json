@@ -1,0 +1,14 @@
+{
+  "source_files": {
+    "audit_pd_native_r95.py": "650dc26eb65bb304afa3296e132cc82abcc99854bdca36f34b87f10fe8696567",
+    "audit_pd_precision_r94.py": "c1a49d17aabf4a815e2ef202e11230d91beaa548a54832e3219e0f4570e49250",
+    "resume_resource_lease_r136.py": "6820a3c473f62cfb7798a07c384bbf1f0b37e7a6ff0bbfe657618e26c088d351",
+    "resume_wait_barrier_r119.py": "62eed2f1c319966d17cd85169f84024dad8d8ea7b2d6008fc94dc53791e55694",
+    "source-audit-r94.json": "42b28e06bb82041d1d5670225dde43c1ce6e39069e429bd379856bf5b8935906",
+    "source-audit-r95.json": "a5c90ca210c60fff08c1f8abdc78484c5fb40de3b36de7bb0237f5a01a6c6288",
+    "source-resource-queue-r136.json": "67913031cee332f8139dfabf8ae20d6fa81d79a6522400340cfccdd39371feff",
+    "source-wait-barrier-recovery-r123.json": "f53f6086bd997267cdde3879b680fb090e651fb5fca9ba94ec6209569c7ccb5a",
+    "watch_pd_after_resource_queue_r137.py": "8d7cd82269e0d0d59e008086eeda79da15fb8ddeccfeb5e91d6b3a7d643b58f8"
+  },
+  "scope": "Read-only watch of the actual R132 replacement PD coordinator; unchanged original R94/R95 raw auditors, thresholds and counts."
+}

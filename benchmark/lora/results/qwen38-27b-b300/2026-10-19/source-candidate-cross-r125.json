@@ -1,0 +1,12 @@
+{
+  "source_files": {
+    "audit_candidate_cross_topology_r125.py": "99bbaefed251eaf34c222bc79a30efc47f2b43de128c2424126d64348ead1105",
+    "watch_candidate_cross_topology_r125.py": "1c5156d7dae920dab4b713dd366d4091e165161a26e183c8b4032e022be990ef",
+    "audit_cross_topology_prefill_r113.py": "300247f84755d7e5fe1e26da13ac64b65bac445dadb9ac50f9be6dadaa58077a",
+    "audit_topology_original_r99.py": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952",
+    "source-topology-audits-r102.json": "50143c8889d476a179724d1cc4a078534ab77f0832ce60037e12473734de2fe5",
+    "source-host-r118.json": "24544189038731f89ee823a5101628275e4f9832ba60442c5dfbb1c9c84c0bec",
+    "source-runtime-candidate-r116.json": "414195656f8881dbfa2a866c1b67466cb02af329db549e939d9140aa589c8947"
+  },
+  "scope": "Same original cross-topology fixed-input parser/numerical thresholds, new DCP candidate reference path and explicit differing image provenance."
+}

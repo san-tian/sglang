@@ -1,0 +1,7 @@
+{
+  "runtime_image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "diagnostic_hook_sha256": "1b6a862e2667f013358c4c661a06e2763ac0c7f5db3fdcb12e718a3fbff2631a",
+  "host_driver_sha256": "bdce50dc6fe128793ed776b092f8166c079e333022fd6fea83023db508b1965c",
+  "failed_report_sha256": "7505e98ef75a11ae75e42bdadced076f253a123fcac6ac449f3fb8d27af9ef7d",
+  "purpose": "Locate the numerical failure with real model KV and attention-only oracles. No speed or acceptance claim."
+}

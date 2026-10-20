@@ -1,0 +1,44 @@
+{
+  "time_unix": 1792457898.7681818,
+  "reason": "Verified R125 cross-topology numerical rejection; not a timeout",
+  "failed_report": "tp8-vs-dcp8x2-candidate-prefill-r125.json",
+  "failed_report_sha256": "7505e98ef75a11ae75e42bdadced076f253a123fcac6ac449f3fb8d27af9ef7d",
+  "prefill": {
+    "count": 49744,
+    "mean_abs_nat": 0.760610338199255,
+    "p99_abs_nat": 10.124895095825195,
+    "max_abs_nat": 24.039284229278564,
+    "argmax_matches": 48192,
+    "argmax_match_fraction": 0.9688002573174654,
+    "passes_logprob_gate": false
+  },
+  "container": "qwen38-dcp8x2-m-real_r16-r118",
+  "container_id": "5a39ebffc8d48cc6e1f000522652dec7826169f9962fe726efa8ae8fc711cec4",
+  "image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+  "state_before": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 1284846,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-10-20T00:47:14.497284807Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "native_client_pid": 1309457,
+  "native_client_argv": [
+    "python3",
+    "/work/qwen38-mol-multigpu-20261019/perf_endpoint_r85.py",
+    "--url",
+    "http://127.0.0.1:30702",
+    "--output",
+    "/work/qwen38-mol-multigpu-20261019/perf-dcp8x2-m-r118",
+    "--profile"
+  ],
+  "docker_top_before": "PID                 PPID                COMMAND\n1284846             1284823             python3 -m sglang.launch_server --model-path /work/qwen38-mol-development-20261019/merged/real_r16 --served-model-name qwen38-27b --host 127.0.0.1 --port 30702 --tp-size 8 --context-length 4096 --mem-fraction-static 0.5 --max-mamba-cache-size 256 --max-running-requests 32 --chunked-prefill-size 2048 --disable-cuda-graph --enable-custom-logit-processor --linear-attn-prefill-backend triton --enable-deterministic-inference --attention-backend triton --bf16-gemm-backend torch --random-seed 0 --dcp-size 2 --dcp-comm-backend a2a\n1287247             1284846             /opt/sglang/bin/python3 -c from multiprocessing.resource_tracker import main;main(50)\n1287248             1284846             sglang::scheduler_TP0\n1287313             1284846             sglang::scheduler_TP1\n1287378             1284846             sglang::scheduler_TP2\n1287462             1284846             sglang::scheduler_TP3\n1287695             1284846             sglang::scheduler_TP4\n1287934             1284846             sglang::scheduler_TP5\n1288000             1284846             sglang::scheduler_TP6\n1288068             1284846             sglang::scheduler_TP7\n1288069             1284846             sglang::detokenizer\n1292961             1287695             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=809 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1292962             1288000             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=941 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1292963             1288068             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=1009 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1292964             1287248             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=547 --read-fd=258 --write-fd=261 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1292965             1287313             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=612 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1292966             1287462             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=743 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1292967             1287378             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=677 --read-fd=219 --write-fd=222 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1292968             1287934             /opt/sglang/bin/python3 /opt/sglang/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py --pickler=torch._inductor.compile_worker.subproc_pool.SubprocPickler --kind=fork --workers=32 --parent=875 --read-fd=218 --write-fd=221 --torch-key=b8GjxJPotQgQJ1ltbiDWXzFco3Y0klK/qzAfb+/QsEA=\n1309457             1284823             python3 /work/qwen38-mol-multigpu-20261019/perf_endpoint_r85.py --url http://127.0.0.1:30702 --output /work/qwen38-mol-multigpu-20261019/perf-dcp8x2-m-r118 --profile\n",
+  "signal": "SIGTERM to owned performance client only",
+  "full_goal_complete": false
+}

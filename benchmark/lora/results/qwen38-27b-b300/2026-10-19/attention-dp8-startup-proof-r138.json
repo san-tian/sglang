@@ -1,0 +1,122 @@
+{
+  "startup_passed": true,
+  "model_accuracy_accepted": false,
+  "native_speed_accepted": false,
+  "equal_byte_KV_accepted": false,
+  "CLI_global_SSM_slots": 256,
+  "per_worker_SSM_slots": 32,
+  "effective_max_requests_per_DP": 4,
+  "allocations": {
+    "3": {
+      "tp_rank": 3,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP3 TP3] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    },
+    "2": {
+      "tp_rank": 2,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP2 TP2] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    },
+    "4": {
+      "tp_rank": 4,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP4 TP4] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    },
+    "5": {
+      "tp_rank": 5,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP5 TP5] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    },
+    "7": {
+      "tp_rank": 7,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP7 TP7] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    },
+    "0": {
+      "tp_rank": 0,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP0 TP0] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    },
+    "1": {
+      "tp_rank": 1,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP1 TP1] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    },
+    "6": {
+      "tp_rank": 6,
+      "slots": 32,
+      "conv_GiB_rounded": 0.09,
+      "SSM_GiB_rounded": 4.64,
+      "log_line": "[2026-10-20 01:15:34 DP6 TP6] Mamba Cache is allocated. max_mamba_cache_size: 32, conv_state size: 0.09GB, ssm_state size: 4.64GB "
+    }
+  },
+  "actual_GPU_mapping": [
+    {
+      "pid": 1371950,
+      "gpu_uuid": "GPU-a14f3d9b-1c82-9ef6-3f23-fa33f570874f",
+      "memory_mib": "138128",
+      "gpu_index": 0
+    },
+    {
+      "pid": 1372015,
+      "gpu_uuid": "GPU-d65bcca1-7560-4600-4838-8d41eaadb2c7",
+      "memory_mib": "138102",
+      "gpu_index": 1
+    },
+    {
+      "pid": 1372080,
+      "gpu_uuid": "GPU-de90bae1-f5d2-374c-a035-94f0f681f7f2",
+      "memory_mib": "138102",
+      "gpu_index": 2
+    },
+    {
+      "pid": 1372148,
+      "gpu_uuid": "GPU-b2516cac-c615-068e-8867-b9c878cd800c",
+      "memory_mib": "138102",
+      "gpu_index": 3
+    },
+    {
+      "pid": 1372216,
+      "gpu_uuid": "GPU-83492baa-c267-dfd3-7567-c26d32a39ff3",
+      "memory_mib": "138102",
+      "gpu_index": 4
+    },
+    {
+      "pid": 1372339,
+      "gpu_uuid": "GPU-6d6b6026-e0f2-c5c2-48f4-a88f7d8ffa61",
+      "memory_mib": "138102",
+      "gpu_index": 5
+    },
+    {
+      "pid": 1372578,
+      "gpu_uuid": "GPU-173d551e-782e-5624-d6e8-53c2f843e61c",
+      "memory_mib": "138102",
+      "gpu_index": 6
+    },
+    {
+      "pid": 1372644,
+      "gpu_uuid": "GPU-f62b0201-35ab-a719-25f8-5479a9a8575d",
+      "memory_mib": "137942",
+      "gpu_index": 7
+    }
+  ],
+  "config_sha256": "3b69176734663b1e18b1aeeeed394491c79a8e7a52b0c9c3f24aaf9aca296209",
+  "placement_sha256": "7140ac41b1e1a32ae5a88b06a31ff748f1679a447aa08aba5a805ad5e4d72025",
+  "source_sha256": "dd35602b3741dd091dd8aa38d25d65087452e97e008fd9da6aa2a2c1c50f1323",
+  "at_unix": 1792459075.8144917,
+  "full_goal_complete": false
+}

@@ -1,0 +1,821 @@
+{
+  "passed": true,
+  "ranks": [
+    {
+      "rank": 0,
+      "world_size": 2,
+      "passed": true,
+      "old_nonzero_chunk_cases": 28,
+      "cases": [
+        {
+          "kind": "FP64_oracle",
+          "length": 1,
+          "mean_abs": 0.0,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 127,
+          "mean_abs": 0.0003431079676374793,
+          "max_abs": 0.00671696662902832,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 127,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 127,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 127,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 128,
+          "mean_abs": 0.0003439447027631104,
+          "max_abs": 0.0077021121978759766,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 129,
+          "mean_abs": 0.000340539263561368,
+          "max_abs": 0.007597684860229492,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.015625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 874,
+          "mean_abs": 0.00016378439613617957,
+          "max_abs": 0.006928205490112305,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 129,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 768,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 1378,
+          "mean_abs": 0.00013112825399730355,
+          "max_abs": 0.0065076351165771484,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 129,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 768,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 1630,
+          "mean_abs": 0.0001230783382197842,
+          "max_abs": 0.007695198059082031,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 129,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 768,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 1408,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "ragged_1_129",
+          "finite": true,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 0,
+          "extend": 1,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 0,
+          "extend": 256,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 127,
+          "extend": 129,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 768,
+          "extend": 106,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 1408,
+          "extend": 222,
+          "max_abs": 0.0,
+          "passed": true
+        }
+      ],
+      "peak_pytorch_allocated_bytes": 202682880,
+      "kernel_sha256": "48a2b99e353745dff42bebe9e154691bb80d352620e36580f5e21ec1d0b90c23",
+      "backend_sha256": "bc7a90ccf4a93b3e9ba8e429cbacbfa349095302da8468603c3565481a694139",
+      "source_sha256": "2276639d65023dae2d4dfead91e70a11fe4f309667552ce4fdc3f4b0c458558b"
+    },
+    {
+      "rank": 1,
+      "world_size": 2,
+      "passed": true,
+      "old_nonzero_chunk_cases": 28,
+      "cases": [
+        {
+          "kind": "FP64_oracle",
+          "length": 1,
+          "mean_abs": 0.0,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 127,
+          "mean_abs": 0.0003469749935902655,
+          "max_abs": 0.007565736770629883,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 127,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 127,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 127,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 128,
+          "mean_abs": 0.00034666640567593277,
+          "max_abs": 0.0078582763671875,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 128,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 129,
+          "mean_abs": 0.0003458659048192203,
+          "max_abs": 0.00775909423828125,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 129,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 874,
+          "mean_abs": 0.00016313754895236343,
+          "max_abs": 0.00769495964050293,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0078125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 129,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 874,
+          "cut": 768,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 1378,
+          "mean_abs": 0.00013120724179316312,
+          "max_abs": 0.007877349853515625,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.015625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 129,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1378,
+          "cut": 768,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.001953125,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "FP64_oracle",
+          "length": 1630,
+          "mean_abs": 0.00012347237498033792,
+          "max_abs": 0.0078029632568359375,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 1,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": null,
+          "old_control_skipped_empty_prefix_shard": true,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 2,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.015625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 63,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 127,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 128,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 129,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.00390625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 768,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "chunk_invariance",
+          "length": 1630,
+          "cut": 1408,
+          "candidate_max_abs": 0.0,
+          "old_path_max_abs": 0.0009765625,
+          "old_control_skipped_empty_prefix_shard": false,
+          "passed": true
+        },
+        {
+          "kind": "ragged_1_129",
+          "finite": true,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 0,
+          "extend": 1,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 0,
+          "extend": 256,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 127,
+          "extend": 129,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 768,
+          "extend": 106,
+          "max_abs": 0.0,
+          "passed": true
+        },
+        {
+          "kind": "non_DCP_original_parity",
+          "prefix": 1408,
+          "extend": 222,
+          "max_abs": 0.0,
+          "passed": true
+        }
+      ],
+      "peak_pytorch_allocated_bytes": 202682880,
+      "kernel_sha256": "48a2b99e353745dff42bebe9e154691bb80d352620e36580f5e21ec1d0b90c23",
+      "backend_sha256": "bc7a90ccf4a93b3e9ba8e429cbacbfa349095302da8468603c3565481a694139",
+      "source_sha256": "2276639d65023dae2d4dfead91e70a11fe4f309667552ce4fdc3f4b0c458558b"
+    }
+  ],
+  "full_goal_complete": false,
+  "scope": "Two actual NCCL ranks exercise production backend, real sharded-KV index kernel, query/LSE all-gathers and output all-reduce. FP64 oracle, whole-vs-chunk and unmodified default-kernel parity. Not full-model D/M, mixed serving, performance or KV-capacity acceptance."
+}

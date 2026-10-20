@@ -1,0 +1,34 @@
+{
+  "pid": 1264524,
+  "at_unix": 1792457002.8714476,
+  "cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_eight_gpu_recovery_r118.py ",
+  "source_manifest_sha256": "24544189038731f89ee823a5101628275e4f9832ba60442c5dfbb1c9c84c0bec",
+  "source_manifest": {
+    "image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+    "runtime_image": "sha256:1092e415c3dfa77fa0cb4da3b6ba3dea469bd5d32687e7a241e0bcc028ebc878",
+    "base_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+    "base_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
+    "runtime_source_override_manifest": "source-runtime-candidate-r116.json",
+    "source_files": {
+      "perf_endpoint_r85.py": "fdff746aa3648a7d9037f55af68c5d3e9b37f1d43abd676e465214a7b6d649e8",
+      "capacity_residency_r61.py": "8f96958cdacacebb1bb35d75b8547e087cbc3a075b31317382786f1ebcd672cc",
+      "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08",
+      "client-r30/compare_frozen.py": "b7bc4483b697d4965f5994fd264adeab6c2573ad6934c86133b27da9f881cc56",
+      "client-r30/compare_merged.py": "b0ac53402cc7df18a89bff44960f2386c43f0ec1d2bf8c2496661f439b28840b",
+      "client-r30/compare_mixed.py": "17c0178b84d269e3f946645bf3c48f40aaab4727aa31dbbeffe6543fb9d302d2",
+      "launch-qwen38-tp2-d-r28.json": "d0d36cae96608864d432f9255d123a5569e81a8c8c2d1a8bf95f6c7f388d9e0f",
+      "host_common_r118.py": "c6b91f3318bbeaf3031904100f2beaabbb66cff72cfbddaa82db48e24aafd981",
+      "run_eight_gpu_recovery_r118.py": "32eae49aada33c6ca87a159baf1bce686d83467e1c01bc82ab1613adba67a909",
+      "watch_actual_placement_r92.py": "da058bfbcc1ec404dbac8077a675c1ae0c4335951ae15c716d4842547304d706",
+      "source-runtime-candidate-r116.json": "414195656f8881dbfa2a866c1b67466cb02af329db549e939d9140aa589c8947",
+      "probe_dcp_chunk_invariance_r117.py": "2276639d65023dae2d4dfead91e70a11fe4f309667552ce4fdc3f4b0c458558b",
+      "prepare_dcp_recovery_r118.py": "cdcaaa8667886ddb492f8aaa3f27dbfc8bb3cef8f75b1fb0f1dbcc7b852a9ce4",
+      "check_dcp_recovery_launch_r118.py": "0b6837421b89a1362362551f404e7771657228ea74789c1d9bfcc6bd535aafe4",
+      "dcp-recovery-launch-check-r118.log": "0eb44f6b867cb02394de08a8dae38823d0a4af1eba0cc1ef726e7f66231c6ac8"
+    },
+    "scope": "Complete new DCP2 and attentionDP8 protocol after preserved R85 mixed failure;248 D/M precision,48 mixed,1908 natural SSE,24 traces,13 equal-byte residency requests per topology; early exact-failure mixed screen. No original success barriers written. Full4P4D and cache/isolated/million followup remain required.",
+    "source_namespace": "r118"
+  },
+  "gpu_acceptance": false,
+  "full_goal_complete": false
+}

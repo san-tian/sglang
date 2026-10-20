@@ -1,0 +1,12 @@
+{
+  "source_files": {
+    "watch_pd_after_migration_r124.py": "3fcc9e7267fc9bb658d388322d8fd3a0c0e119a5b098f9d7f52433b06d28ec14",
+    "audit_pd_precision_r94.py": "c1a49d17aabf4a815e2ef202e11230d91beaa548a54832e3219e0f4570e49250",
+    "audit_pd_native_r95.py": "650dc26eb65bb304afa3296e132cc82abcc99854bdca36f34b87f10fe8696567",
+    "source-audit-r94.json": "42b28e06bb82041d1d5670225dde43c1ce6e39069e429bd379856bf5b8935906",
+    "source-audit-r95.json": "a5c90ca210c60fff08c1f8abdc78484c5fb40de3b36de7bb0237f5a01a6c6288",
+    "resume_wait_barrier_r119.py": "62eed2f1c319966d17cd85169f84024dad8d8ea7b2d6008fc94dc53791e55694",
+    "source-wait-barrier-recovery-r123.json": "f53f6086bd997267cdde3879b680fb090e651fb5fca9ba94ec6209569c7ccb5a"
+  },
+  "scope": "Read-only actual migrated-PD wait and unchanged original raw audits; no runtime or acceptance relaxation."
+}

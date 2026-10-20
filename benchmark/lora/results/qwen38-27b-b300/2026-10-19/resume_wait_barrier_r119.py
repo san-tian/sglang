@@ -1,0 +1,45 @@
+"""Run an unchanged queued experiment with one explicitly versioned lease barrier.
+
+No original success file is created. Runtime, clients and measurements are the
+original sealed sources; the migration sidecar records the new effective wait.
+"""
+import argparse,hashlib,importlib,json,runpy,time
+from pathlib import Path
+R=Path(__file__).resolve().parent
+JOBS={
+ 'pd':('run_pd4_suite_r86.py','host_common_r86','source-host-r86.json'),
+ 'cached':('run_cached_topologies_r90.py','host_common_r90','source-host-r90.json'),
+ 'isolated':('run_isolated_speed_r91.py','host_common_r90','source-host-r91.json'),
+ 'million':('run_million_cache_r106.py','host_common_r90','source-milli-cache-r106.json'),
+}
+OLD='eight-gpu-suite-complete-r31.json'
+NEW='eight-gpu-recovery-complete-r118.json'
+def mapped(markers):
+ assert OLD in markers and NEW not in markers
+ return [NEW if x==OLD else x for x in markers]
+def main(kind):
+ source=json.loads((R/'source-wait-barrier-recovery-r119.json').read_text())
+ for n,h in source['source_files'].items():assert hashlib.sha256((R/n).read_bytes()).hexdigest()==h,n
+ driver,modname,parent=JOBS[kind]
+ original=json.loads((R/parent).read_text())
+ for n,h in original['source_files'].items():assert hashlib.sha256((R/n).read_bytes()).hexdigest()==h,n
+ module=importlib.import_module(modname)
+ original_wait=module.waitleases
+ def wait(markers,gpus,timeout=18000):
+  effective=mapped(markers)
+  with (R/f'{kind}-effective-wait-barriers-r119.json').open('x') as f:
+   json.dump({'at_unix':time.time(),'original_driver':driver,'original_manifest':parent,'original_markers':markers,'effective_markers':effective,'gpus':gpus,'timeout':timeout,'original_measurement_source_unmodified':True,'full_goal_complete':False},f,indent=2)
+  original_wait(effective,gpus,timeout)
+  cohort=json.loads((R/NEW).read_text())
+  manifest=json.loads((R/'source-host-r118.json').read_text())
+  assert cohort['image']==manifest['image'] and set(cohort['topologies'])=={'dcp8x2','dpa8'}
+  assert json.loads((R/'tp8-original-audits-finished-r102.json').read_text())['passed']
+  for top in cohort['topologies']:
+   item=json.loads((R/f'{top}-precision-perf-capacity-complete-r118.json').read_text())
+   assert item['raw_protocol_complete'] and (item['precision_pairs'],item['gdn_pairs'],item['mixed_requests'])==(240,8,48)
+   assert item['performance']['requests_per_side']==636 and item['performance']['outputs_equal']
+  assert not (R/OLD).exists(),'Original failed cohort must not be relabeled passed'
+ module.waitleases=wait
+ runpy.run_path(str(R/driver),run_name='__main__')
+if __name__=='__main__':
+ p=argparse.ArgumentParser();p.add_argument('--kind',choices=JOBS,required=True);a=p.parse_args();main(a.kind)

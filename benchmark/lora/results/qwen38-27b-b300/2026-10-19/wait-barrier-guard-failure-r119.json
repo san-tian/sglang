@@ -1,0 +1,9 @@
+{
+  "passed": false,
+  "exit_code": 1,
+  "gpu_workers_interrupted": false,
+  "mutation_loop_reached": false,
+  "failure": "Exact argv guard expected python3 but original million waiter was python3 -u. The all-four precheck failed before any os.kill call.",
+  "corrected_in": "migrate_wait_barriers_r123.py",
+  "original_source_preserved": true
+}

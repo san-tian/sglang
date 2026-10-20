@@ -1,0 +1,17 @@
+{
+  "passed": false,
+  "full_goal_complete": false,
+  "scope": "Read-only candidate merged prefill cross-topology diagnostic, not D/M, decode or native speed acceptance.",
+  "returncode": 1,
+  "prefill": {
+    "count": 49744,
+    "mean_abs_nat": 0.760610338199255,
+    "p99_abs_nat": 10.124895095825195,
+    "max_abs_nat": 24.039284229278564,
+    "argmax_matches": 48192,
+    "argmax_match_fraction": 0.9688002573174654,
+    "passes_logprob_gate": false
+  },
+  "report_sha256": "7505e98ef75a11ae75e42bdadced076f253a123fcac6ac449f3fb8d27af9ef7d",
+  "at_unix": 1792457612.3550298
+}

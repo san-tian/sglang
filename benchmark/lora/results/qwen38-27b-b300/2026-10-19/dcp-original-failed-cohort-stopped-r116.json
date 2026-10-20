@@ -1,0 +1,17 @@
+{
+  "at_unix": 1792456661.18471,
+  "container_id": "cf207cd1072232e56fadd83a371e5123c3d606135f2faf0650c17df315a7f33a",
+  "state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-10-20T00:15:54.963847337Z",
+    "FinishedAt": "2026-10-20T00:37:41.041968136Z"
+  }
+}

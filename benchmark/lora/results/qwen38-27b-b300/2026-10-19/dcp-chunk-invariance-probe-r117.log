@@ -1,0 +1,102 @@
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.0.3
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+{"rank": 0, "phase": "whole", "length": 1}
+{"rank": 1, "phase": "whole", "length": 1}
+{"rank": 0, "phase": "whole", "length": 127}
+{"rank": 1, "phase": "whole", "length": 127}
+{"rank": 0, "kind": "chunk_invariance", "length": 127, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 127, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 127, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 127, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 127, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 127, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "phase": "whole", "length": 128}
+{"rank": 1, "phase": "whole", "length": 128}
+{"rank": 0, "kind": "chunk_invariance", "length": 128, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 128, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 128, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 128, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 128, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 128, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 128, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 128, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "phase": "whole", "length": 129}
+{"rank": 1, "phase": "whole", "length": 129}
+{"rank": 0, "kind": "chunk_invariance", "length": 129, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 129, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 129, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.015625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 129, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 129, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 129, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 129, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 129, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 129, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 129, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "phase": "whole", "length": 874}
+{"rank": 1, "phase": "whole", "length": 874}
+{"rank": 0, "kind": "chunk_invariance", "length": 874, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 874, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 874, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 874, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 874, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 874, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 874, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 874, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 874, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 874, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 874, "cut": 129, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 874, "cut": 129, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 874, "cut": 768, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 874, "cut": 768, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "phase": "whole", "length": 1378}
+{"rank": 1, "phase": "whole", "length": 1378}
+{"rank": 0, "kind": "chunk_invariance", "length": 1378, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1378, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1378, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1378, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.015625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1378, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1378, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1378, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1378, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1378, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1378, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1378, "cut": 129, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1378, "cut": 129, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1378, "cut": 768, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1378, "cut": 768, "candidate_max_abs": 0.0, "old_path_max_abs": 0.001953125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "phase": "whole", "length": 1630}
+{"rank": 1, "phase": "whole", "length": 1630}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 1, "candidate_max_abs": 0.0, "old_path_max_abs": null, "old_control_skipped_empty_prefix_shard": true, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0078125, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 2, "candidate_max_abs": 0.0, "old_path_max_abs": 0.015625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 63, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 127, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 128, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 129, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 129, "candidate_max_abs": 0.0, "old_path_max_abs": 0.00390625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 768, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 768, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 0, "kind": "chunk_invariance", "length": 1630, "cut": 1408, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"rank": 1, "kind": "chunk_invariance", "length": 1630, "cut": 1408, "candidate_max_abs": 0.0, "old_path_max_abs": 0.0009765625, "old_control_skipped_empty_prefix_shard": false, "passed": true}
+{"passed": true, "cases_per_rank": 47, "old_nonzero_per_rank": [28, 28]}

@@ -1,0 +1,157 @@
+{
+  "passed": false,
+  "failed_numerical_gates": [
+    {
+      "label": "r0-real-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.04802182522832178,
+        "p99_abs_nat": 0.25617897510528564,
+        "max_abs_nat": 0.25617897510528564,
+        "argmax_matches": 13,
+        "argmax_match_fraction": 0.8666666666666667,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "r0-zero-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.013023641831394647,
+        "p99_abs_nat": 0.09367230534553528,
+        "max_abs_nat": 0.09367230534553528,
+        "argmax_matches": 15,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "r0-gdn-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.019172648379268745,
+        "p99_abs_nat": 0.19545024633407593,
+        "max_abs_nat": 0.19545024633407593,
+        "argmax_matches": 15,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "r1-gdn-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.026778077762962007,
+        "p99_abs_nat": 0.1987905502319336,
+        "max_abs_nat": 0.1987905502319336,
+        "argmax_matches": 15,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "r1-zero-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.013023641831394647,
+        "p99_abs_nat": 0.09367230534553528,
+        "max_abs_nat": 0.09367230534553528,
+        "argmax_matches": 15,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "r1-base-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.010217554636831968,
+        "p99_abs_nat": 0.07876347005367279,
+        "max_abs_nat": 0.07876347005367279,
+        "argmax_matches": 15,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "r2-gdn-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.019290371606863723,
+        "p99_abs_nat": 0.1200171709060669,
+        "max_abs_nat": 0.1200171709060669,
+        "argmax_matches": 15,
+        "argmax_match_fraction": 1.0,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "r2-real-long_prefix-4:decode",
+      "statistics": {
+        "count": 15,
+        "mean_abs_nat": 0.03730263763581974,
+        "p99_abs_nat": 0.13018620014190674,
+        "max_abs_nat": 0.13018620014190674,
+        "argmax_matches": 13,
+        "argmax_match_fraction": 0.8666666666666667,
+        "passes_logprob_gate": false
+      }
+    },
+    {
+      "label": "aggregate:decode",
+      "statistics": {
+        "count": 720,
+        "mean_abs_nat": 0.0040909214436988545,
+        "p99_abs_nat": 0.11065840721130371,
+        "max_abs_nat": 0.25617897510528564,
+        "argmax_matches": 716,
+        "argmax_match_fraction": 0.9944444444444445,
+        "passes_logprob_gate": false
+      }
+    }
+  ],
+  "full_goal_complete": false,
+  "root_cause_proven": false,
+  "original_auditor_sha256": "67785956d86357ec88bf1a1404abc5a6e82d511c0c0bda39c55d78a623bb308a",
+  "topology": "dcp8x2",
+  "sampling_rank_coverage": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "full8GPU_accepted": false,
+  "mixed_requests": 48,
+  "isolated_scored_requests": 16,
+  "natural_reference_requests": 16,
+  "raw_rank_capture_files_reparsed": 512,
+  "scores": {
+    "prefill_last": {
+      "count": 48,
+      "mean_abs_nat": 2.506115379219409e-05,
+      "p99_abs_nat": 0.0007019862532615662,
+      "max_abs_nat": 0.0007019862532615662,
+      "argmax_matches": 48,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "decode": {
+      "count": 720,
+      "mean_abs_nat": 0.0040909214436988545,
+      "p99_abs_nat": 0.11065840721130371,
+      "max_abs_nat": 0.25617897510528564,
+      "argmax_matches": 716,
+      "argmax_match_fraction": 0.9944444444444445,
+      "passes_logprob_gate": false
+    }
+  },
+  "raw_evidence_files_rehashed": 550,
+  "summary_sha256": "72d9106bdaebbaba44d84784c7f2324426cf885d610d268953965a022b63b5b9",
+  "audit_source_sha256": "0f9a2edc17a14fe1edbbf0b1a6945b960791bf376b2904cb87cce1ba3d20efeb",
+  "score_auditor_dependency_sha256": "4ffb01ea79542037e13e64d8d6158e30395c7f3ebf5916946d4b809b7b89ca02",
+  "scope": "Original per-rank mixed routing versus isolated references; fouridentities(base/real/zero/GDN),3shuffledbatches48requests/768scores. TP sampling replicas agree; attentionDP capture rank membership checked without assuming requests share the same DP rank. Not independent D/M, full-prefill, actual prefix-restoration or KV residency acceptance; legacy4GPU replay is parser validation only."
+}
