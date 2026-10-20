@@ -1,0 +1,30 @@
+{
+  "passed": true,
+  "full_goal_complete": false,
+  "container_id": "cf207cd1072232e56fadd83a371e5123c3d606135f2faf0650c17df315a7f33a",
+  "image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "started_unix_s": 1792455465.3865945,
+  "phase_before": "early DCP full dynamic precision",
+  "gpu": 0,
+  "command": [
+    "docker",
+    "exec",
+    "-e",
+    "CUDA_VISIBLE_DEVICES=0",
+    "-e",
+    "OMP_NUM_THREADS=1",
+    "-e",
+    "OPENBLAS_NUM_THREADS=1",
+    "qwen38-dcp8x2-d-r31",
+    "timeout",
+    "--kill-after=5",
+    "75",
+    "python3",
+    "/work/qwen38-mol-multigpu-20261019/probe_dcp_extend_kernel_r113.py",
+    "--output",
+    "/work/qwen38-mol-multigpu-20261019/dcp-extend-kernel-probe-r113.json"
+  ],
+  "returncode": 0,
+  "operator_result_sha256": "52de160e4fb04494c2654ec512528da58aa165c8eb365dcf4eb14e53b0ca82b9",
+  "finished_unix_s": 1792455483.6232119
+}

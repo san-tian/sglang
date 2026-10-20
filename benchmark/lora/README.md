@@ -732,11 +732,15 @@ Both sides use2048-token prefill chunks and the same deterministic Triton/GDN
 settings. This is a merged-vs-merged topology diagnostic, not attribution of a
 LoRA loading error, and no decode scores on differing paths are compared.
 The failed diagnostic is retained as passed=false. Eleven CPU parser/window
-checks passed. An additive actual-kernel versus FP64 arithmetic probe is queued
-only during early DCP dynamic precision, before natural performance sampling;
-its locally emulated LSE combination cannot prove distributed transport or
-whole-model accuracy. No operator GPU result exists yet. Full DCP2 D/M/native/
-KV, attentionDP8,4P4D and optimization controls remain required.
+checks passed. The additive actual-kernel versus FP64 arithmetic probe ran
+18cases during early DCP dynamic precision, before natural performance sampling;
+all passed atol/rtol0.01. Maximum absolute error versus FP64 was0.008149624,
+DCP-versus-unified maximum0.00390625; peak PyTorch allocation104.048MiB,18.24s
+wall time. Its locally emulated LSE combination cannot prove distributed
+transport or whole-model accuracy. Extend lengths are1/128/256, so these results
+do not exclude longer-shape or model-path effects. The cross-topology prefill
+failure remains unresolved. Full DCP2 D/M/native/KV,attentionDP8,4P4D and
+optimization controls remain required.
 
 
 DCP2 merged natural baseline (R114) completed636 original SSE responses,

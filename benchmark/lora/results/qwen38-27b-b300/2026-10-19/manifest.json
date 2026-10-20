@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-20T00:15:39.698606+00:00",
+  "as_of_utc": "2026-10-20T00:19:54.236045+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -236,7 +236,10 @@
     "audit_dcp_merge_baseline_r114.py": "80be16a0bb3d459878ec42346306e89042809a1efec299016b09269ea64a07aa",
     "source-dcp-merge-stage-r114.json": "6a9aa760cfe1c18f80cb4657a4c351e5ef401edc25bf4c2586c615f681c56a60",
     "dcp8x2-merge-baseline-observation-r114.json": "5c956271251d8d9f1751a8b2a2fcc03666fea5e24dbb8154ff1709bfa6c5b13e",
-    "dcp-merge-baseline-audit-r114.log": "8ee7953da5d75d09b4838797c1fe28363d9f5ab26401c63e8889f6c56ec40648"
+    "dcp-merge-baseline-audit-r114.log": "8ee7953da5d75d09b4838797c1fe28363d9f5ab26401c63e8889f6c56ec40648",
+    "dcp-extend-kernel-probe-r113.json": "52de160e4fb04494c2654ec512528da58aa165c8eb365dcf4eb14e53b0ca82b9",
+    "dcp-kernel-probe-finished-r113.json": "f76528d16b10381624637c2363d07f2f9b927b01e0702ac1273757bce28a356d",
+    "dcp-extend-kernel-probe-r113.log": "0145788bda34589531d0e0bc7fcb78d817f0de2a1e74af663e5195eeca954fd8"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -411,9 +414,14 @@
       "passes_logprob_gate": false
     },
     "cpu_checks": 11,
-    "kernel_probe_status": "Queued CPU observer, only allowed during early dynamic precision; no GPU operator result yet",
+    "kernel_probe_status": "Actual18 Triton operator cases passed atol/rtol0.01 againstFP64; locally emulated DCP merge, not distributed/full-model acceptance; cross-topology discrepancy unresolved",
     "source_manifest": "source-dcp-diagnostic-r113.json",
-    "full_goal_complete": false
+    "full_goal_complete": false,
+    "kernel_probe_result": "dcp-extend-kernel-probe-r113.json",
+    "kernel_probe_finished": "dcp-kernel-probe-finished-r113.json",
+    "kernel_probe_max_error_vs_fp64": 0.00814962387084961,
+    "kernel_probe_dcp_vs_unified_max_abs": 0.00390625,
+    "kernel_probe_peak_pytorch_allocated_bytes": 109102080
   },
   "dcp2_merge_baseline": {
     "report": "dcp8x2-merge-baseline-observation-r114.json",
