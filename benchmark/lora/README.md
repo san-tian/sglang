@@ -933,3 +933,33 @@ shown a merged-baseline speed advantage. Cross-topology numerical parity is
 still failed; MoL speed, same-topology precision/mixed and equal-byte resident
 KV capacity remain separate pending gates. These observations do not accept an
 optimization or infer capacity gains from configured worker counts.
+
+
+Original-image attention-DP8 precision and mixed stages (R145/R146)
+
+The unchanged original precision auditor independently reconstructed248pairs
+(full240 plus GDN8),114692scores,496rank captures and566hashed raw files.
+Same-topology dynamic MoL versus independent merged-reference mean/P99/max
+are all0nat with100%argmax agreement. All nominal-hot prefix hits are0,
+so this does not accept actual prefix restoration. Cross-topology R139 remains
+failed and native performance/KV capacity remain separate pending gates.
+
+The unchanged original mixed auditor reconstructed48requests/768scores from
+64rank captures and102hashed files,also all0nat/100%argmax. Its copied scope
+text retains an earlier R116/R118 label;source-dpa8-mixed-stage-r146.json
+explicitly binds the actual R135 paths and original R28 runtime. Neither stage
+accepts speed or resident KV capacity. Both reports retain the original gates.
+
+R55 active-cache multi-GPU candidate is queued (R144)
+
+The actual CPU waiter was started after five existing experiment owners;it
+does not migrate or interrupt their GPU leases. TP4 andattention-DP4 each
+compare five matched controls(M/base/nocache/LRU/active),total6360natural
+requests and40rank traces. LRU andactive separately run248D/M pairs and48mixed
+requests per topology:992pairs/458768scores and192mixed requests in total.
+KV is fixed65536tokens,SSM256slots;LRU/active budgets are10240MiB/rank forTP4
+and12288MiB/rank forDP4. This is not maximum-KV or long-context acceptance.
+Four CPU test methods cover12actual launch-construction cases and3resource
+guards,including busy GPUs and PID identity changes. Those checks pass;GPU
+execution and speed acceptance are still pending. Sources and actual process
+record are bound in source-host-r144.json and the snapshot manifest.

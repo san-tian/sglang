@@ -1,0 +1,25 @@
+{
+  "original_auditor": "audit_attention_dp8_precision_r135.py",
+  "original_auditor_sha256": "ca034e483a54933f6ec6f3600432b4c467a0c0c84e30ee57efc41d118387bbe0",
+  "original_auditor_manifest_sha256": "f762b1bb0c38824a89d1ef3760091341ad9ee596adcf09874486a5639074b9e9",
+  "unchanged_original_precision_auditor": true,
+  "command": [
+    "python3",
+    "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/audit_attention_dp8_precision_r135.py",
+    "--root",
+    "/opt/dlami/nvme/qwen38-mol-multigpu-20261019",
+    "--topology",
+    "dpa8",
+    "--output",
+    "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/dpa8-precision-stage-raw-audit-r145.json"
+  ],
+  "report_sha256": "3caeef203a52a190f0fb1539268d138d101b057b5e376a439f9890ecc07282ee",
+  "source_manifest_sha256": "f19c7bce083d676f2e162d841c132c57df6c42c9c34c77669605447d12515233",
+  "precision_pairs": 248,
+  "precision_scores": 114692,
+  "rank_captures_reparsed": 496,
+  "raw_files_rehashed": 566,
+  "passed_scope": "Only same-topology original-image MoL vs independent merge precision; no native/mixed/KV or cross-topology numerical acceptance. All nominal-hot actual prefix hits0.",
+  "full_goal_complete": false,
+  "unix_s": 1792460936.8354232
+}

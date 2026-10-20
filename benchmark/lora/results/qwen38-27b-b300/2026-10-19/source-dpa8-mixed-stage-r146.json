@@ -1,0 +1,26 @@
+{
+  "original_auditor": "audit_attention_dp8_mixed_r135.py",
+  "original_auditor_sha256": "ebeeeab6fca99be4f0399c9d1978cdf1cffd4493ac97306df31aa60bcfcec5b7",
+  "auditor_manifest_sha256": "f762b1bb0c38824a89d1ef3760091341ad9ee596adcf09874486a5639074b9e9",
+  "runtime_source_manifest": "source-host-r135.json",
+  "runtime_source_manifest_sha256": "f19c7bce083d676f2e162d841c132c57df6c42c9c34c77669605447d12515233",
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "unchanged_original_auditor": true,
+  "report_sha256": "66fdc204d4cc0e51b86bfbfc9f0088a8ba4846053e71b2a10aec3198a386cab8",
+  "command": [
+    "python3",
+    "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/audit_attention_dp8_mixed_r135.py",
+    "--root",
+    "/opt/dlami/nvme/qwen38-mol-multigpu-20261019",
+    "--topology",
+    "dpa8",
+    "--output",
+    "/opt/dlami/nvme/qwen38-mol-multigpu-20261019/dpa8-mixed-stage-raw-audit-r146.json"
+  ],
+  "mixed_requests": 48,
+  "mixed_scores": 768,
+  "raw_rank_captures_reparsed": 64,
+  "raw_files_rehashed": 102,
+  "scope": "Original R135 R28-image attentionDP8 cohort; mixed versus isolated pre-forcing scores only. The reused auditor report scope text incorrectly refers to the earlier R116/R118 cohort; actual input paths use r135, bound by source and report hashes here. No independent D/M, full-prefill, prefix restoration, speed, KV, or cross-topology acceptance.",
+  "full_goal_complete": false
+}

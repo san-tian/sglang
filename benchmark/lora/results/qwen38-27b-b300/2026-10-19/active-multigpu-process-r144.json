@@ -1,0 +1,10 @@
+{
+  "pid": 1428833,
+  "start_ticks": "6860043",
+  "actual_cmdline": "python3 -u /opt/dlami/nvme/qwen38-mol-multigpu-20261019/run_active_multigpu_r144.py ",
+  "source_sha256": "90a0f81c5b938f82ed4736d08ba031376dbb7825384a1f93372ac61f68aefe4a",
+  "manifest_sha256": "1fc645d0140ace63809711c7b8e3cc087f2395b8e399e146c03bce96ce705287",
+  "unix_s": 1792460853.1380732,
+  "scope": "Actual CPU-only waiter started after launch/resource rejection checks; no GPU validation completed yet.",
+  "full_goal_complete": false
+}
