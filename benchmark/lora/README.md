@@ -999,3 +999,19 @@ raw snapshots:c8 peak32545tokens with5running requests. Fixtures reject a larger
 configured pool without observed gain,and a larger peak without sustained
 full-batch residency. DP8 measurement and the real cross-topology gain report
 remain pending;the synthetic positive fixture is not GPU evidence.
+
+
+DP8 dynamic/merge native stage (R151, no optimization acceptance)
+
+The unchanged R135 native arm checks now independently reconstruct D and M:
+1,272 natural responses,384 latency statistics and16actual rank traces. All
+request payloads and natural output IDs agree; raw SSE timing/finite/group
+checks and actual8GPU cgroup/scheduler placement checks remain in force.
+At cold concurrency32,128/128-token throughput is250.14D versus392.01M tokens/s
+(63.81%);2048/256 is228.65versus336.07(68.04%). Corresponding end-to-end P95
+is16.45versus10.44s and35.86versus24.38s. This is the original uncached R28
+MoL control,not the R55 cache candidate. Runs were sequential and are observations,
+not an isolated universal effect. The base control,equal-byte capacity audit,
+R55 matched comparisons and full4P4D remain required. The stage selects only
+completed D/M arms and uses independent profiler-summary filenames; original
+producer outputs and final three-control audit inputs are unchanged.

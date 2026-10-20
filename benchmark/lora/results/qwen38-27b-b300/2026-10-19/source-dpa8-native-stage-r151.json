@@ -1,0 +1,12 @@
+{
+  "source_files": {
+    "audit_dpa8_native_stage_r151.py": "9bd4b7e9d237f6c6095b5c8042248148b7679f441b1033978879905ce4190723",
+    "audit_attention_dp8_native_r135.py": "2913f41998921825718102222bf7b96e93ba3507c94f7a5daf41cfa82b4a8d77",
+    "source-attention-dp8-audits-r135.json": "f762b1bb0c38824a89d1ef3760091341ad9ee596adcf09874486a5639074b9e9",
+    "source-host-r135.json": "f19c7bce083d676f2e162d841c132c57df6c42c9c34c77669605447d12515233",
+    "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08",
+    "audit_merge_baselines_r142.py": "f3fb9d814d1c8023dfc0146b5831108154c9abecc93986716760596f266bd278"
+  },
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "scope": "Original R135 D/M natural native stage only, original R142 selection pattern generalized to eachside. Original R135 raw/numerical-time/percentile/rank/placement checks preserved; only loop arm and diagnostic kernel-summary path change. Not R55 speedup/base/KV or full-goal acceptance."
+}
