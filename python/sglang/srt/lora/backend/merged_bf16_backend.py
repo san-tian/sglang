@@ -312,11 +312,7 @@ class MergedBF16LoRABackend(TritonLoRABackend):
         super().prepare_lora_batch(
             forward_batch, weight_indices, lora_ranks, scalings, False, False
         )
-        lengths = (
-            forward_batch.extend_seq_lens_cpu
-            if forward_batch.forward_mode.is_extend()
-            else [1] * forward_batch.batch_size
-        )
+        lengths = self._request_token_lengths(forward_batch)
         if len(weight_indices) != len(lengths):
             raise ValueError("merged_bf16 routing length mismatch")
         self._merge_ranks = list(lora_ranks)
@@ -328,6 +324,13 @@ class MergedBF16LoRABackend(TritonLoRABackend):
         self._cache_active_slots = {
             slot for slot, rank, _, _ in self.merge_groups if rank
         }
+
+    def _request_token_lengths(self, forward_batch):
+        return (
+            forward_batch.extend_seq_lens_cpu
+            if forward_batch.forward_mode.is_extend()
+            else [1] * forward_batch.batch_size
+        )
 
     def _make_merge_groups(self, weight_indices, lengths, expected_tokens):
         groups = {}

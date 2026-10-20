@@ -42,6 +42,33 @@ class TestMergedFP8(unittest.TestCase):
             args._resolved_overrides = [("checkpoint", {"quantization": "fp8"})]
             MergedFP8LoRABackend._validate_server_args(args)
             self.assertIsNone(args.quantization)
+            args.speculative_algorithm = "EAGLE"
+            MergedFP8LoRABackend._validate_server_args(args)
+            args.speculative_algorithm = "EAGLE3"
+            with self.assertRaisesRegex(ValueError, "speculation_none_or_EAGLE"):
+                MergedFP8LoRABackend._validate_server_args(args)
+
+    def test_eagle_verify_routes_all_draft_tokens_for_each_adapter(self):
+        backend = object.__new__(MergedFP8LoRABackend)
+        batch = SimpleNamespace(
+            forward_mode=SimpleNamespace(is_target_verify=lambda: True),
+            spec_info=SimpleNamespace(draft_token_num=4),
+            batch_size=3,
+            extend_seq_lens_cpu=[1, 1, 1],
+        )
+        lengths = backend._request_token_lengths(batch)
+        self.assertEqual(lengths, [4, 4, 4])
+        backend.device = "cuda"
+        backend._merge_ranks = [16, 16, 0]
+        backend._merge_scalings = [1.0, 2.0, 0.0]
+        groups = backend._make_merge_groups([0, 1, 0], lengths, 12)
+        self.assertEqual(groups[0][3].tolist(), [0, 1, 2, 3, 8, 9, 10, 11])
+        self.assertEqual(groups[1][3].tolist(), [4, 5, 6, 7])
+        with self.assertRaisesRegex(ValueError, "cover all input tokens"):
+            backend._make_merge_groups([0, 1, 0], [1, 1, 1], 12)
+        batch.spec_info.draft_token_num = 0
+        with self.assertRaisesRegex(ValueError, "positive uniform"):
+            backend._request_token_lengths(batch)
 
     def operands(self, device="cuda"):
         raw = torch.randn(256, 256) * 0.02

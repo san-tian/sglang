@@ -129,7 +129,8 @@ class MergedFP8LoRABackend(MergedBF16LoRABackend):
             "TF32_disabled": not torch.backends.cuda.matmul.allow_tf32,
             "deterministic_inference": server_args.enable_deterministic_inference,
             "quantization=fp8": server_args.quantization == "fp8",
-            "speculation_disabled": server_args.speculative_algorithm is None,
+            "speculation_none_or_EAGLE": server_args.speculative_algorithm
+            in (None, "EAGLE"),
             "overlap_loading_disabled": not server_args.enable_lora_overlap_loading,
             "explicit_rank_1_to_64": server_args.max_lora_rank is not None
             and 0 < server_args.max_lora_rank <= 64,
@@ -137,6 +138,16 @@ class MergedFP8LoRABackend(MergedBF16LoRABackend):
         missing = [name for name, satisfied in requirements.items() if not satisfied]
         if missing:
             raise ValueError("merged_fp8 unmet requirements: " + ", ".join(missing))
+
+    def _request_token_lengths(self, forward_batch):
+        if forward_batch.forward_mode.is_target_verify():
+            width = forward_batch.spec_info.draft_token_num
+            if not isinstance(width, int) or width <= 0:
+                raise ValueError(
+                    "merged_fp8 requires positive uniform EAGLE verify width"
+                )
+            return [width] * forward_batch.batch_size
+        return super()._request_token_lengths(forward_batch)
 
     def _projection_bytes(self, layer, weight):
         size = super()._projection_bytes(layer, weight)
