@@ -1,0 +1,9 @@
+{
+  "scope": "Read-only DCP2 completed merged baseline using the original R100 audit body; no dynamic or whole-topology acceptance. No GPU profile rerun.",
+  "source_files": {
+    "audit_dcp_merge_baseline_r114.py": "80be16a0bb3d459878ec42346306e89042809a1efec299016b09269ea64a07aa",
+    "audit_topology_native_r100.py": "89c4bfc17163e052031dd661c4f5fe72a42497159b3e9e40209319c55e92a55c",
+    "analyze_profiles_r30.py": "a5a1559883110d264a8041ad3a078774888c66b266cfaae1908fbe4f9bea0e08",
+    "source-topology-audits-r102.json": "50143c8889d476a179724d1cc4a078534ab77f0832ce60037e12473734de2fe5"
+  }
+}

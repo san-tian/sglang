@@ -737,3 +737,23 @@ only during early DCP dynamic precision, before natural performance sampling;
 its locally emulated LSE combination cannot prove distributed transport or
 whole-model accuracy. No operator GPU result exists yet. Full DCP2 D/M/native/
 KV, attentionDP8,4P4D and optimization controls remain required.
+
+
+DCP2 merged natural baseline (R114) completed636 original SSE responses,
+48groups/16points/192 independently reconstructed latency statistics and8rank
+traces. All actual cached_tokens are0. c32 observations, three rounds per label:
+
+| Input/output tokens | Label | DCP2 M tok/s | TP8 M tok/s | DCP2/TP8 | DCP2 E2E P95 s |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 128/128 | cold | 339.3094 | 411.5235 | 82.45% | 12.0806 |
+| 128/128 | nominal hot | 338.7627 | 411.6350 | 82.30% | 12.0974 |
+| 2048/256 | cold | 299.4625 | 356.0149 | 84.12% | 27.3673 |
+| 2048/256 | nominal hot | 299.0511 | 356.1626 | 83.96% | 27.3872 |
+
+DCP2 has14,369 actual kernel events/rank in the10-step profile versus TP8's9,729;
+its trace includes288 NCCL all-gathers and144 FP32 all-reduces/rank. Counts do
+not attribute E2E time or prove causality. These merged-only controls ran at
+separate times with automatic KV pools; they are not isolated or equal-byte KV
+capacity comparisons. No dynamic/base speed ratio, D/M accuracy, DCP2 capacity,
+cross-topology numerical parity, attentionDP8 or4P4D acceptance follows. The
+R113 cross-topology prefill failure remains unresolved.

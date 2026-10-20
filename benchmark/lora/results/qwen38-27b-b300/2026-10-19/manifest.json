@@ -1,12 +1,12 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-20T00:02:52.051096+00:00",
+  "as_of_utc": "2026-10-20T00:15:39.698606+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
   "cache_runtime_image": "sha256:c342c0de02976dd3fa3ca83cf1cdd5323a84ee0c82c775dfe1949ba78ae877f7",
   "topology_runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
-  "scope": "Partial overall results. Actual uncached TP8 baseline now completed:248 main/GDN independent D/M pairs/114692 scores,48 mixed requests/768 scores,1908 three-way natural SSE payloads/576 latency statistics/24 rank traces,13 equal-byte actual KV requests and five actual 8GPU placements all passed original audits. See tp8-original-audits-finished-r102.json and linked R99/R100/R101/R64 reports. This establishes baseline precision, speed and observed KV residency at 512MiB full-attention KV per rank; it is not an optimized multi-GPU result, maximum whole-GPU capacity, long-context quality or overall completion. DCP2/attentionDP8/full4P4D/cached multiGPU/isolated speed/new million-cache controls remain required and unaccepted. Prior R84 mixed1152 requests show active/no-cache+19.09%/+9.51%, actual KVhits0, original failed CPU marker preserved with separate successful R105 recheck. No default-policy change. Additional DCP2 merged-reference cross-topology prefill diagnostic exceeds the screening threshold (mean0.118339/P992.9375/max13.187374nat across49744scores), despite zero within-side repeat noise; difference is concentrated in three long repeated-prefix inputs. This is not a dynamic-LoRA-vs-merge failure attribution. Operator-level actual-kernel/FP64 diagnosis is queued only in early dynamic precision;11CPU parsing/window checks passed, no new GPU operator acceptance. Original baseline/full-topology protocols are unchanged.",
+  "scope": "Partial overall results. Actual uncached TP8 baseline now completed:248 main/GDN independent D/M pairs/114692 scores,48 mixed requests/768 scores,1908 three-way natural SSE payloads/576 latency statistics/24 rank traces,13 equal-byte actual KV requests and five actual 8GPU placements all passed original audits. See tp8-original-audits-finished-r102.json and linked R99/R100/R101/R64 reports. This establishes baseline precision, speed and observed KV residency at 512MiB full-attention KV per rank; it is not an optimized multi-GPU result, maximum whole-GPU capacity, long-context quality or overall completion. DCP2/attentionDP8/full4P4D/cached multiGPU/isolated speed/new million-cache controls remain required and unaccepted. Prior R84 mixed1152 requests show active/no-cache+19.09%/+9.51%, actual KVhits0, original failed CPU marker preserved with separate successful R105 recheck. No default-policy change. Additional DCP2 merged-reference cross-topology prefill diagnostic exceeds the screening threshold (mean0.118339/P992.9375/max13.187374nat across49744scores), despite zero within-side repeat noise; difference is concentrated in three long repeated-prefix inputs. This is not a dynamic-LoRA-vs-merge failure attribution. Operator-level actual-kernel/FP64 diagnosis is queued only in early dynamic precision;11CPU parsing/window checks passed, no new GPU operator acceptance. Original baseline/full-topology protocols are unchanged. DCP2 merged baseline completed636 natural requests/8 rank traces; original-side audit recomputed192 latency statistics. Dynamic/base speed, same-topology precision, equal-byte KV and cross-topology discrepancy remain unaccepted.",
   "files_sha256": {
     "cache-threeway-comparison-r49.json": "0b4b6bc5082b558673cdb486928183353d28f8e413f6d97ab7df1fb1df287f38",
     "cache-threeway-profile-audit-r49.json": "a149614e2886da7ba32f906bd05bf2780a70bc3dbf459c3ff0ddd9520651088f",
@@ -232,7 +232,11 @@
     "dcp-kernel-probe-process-r113.json": "ebf7bf61e3caa0f00ec1221d000273265fc85283fb44511d2e0c3312e45eb08a",
     "cross-topology-prefill-tests-r113.log": "df0b764b6f8475c46ddc9ce2b38149a0ad6d821d5b8794661690bae1e07fd9d0",
     "dcp-probe-phase-tests-r113.log": "d6b4819e0cd37e5ebc9c6ab6e400c6688bc8caa3253c132e169dce60ccb0d822",
-    "cross-topology-prefill-run-r113.log": "fc6d018e44929e40412f00acb1c1eb7477aa0fe37dd50ef7ab949a544c070a29"
+    "cross-topology-prefill-run-r113.log": "fc6d018e44929e40412f00acb1c1eb7477aa0fe37dd50ef7ab949a544c070a29",
+    "audit_dcp_merge_baseline_r114.py": "80be16a0bb3d459878ec42346306e89042809a1efec299016b09269ea64a07aa",
+    "source-dcp-merge-stage-r114.json": "6a9aa760cfe1c18f80cb4657a4c351e5ef401edc25bf4c2586c615f681c56a60",
+    "dcp8x2-merge-baseline-observation-r114.json": "5c956271251d8d9f1751a8b2a2fcc03666fea5e24dbb8154ff1709bfa6c5b13e",
+    "dcp-merge-baseline-audit-r114.log": "8ee7953da5d75d09b4838797c1fe28363d9f5ab26401c63e8889f6c56ec40648"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -410,5 +414,21 @@
     "kernel_probe_status": "Queued CPU observer, only allowed during early dynamic precision; no GPU operator result yet",
     "source_manifest": "source-dcp-diagnostic-r113.json",
     "full_goal_complete": false
+  },
+  "dcp2_merge_baseline": {
+    "report": "dcp8x2-merge-baseline-observation-r114.json",
+    "native_requests": 636,
+    "rank_kernel_traces": 8,
+    "latency_statistics_recomputed": 192,
+    "whole_topology_accepted": false,
+    "actual_cached_tokens_values": {
+      "cold": [
+        0
+      ],
+      "hot": [
+        0
+      ]
+    },
+    "cross_topology_precision_discrepancy_resolved": false
   }
 }
