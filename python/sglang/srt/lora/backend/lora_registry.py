@@ -66,3 +66,10 @@ def create_merged_bf16_backend():
     from sglang.srt.lora.backend.merged_bf16_backend import MergedBF16LoRABackend
 
     return MergedBF16LoRABackend
+
+
+@register_lora_backend("merged_fp8")
+def create_merged_fp8_backend():
+    from sglang.srt.lora.backend.merged_fp8_backend import MergedFP8LoRABackend
+
+    return MergedFP8LoRABackend

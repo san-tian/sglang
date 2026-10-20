@@ -2826,11 +2826,14 @@ class KVCacheConfigurator:
             mm_feature_transport=get_mm().mm_feature_transport,
         )
         merged_cache_gb = (
-            resolving_view(self.server_args).lora_merged_bf16_cache_size_mb / 1024
-        )
+            resolving_view(self.server_args).lora_merged_bf16_cache_size_mb
+            + getattr(
+                resolving_view(self.server_args), "lora_merged_fp8_cache_size_mb", 0
+            )
+        ) / 1024
         if merged_cache_gb:
             logger.info(
-                "Reserving %.3f GiB per rank for merged BF16 projection cache",
+                "Reserving %.3f GiB per rank for merged projection cache",
                 merged_cache_gb,
             )
         rest_memory = (

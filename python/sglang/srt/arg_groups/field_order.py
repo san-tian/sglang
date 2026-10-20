@@ -399,6 +399,8 @@ POSITIONAL_FIELD_ORDER = (
     "lora_backend",
     "lora_merged_bf16_cache_size_mb",
     "lora_merged_bf16_cache_policy",
+    "lora_merged_fp8_cache_size_mb",
+    "lora_merged_fp8_cache_policy",
     "max_lora_chunk_size",
     "experts_shared_outer_loras",
     "lora_use_virtual_experts",

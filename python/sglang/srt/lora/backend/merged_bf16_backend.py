@@ -106,8 +106,11 @@ class MergedBF16LoRABackend(TritonLoRABackend):
     supports_dp_attention = True
     supports_prefill_cuda_graph = False
     skip_inactive_lora_batches = True
+    cache_size_field = "lora_merged_bf16_cache_size_mb"
+    cache_policy_field = "lora_merged_bf16_cache_policy"
 
-    def __init__(self, max_loras_per_batch, device, server_args, **kwargs):
+    @staticmethod
+    def _validate_server_args(server_args):
         if (
             server_args.dp_size != 1
             or server_args.pp_size != 1
@@ -125,19 +128,20 @@ class MergedBF16LoRABackend(TritonLoRABackend):
                 "unquantized weights, IEEE FP32 matmul, explicit max-lora-rank <=64, "
                 "no speculation or overlap loading"
             )
+
+    def __init__(self, max_loras_per_batch, device, server_args, **kwargs):
+        self._validate_server_args(server_args)
         super().__init__(max_loras_per_batch, device, **kwargs)
         self.merge_groups = []
         self.global_merge_groups = []
         self._merge_ranks = []
         self._merge_scalings = []
         self._weight_cache = OrderedDict()
-        self._weight_cache_limit = getattr(
-            server_args, "lora_merged_bf16_cache_size_mb", 0
-        ) * (1 << 20)
-        self._weight_cache_bytes = 0
-        self._cache_policy = getattr(
-            server_args, "lora_merged_bf16_cache_policy", "lru"
+        self._weight_cache_limit = getattr(server_args, self.cache_size_field, 0) * (
+            1 << 20
         )
+        self._weight_cache_bytes = 0
+        self._cache_policy = getattr(server_args, self.cache_policy_field, "lru")
         self._cache_active_slots = set()
         self._cache_transient_reserve = 0
         self._cache_stats = {
@@ -172,7 +176,8 @@ class MergedBF16LoRABackend(TritonLoRABackend):
         # the CPU: no tensor-value inspection or synchronization.
         if layer is None and getattr(self, "_cache_stats", None) is not None:
             logger.info(
-                "merged_bf16 projection_cache_stats=%s",
+                "%s projection_cache_stats=%s",
+                self.name,
                 json.dumps(
                     {
                         **self._cache_stats,
@@ -187,7 +192,7 @@ class MergedBF16LoRABackend(TritonLoRABackend):
 
     def _merged_weight(self, layer, weight, a, b, slot, rank, scale, offsets):
         limit = getattr(self, "_weight_cache_limit", 0)
-        size = weight.numel() * weight.element_size()
+        size = self._projection_bytes(layer, weight)
         key = (id(layer), slot, rank, scale, weight.data_ptr(), weight._version)
         cache = getattr(self, "_weight_cache", {})
         if limit and key in cache:
@@ -222,7 +227,9 @@ class MergedBF16LoRABackend(TritonLoRABackend):
                 self._remove_cached_weight(next(iter(cache)), "evictions")
         if not admit:
             self._record_cache("bypasses")
-        merged = merge_bf16_weight(weight, a[slot], b[slot], rank, scale, offsets)
+        merged = self._merge_weight(
+            layer, weight, a[slot], b[slot], rank, scale, offsets
+        )
         if admit:
             cache[key] = merged
             self._weight_cache_bytes += size
@@ -233,6 +240,12 @@ class MergedBF16LoRABackend(TritonLoRABackend):
                 )
             self._record_cache("admissions")
         return merged
+
+    def _projection_bytes(self, layer, weight):
+        return weight.numel() * weight.element_size()
+
+    def _merge_weight(self, layer, weight, a, b, rank, scale, offsets):
+        return merge_bf16_weight(weight, a, b, rank, scale, offsets)
 
     def set_layer_adapter_presence(self, layer, slot, present):
         self.invalidate_weight_cache({slot}, layer)

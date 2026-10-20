@@ -23,6 +23,9 @@ def check_lora_server_args(server_args: Any):
     assert cfg.lora_merged_bf16_cache_size_mb >= 0, (
         "lora_merged_bf16_cache_size_mb must be nonnegative"
     )
+    assert cfg.lora_merged_fp8_cache_size_mb >= 0, (
+        "lora_merged_fp8_cache_size_mb must be nonnegative"
+    )
 
     assert cfg.lora_merged_bf16_cache_policy in {"lru", "active"}, (
         "lora_merged_bf16_cache_policy must be lru or active"
@@ -39,6 +42,11 @@ def check_lora_server_args(server_args: Any):
             logger.warning(
                 "--enable-lora is set to False, any provided lora_paths will be ignored."
             )
+
+    if cfg.lora_merged_fp8_cache_size_mb:
+        assert cfg.enable_lora and cfg.lora_backend == "merged_fp8", (
+            "FP8 merged projection caching requires --enable-lora and merged_fp8"
+        )
 
     if cfg.lora_merged_bf16_cache_size_mb:
         assert cfg.lora_backend == "merged_bf16" and cfg.enable_lora, (

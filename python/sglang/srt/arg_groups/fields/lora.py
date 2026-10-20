@@ -78,7 +78,14 @@ class Lora(msgspec.Struct):
         str,
         Arg(
             help="Choose the kernel backend for multi-LoRA serving.",
-            choices=["triton", "csgmv", "ascend", "torch_native", "merged_bf16"],
+            choices=[
+                "triton",
+                "csgmv",
+                "ascend",
+                "torch_native",
+                "merged_bf16",
+                "merged_fp8",
+            ],
         ),
     ] = "csgmv"
     lora_merged_bf16_cache_size_mb: A[
@@ -92,6 +99,17 @@ class Lora(msgspec.Struct):
             choices=["lru", "active"],
         ),
     ] = "lru"
+    lora_merged_fp8_cache_size_mb: A[
+        int,
+        "Per-rank MiB budget for merged_fp8 projections, reserved before KV sizing; 0 disables caching. This backend matches independently merged block-FP8 weights and requires eager deterministic inference without speculation.",
+    ] = 0
+    lora_merged_fp8_cache_policy: A[
+        str,
+        Arg(
+            help="FP8 merged projection admission: active retains current-batch projections and reserves temporary space; lru evicts on a miss.",
+            choices=["lru", "active"],
+        ),
+    ] = "active"
     max_lora_chunk_size: A[
         Optional[int],
         Arg(
