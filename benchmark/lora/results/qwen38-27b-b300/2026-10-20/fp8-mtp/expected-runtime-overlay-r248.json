@@ -1,0 +1,32 @@
+{
+  "base_git": "3c560089e1818a5217a73f2168273485a5350341",
+  "fork_revision": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "files_sha256": {
+    "python/sglang/kernels/ops/attention/fla/chunk.py": "0efe2794631f3b0abdb359abeb237e25034b2bb8aa4a03c7100fea2422a1e623",
+    "python/sglang/kernels/ops/attention/linear/gdn_blackwell/__init__.py": "d93deedf996f79557ebf57127f6d6dc3f3ad4025b99939116b2ae455e9fe8327",
+    "python/sglang/srt/arg_groups/field_order.py": "32d623a8229e38b6bf90e287cfcb981d56a547e898718a0aaf271e3b3db5f4dd",
+    "python/sglang/srt/arg_groups/fields/lora.py": "4d11d30c29f7e19b1d28c855f493c577871ee21c42db183eaf6bd9c70859a68b",
+    "python/sglang/srt/arg_groups/lora_hook.py": "f348a1605360ca8725b87fff9d754fcb4a1bbc1bbb8c1f64a41bf5fd35a865f3",
+    "python/sglang/srt/batch_invariant_ops/batch_invariant_ops.py": "8032d9e3060f7fda07a114c54a1508066da495487873ce517d829e9f34dc6a42",
+    "python/sglang/srt/entrypoints/engine.py": "ba68991aaeb24c64a56d7dada174449d4f82ec3b3b00d95bdfe98c00cb363d5d",
+    "python/sglang/srt/layers/attention/linear/kernels/gdn_cutedsl.py": "f9444194fa416fe593c10dc74b5bcf459f1d4f4e1c16b1c869eab1af570cd967",
+    "python/sglang/srt/layers/attention/linear/kernels/gdn_triton.py": "2d84cea32a25666d8a4e4a9a6bde71c177434126fa4dfada7b161c8c2bf16efa",
+    "python/sglang/srt/lora/backend/lora_registry.py": "75e6f6305c87cbc679f4e1fdf7426e421c6f1d7c8ccc1cc32207b0715a546f4f",
+    "python/sglang/srt/lora/backend/merged_bf16_backend.py": "4ab8dc8abc27cd9f1549f7bcbdb933e82098efbafe2dfab62eada043582350e9",
+    "python/sglang/srt/lora/layers.py": "b531bf5ed860e17f0efa5ac881b86efc714962fa49fbbd34fda67be7d188f4f3",
+    "python/sglang/srt/lora/lora.py": "7e8c2440425892dbad59683e79ef73865c3698722a4b8801c5ab3f0620d79caa",
+    "python/sglang/srt/lora/lora_manager.py": "b6e7fcc44a2ffdc83b5a5385bd2fa415d9a5aab863845a5f566b6576a3b5cde9",
+    "python/sglang/srt/lora/mem_pool.py": "3f005f534a40365732f85260476ee8a4ca98309eafdbc3bee3dfbec4f4d04cf7",
+    "python/sglang/srt/lora/utils.py": "e11af89510e7e2b5a16abbd559bd5449353c0b47f283e34165ec66e39436ec35",
+    "python/sglang/srt/managers/scheduler.py": "f50621efc3a8f764c762e30c82b8c32d41dcac4ab7a8d2b483198262920bccc2",
+    "python/sglang/srt/managers/tokenizer_control_mixin.py": "39a0c55301224c3606413ef5fb910e3b8b79d27493bd5072d5004a69f4c962d6",
+    "python/sglang/srt/managers/tokenizer_manager.py": "40736a0a2bc4966982b2b70e53c580a74cfd0316a1fb5e1ee2124fc018759455",
+    "python/sglang/srt/managers/tp_worker.py": "f716d5974ca2310a191002a7669786eeb7ba0817a4dfea1af9e0cb75bdcc39c7",
+    "python/sglang/srt/mem_cache/kv_cache_configurator.py": "735b1533a60636929b15fe85153e7a57004d17f148f9f4924243160d3e8a147b",
+    "python/sglang/srt/models/qwen3_5.py": "b1d1495aaf09d5584cd7ea684753de2387020737100667125534aae1b9976808",
+    "python/sglang/srt/sampling/sampling_batch_info.py": "af379d2e8f8009fbcd86f014b5f4ef2a4d6116df129be2a495649a49ff5eec7b",
+    "python/sglang/srt/utils/common.py": "e0c1eb343ad6f888a239b13668c4c9d4d558263d5989a36803f3e95cc7f0e1bf",
+    "python/sglang/srt/utils/cudacore_pyspy_dump_utils.py": "fbea1ebe2d33ce823b1d0c2b265925b4b0e696cf6b418a6b5f446767ee437432",
+    "python/sglang/srt/utils/watchdog.py": "55c62443daccde7a5b4e6ae2fcbaf400d819fbbc03817492053ce2fea8bed5a6"
+  }
+}

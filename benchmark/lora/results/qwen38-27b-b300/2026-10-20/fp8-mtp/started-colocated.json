@@ -1,0 +1,8 @@
+{
+  "unix_s": 1792472435.4870906,
+  "physical_gpus": {
+    "colocated": 2
+  },
+  "primary_r160_preserved": true,
+  "deviation": "none for user flags"
+}

@@ -1,0 +1,9 @@
+{
+  "unix_s": 1792472453.2515204,
+  "physical_gpus": {
+    "prefill": 4,
+    "decode": 5
+  },
+  "primary_r160_preserved": true,
+  "deviation": "PD requires extra_buffer instead of extra_buffer_lazy"
+}

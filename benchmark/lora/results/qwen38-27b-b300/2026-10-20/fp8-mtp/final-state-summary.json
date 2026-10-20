@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "unix_s": 1792473409.5200417,
+  "original_BF16_primary_preserved_and_joint_smoke_passed": true,
+  "fp8_PD_joint_smoke_passed": true,
+  "pacing_reset": true,
+  "parser_checks": {
+    "reasoning": {
+      "reasoning_parsed": true,
+      "final_answer_present": true,
+      "answer_contains_42": true
+    },
+    "tool-call": {
+      "tool_calls_parsed": true,
+      "weather_function": true,
+      "arguments": [
+        {
+          "city": "Beijing"
+        }
+      ]
+    }
+  },
+  "FP8_precision_accepted": false
+}

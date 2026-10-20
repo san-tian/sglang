@@ -1,0 +1,7 @@
+{
+  "image": "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "base_git_HEAD": "3c560089e1818a5217a73f2168273485a5350341",
+  "fork_overlay_revision": "0116d3a12bc893ae43d8dbfd594280eccdc8467c",
+  "fork_overlay_files_verified": 26,
+  "note": "Container .git and inherited OCI labels remain upstream; 26 Python overlay files were SHA256 checked against the fork revision."
+}

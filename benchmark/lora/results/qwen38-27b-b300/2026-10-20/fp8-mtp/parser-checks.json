@@ -1,0 +1,16 @@
+{
+  "reasoning": {
+    "reasoning_parsed": true,
+    "final_answer_present": true,
+    "answer_contains_42": true
+  },
+  "tool-call": {
+    "tool_calls_parsed": true,
+    "weather_function": true,
+    "arguments": [
+      {
+        "city": "Beijing"
+      }
+    ]
+  }
+}

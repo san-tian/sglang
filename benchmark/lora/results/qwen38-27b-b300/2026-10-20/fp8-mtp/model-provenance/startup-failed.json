@@ -1,0 +1,4 @@
+{
+  "unix_s": 1792472287.2027636,
+  "reason": "Prefill rejects extra_buffer_lazy under PD; exact user recipe will run colocated, PD comparator uses extra_buffer."
+}

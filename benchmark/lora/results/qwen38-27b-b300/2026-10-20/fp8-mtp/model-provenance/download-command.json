@@ -1,0 +1,18 @@
+[
+  "docker",
+  "run",
+  "-d",
+  "--name",
+  "qwen38-fp8-download-r226",
+  "-v",
+  "/opt/dlami/nvme:/work",
+  "-e",
+  "HF_HUB_DISABLE_PROGRESS_BARS=1",
+  "-e",
+  "HF_XET_HIGH_PERFORMANCE=1",
+  "--entrypoint",
+  "python3",
+  "sha256:5be81e13803be5cd8d8c80cbcfa6505a9bd847305b1868a8d95e3240939ab934",
+  "-c",
+  "from huggingface_hub import snapshot_download; print(snapshot_download(repo_id=\"Qwen/Qwen3.8-27B-FP8\", revision=\"017b9c7af6b5689d5dd426a76e0bc077eb5ca20a\", local_dir=\"/work/models/Qwen3.8-27B-FP8\", max_workers=12))"
+]

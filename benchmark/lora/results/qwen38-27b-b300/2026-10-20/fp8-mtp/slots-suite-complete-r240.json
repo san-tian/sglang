@@ -1,0 +1,1 @@
+{"unix_s": 1792473131.9366784, "completed_by": "retry_slots_fp8_r244.py", "failed_clients_preserved": ["slots-attempt-r232", "slots-attempt-r239"], "correction": "max_loaded_loras is CPU LRU residency limit; 33rd load accepted and evicts one of 32."}

@@ -1,0 +1,8 @@
+{
+  "unix_s": 1792473048.3287854,
+  "reason": "old alpha-scaled adapter symlinks use host absolute paths not visible inside new containers",
+  "remedy": "own directory, per-alpha config; hardlinked read-only-in-practice tensor source, no edits to old adapters",
+  "source_tensor_sha256": "ee61a48a0aaeac32a5576a3e258cd7190bad8638193a21659237471f8d1f9003",
+  "source_alpha": 32,
+  "synthetic": true
+}
