@@ -1,6 +1,6 @@
 {
   "status": "Partial experimental snapshot; full multi-GPU/DCP/4P4D goal is not accepted.",
-  "as_of_utc": "2026-10-20T02:24:02.312282+00:00",
+  "as_of_utc": "2026-10-20T02:30:49.896883+00:00",
   "model": "Qwen3.8-27B",
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "cache_runtime_commit": "7e6ef6016cd951b92157051723b91c4474da5400",
@@ -494,7 +494,13 @@
     "source-dpa8-native-stage-r151.json": "c4e1fc1d82ba79c9032b1e578ded5c52e4893aa85bef22b7dc4bfee6a74fa1ed",
     "dpa8-native-stage-raw-audit-r151.json": "1539dd117b052b9dc70ec68a872a05841664f3babc0364526ded5a8cc365fad4",
     "dpa8-d-kernel-summary-r151.json": "72c9a5f61ea7a622803bcff299c66d1d0fe4eda7758616f79e6aee38f5572afc",
-    "dpa8-m-kernel-summary-r151.json": "a32727f439234e38a9cf79684d225f66d28911acc9583e5aa61d2a6109c8b67b"
+    "dpa8-m-kernel-summary-r151.json": "a32727f439234e38a9cf79684d225f66d28911acc9583e5aa61d2a6109c8b67b",
+    "build_progress_overview_r153.py": "f9c55cde12a53d48e29ee87db24c532ac5eb53cecf55d6fd8a793e3dd4b6afbd",
+    "progress-overview-r153.json": "46d30924fbec34fc9aecf578952b7928907e136cfb61a25ad27f4d014a51fe0a",
+    "throughput-all-configurations-r153.csv": "1c9ba49c913571eec3b1781515525de665c52961043b5aecc22dabde2c3e724c",
+    "live-progress-r153.json": "0a42cf6a68ff1ae790ee7579f717e323b5dcfbd034f4edc64df3b6a4070af39b",
+    "tp2-full-d-r29/summary.json": "0151f89d69fb89a732d4b309b4445623d1f8c419efc1813e762d3ad28c22aa8c",
+    "dpa2-full-d-r29/summary.json": "cb42a46b111d1b512a3dff9cc5d2c48fe424527b3e62e54118d86bf7520a7e38"
   },
   "topology_runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
   "cache_external_client_commit": "2d11fdbf218fe0fe0e364002887b3fb3e64cb7d1",
@@ -1436,5 +1442,15 @@
     "base_control_accepted": false,
     "scope": "Original R135 R28-image DP8 same-topology dynamic no-cache MoL versus independent merge native controls only. Each636natural responses,192latency statistics and8actual rank traces; source, raw payloads, time/finite/percentile, actual cgroup/scheduler/GPU placements and input/natural ID equality checked. Auto KV rows may differ, both exceed73728requested tokens; not equal-byte capacity evidence. Cold/hot ratios are separate-time observations, not isolated or universally causal. Original mixed and precision stages passed separately; cross-topology R139 remains failed. No R55 optimization, base, resident-KV or full-goal acceptance.",
     "report": "dpa8-native-stage-raw-audit-r151.json"
+  },
+  "progress_overview": {
+    "report": "progress-overview-r153.json",
+    "complete_throughput_CSV": "throughput-all-configurations-r153.csv",
+    "as_of_utc": "2026-10-20T02:27:43.399382+00:00",
+    "native_speed_points": 384,
+    "source_reports_sha256_verified": 22,
+    "MoE_tested": false,
+    "new_GPU_measurements": false,
+    "full_goal_complete": false
   }
 }

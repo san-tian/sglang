@@ -1015,3 +1015,19 @@ not an isolated universal effect. The base control,equal-byte capacity audit,
 R55 matched comparisons and full4P4D remain required. The stage selects only
 completed D/M arms and uses independent profiler-summary filenames; original
 producer outputs and final three-control audit inputs are unchanged.
+
+
+Current progress overview (R153)
+
+progress-overview-r153.json and throughput-all-configurations-r153.csv aggregate
+384existing audited speed points:every c1/c4/c16/c32,cold/hot,128/128 and2048/256
+cell for TP1cache controls,TP2/4/8,attentionDP2/4/8 and the DCP2 M-only baseline.
+The overview verifies22snapshot source-report hashes and keeps D(dynamic),
+M(independent merge),B(original base) distinct. It does not add GPU measurements.
+The live model config is Qwen3_5ForConditionalGeneration/qwen3_5_text,64layers,
+hidden5120,intermediate17408,no expert fields;Qwen3.8-27B is the directory label.
+No MoE model result is claimed. Real-adapter/base natural sequence agreement
+is reported only as agreement,not task accuracy or shared-prefix logprob drift.
+Zero/base cold/hot fixed-score checks are separate from the real-adapter D/M
+gates. The live snapshot retains actual pending-owner process identities:
+DP8base and equal-byte capacity,full4P4D,R55multicard/isolated comparisons remain.

@@ -1,0 +1,73 @@
+{
+  "stage": "dynamic",
+  "topology": "tp2-dp1-pp1-r28",
+  "cases": 30,
+  "case_pairs": 240,
+  "rounds": 4,
+  "decode_tokens": 256,
+  "cache_modes": [
+    "cold",
+    "hot"
+  ],
+  "batch_size": 30,
+  "elapsed_s": 274.2242367279978,
+  "scores": {
+    "prefill": {
+      "count": 49744,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 49744,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "prefill_last": {
+      "count": 240,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 240,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "decode": {
+      "count": 61200,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 61200,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    }
+  },
+  "repeat_noise": {
+    "prefill": {
+      "count": 43526,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 43526,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "prefill_last": {
+      "count": 210,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 210,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    },
+    "decode": {
+      "count": 53550,
+      "mean_abs_nat": 0.0,
+      "p99_abs_nat": 0.0,
+      "max_abs_nat": 0.0,
+      "argmax_matches": 53550,
+      "argmax_match_fraction": 1.0,
+      "passes_logprob_gate": true
+    }
+  },
+  "note": "hot means no flush, inspect cached_tokens for actual cache reuse"
+}
