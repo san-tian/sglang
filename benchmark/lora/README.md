@@ -773,3 +773,12 @@ hashes were checked. The aggregate logs lack per-request IDs, so the FIFO mappin
 is an inference, not direct layer instrumentation or a causal proof. This
 narrows follow-up to the prefix/current split and distributed path; the failed
 R113 model-level parity gate remains false. No new GPU experiment was run.
+
+
+DCP2 same-topology precision stage (R115) passed the unchanged original R99
+raw-evidence auditor:240main+8GDN pairs,114,692scores,3,968rank captures.
+Prefill/first-token/decode and within-side repetition have zero mean/P99/max
+error and100%argmax agreement. This validates dynamic LoRA against its own DCP2
+independent merge, not TP8-versus-DCP2 merged numerical parity; that separate
+R113 diagnostic remains failed. Native D/base timing, mixed routing, equal-byte
+KV and the full original R102 topology audit remain separate pending gates.

@@ -1,0 +1,285 @@
+{
+  "passed": true,
+  "topology": "dcp8x2",
+  "runtime_image": "sha256:a2b256e2b1370dc3968977d0c4af04a7f908ed0d4dfa54f3631c13730a117288",
+  "runtime_commit": "a589b336780051bbf26755cf1ea0aba56fbd029c",
+  "accuracy": {
+    "full": {
+      "passed": true,
+      "topology": "dcp8x2",
+      "sampling_replicas_per_request": 8,
+      "rank_capture_coverage": {
+        "D": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "M": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "case_pairs": 240,
+      "scores": {
+        "prefill": {
+          "count": 49744,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 49744,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "prefill_last": {
+          "count": 240,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 240,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "decode": {
+          "count": 61200,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 61200,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        }
+      },
+      "repeat_noise": {
+        "M": {
+          "prefill": {
+            "count": 43526,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 43526,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 210,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 210,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 53550,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 53550,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        },
+        "D": {
+          "prefill": {
+            "count": 43526,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 43526,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 210,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 210,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 53550,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 53550,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        }
+      },
+      "scored_native_responses_per_side": 240,
+      "rank_capture_files_reparsed": 3840,
+      "raw_evidence_files_rehashed": {
+        "M": 1944,
+        "D": 1943
+      },
+      "reference_seal_sha256": "0ba8b2aeb3f6e0f75b477afef522e5425642dce5a3f008718624ab891d3b94cd",
+      "dynamic_evidence_manifest_sha256": "f4ebc6cf948c9faeb88a75875a1210b0dc0d5aa615e2ff3ef241527ce92e8481",
+      "cached_tokens_distribution": {
+        "M": {
+          "cold:0": 120,
+          "hot:0": 120
+        },
+        "D": {
+          "cold:0": 120,
+          "hot:0": 120
+        }
+      },
+      "inputs_stable_during_audit": true
+    },
+    "gdn": {
+      "passed": true,
+      "topology": "dcp8x2",
+      "sampling_replicas_per_request": 8,
+      "rank_capture_coverage": {
+        "D": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "M": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "case_pairs": 8,
+      "scores": {
+        "prefill": {
+          "count": 3380,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 3380,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "prefill_last": {
+          "count": 8,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 8,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        },
+        "decode": {
+          "count": 120,
+          "mean_abs_nat": 0.0,
+          "p99_abs_nat": 0.0,
+          "max_abs_nat": 0.0,
+          "argmax_matches": 120,
+          "argmax_match_fraction": 1.0,
+          "passes_logprob_gate": true
+        }
+      },
+      "repeat_noise": {
+        "M": {
+          "prefill": {
+            "count": 1690,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 1690,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 4,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 4,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 60,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 60,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        },
+        "D": {
+          "prefill": {
+            "count": 1690,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 1690,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "prefill_last": {
+            "count": 4,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 4,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          },
+          "decode": {
+            "count": 60,
+            "mean_abs_nat": 0.0,
+            "p99_abs_nat": 0.0,
+            "max_abs_nat": 0.0,
+            "argmax_matches": 60,
+            "argmax_match_fraction": 1.0,
+            "passes_logprob_gate": true
+          }
+        }
+      },
+      "scored_native_responses_per_side": 8,
+      "rank_capture_files_reparsed": 128,
+      "raw_evidence_files_rehashed": {
+        "M": 76,
+        "D": 75
+      },
+      "reference_seal_sha256": "42286a86bd2748f4475850c1bf004ccc81ecf5d1404867dcdcc1e8b0b3e1d5d1",
+      "dynamic_evidence_manifest_sha256": "a4bd3e53cdd0a8f93fcaa59739b433057f1dab1574467949b53f24ae84a78f94",
+      "cached_tokens_distribution": {
+        "M": {
+          "cold:0": 4,
+          "hot:0": 4
+        },
+        "D": {
+          "cold:0": 4,
+          "hot:0": 4
+        }
+      },
+      "inputs_stable_during_audit": true
+    }
+  },
+  "case_pairs": 248,
+  "score_count": 114692,
+  "audit_source_sha256": "ca419919f76672a95c73e3d0b1c999a77b8b2463f066ca6c770cf6698dc2c952",
+  "full8GPU_accepted": true,
+  "scope": "Original full-prompt responses and each sampling replica pre-forcing capture re-parsed. Precision only; native performance, actual placement, KV residency and transport are separate gates. Legacy TP4/DP4 replay is auditor validation and provides no new8GPU acceptance."
+}
