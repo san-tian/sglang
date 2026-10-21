@@ -19,6 +19,8 @@ from typing import Dict, Optional
 
 from huggingface_hub import snapshot_download
 
+from sglang.srt.lora.remote_adapter import resolve_lora_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,7 @@ class LoRAConfig:
         added_tokens_config: Optional[Dict] = None,
         base_vocab_size: Optional[int] = None,
     ) -> None:
-        self.path = path
+        self.path = resolve_lora_path(path)
 
         if config_dict is not None:
             self.hf_config = config_dict
